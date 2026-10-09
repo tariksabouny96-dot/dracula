@@ -24,6 +24,11 @@ from services.core.emergency_stop import EmergencyStopController
 from services.auth.auth_service import AuthenticationService, UserRole, UserPermission, PermissionDeniedError
 from services.sentinel.sentinel_service import SecuritySentinelService
 from services.x_control.x_session_manager import XSessionManager, XOperationalState
+from services.agents.engine import MissionConflict as AgentMissionConflict, MissionBudgetExceeded
+from packages.security import EmergencyStopActive
+
+AGENT_MISSION_ID = re.compile(r"agm_[0-9a-f]{32}")
+MAX_BACKGROUND_RUNS = 4
 
 
 class JarvisUIHandler(SimpleHTTPRequestHandler):
@@ -34,6 +39,9 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
     x_session_manager: Optional[XSessionManager] = None
     runtime: Optional[Any] = None
     mission_service: Optional[MissionService] = None
+    agent_engine: Optional[Any] = None
+    _agent_runs: dict = {}
+    _agent_runs_lock = threading.Lock()
     ui_dir = (Path(__file__).parent / "static").resolve()
 
     def translate_path(self, path):
@@ -514,6 +522,10 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
                 self._send_json({"error": str(exc)}, status=400)
             return
 
+        if self.path.startswith("/api/agents/"):
+            self._agent_post(curr_session, payload)
+            return
+
         # Chat / interrupt / approval endpoints
         if self.path == "/api/chat":
             if not self._require_permission(curr_session, UserPermission.X_ACTIVATION):
@@ -658,6 +670,8 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
                 permission = UserPermission.X_ACTIVATION  # owner-only until per-user data isolation exists
             elif self.path.startswith("/api/operations"):
                 permission = UserPermission.X_ACTIVATION  # owner scope
+            elif self.path.startswith("/api/agents/"):
+                permission = UserPermission.EXECUTE_OBJECTIVE  # missions are owner-scoped in the engine
             elif self.path == "/api/state":
                 permission = UserPermission.CHAT_INTERACTION
             elif self.path in ("/api/economic/summary", "/api/impossible_list", "/api/intelligence/summary", "/api/capabilities"):
@@ -681,6 +695,9 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
                 self._send_json(users)
                 return
 
+        if self.path.startswith("/api/agents/"):
+            self._agent_get(curr_session)
+            return
         if self.path.startswith('/api/operations/agent-status/'):
             if not self.mission_service:
                 self._send_json({'error': 'Mission store unavailable'}, status=503)
@@ -925,6 +942,123 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
         else:
             super().do_GET()
 
+    # ------------------------------------------------------------------ agent engine API
+    def _agent_engine_or_503(self):
+        if self.agent_engine is None:
+            self._send_json({"error": "Agent engine not configured on this server"}, status=503)
+            return None
+        return self.agent_engine
+
+    def _agent_mission_id(self, rest):
+        mission_id = rest.split("/", 1)[0]
+        if not AGENT_MISSION_ID.fullmatch(mission_id):
+            raise KeyError("Mission not found")
+        return mission_id
+
+    def _agent_background_run(self, owner, mission_id):
+        engine = self.agent_engine
+        try:
+            engine.run(owner, mission_id)
+        except Exception:
+            pass  # state and errors are persisted by the engine; status shows them
+        finally:
+            with self._agent_runs_lock:
+                self._agent_runs.pop(mission_id, None)
+
+    def _agent_post(self, session, payload):
+        engine = self._agent_engine_or_503()
+        if engine is None:
+            return
+        if not self._require_permission(session, UserPermission.EXECUTE_OBJECTIVE):
+            return
+        owner = session.user_id
+        try:
+            if self.path == "/api/agents/missions":
+                objective = payload.get("objective")
+                budget = payload.get("budget_usd", 1.0)
+                if payload.get("confirm") is not True:
+                    self._send_json({"error": "Explicit confirmation required: planning calls a model provider"}, status=400)
+                    return
+                self._send_json(engine.create_mission(owner, objective, budget), status=201)
+                return
+            rest = self.path.removeprefix("/api/agents/missions/")
+            mission_id = self._agent_mission_id(rest)
+            action = rest[len(mission_id):]
+            if action == "/approve":
+                if not self._require_permission(session, UserPermission.APPROVE_ACTIONS):
+                    return
+                if payload.get("confirm") is not True:
+                    self._send_json({"error": "Explicit plan approval required"}, status=400)
+                    return
+                self._send_json(engine.approve_plan(owner, mission_id, payload.get("plan_sha256"), session.username))
+            elif action == "/run":
+                if payload.get("confirm") is not True:
+                    self._send_json({"error": "Explicit run confirmation required"}, status=400)
+                    return
+                status = engine.status(owner, mission_id)
+                if status["state"] not in ("QUEUED", "RUNNING", "VERIFYING"):
+                    raise AgentMissionConflict(f"Mission is {status['state']}; it cannot run")
+                with self._agent_runs_lock:
+                    if mission_id in self._agent_runs:
+                        raise AgentMissionConflict("Mission is already running")
+                    if len(self._agent_runs) >= MAX_BACKGROUND_RUNS:
+                        self._send_json({"error": "Too many missions running; try again later"}, status=429)
+                        return
+                    worker = threading.Thread(target=self._agent_background_run, args=(owner, mission_id), daemon=True)
+                    self._agent_runs[mission_id] = worker
+                worker.start()
+                self._send_json({"status": "RUN_STARTED", "mission_id": mission_id}, status=202)
+            elif action == "/cancel":
+                self._send_json(engine.cancel(owner, mission_id, session.username))
+            else:
+                self._send_json({"error": "Not found"}, status=404)
+        except KeyError:
+            self._send_json({"error": "Mission not found"}, status=404)
+        except EmergencyStopActive as exc:
+            self._send_json({"error": str(exc)}, status=423)
+        except (AgentMissionConflict, MissionBudgetExceeded) as exc:
+            self._send_json({"error": str(exc)}, status=409)
+        except (ValueError, TypeError) as exc:
+            self._send_json({"error": str(exc)}, status=400)
+
+    def _agent_get(self, session):
+        engine = self._agent_engine_or_503()
+        if engine is None:
+            return
+        owner = session.user_id
+        try:
+            if self.path == "/api/agents/missions":
+                self._send_json(engine.list(owner))
+                return
+            rest = self.path.removeprefix("/api/agents/missions/")
+            mission_id = self._agent_mission_id(rest)
+            action = rest[len(mission_id):]
+            if action == "":
+                status = engine.status(owner, mission_id)
+                with self._agent_runs_lock:
+                    status["background_run_active"] = mission_id in self._agent_runs
+                self._send_json(status)
+            elif action == "/events":
+                self._send_json(engine.events(owner, mission_id))
+            elif action == "/receipts":
+                self._send_json(engine.verify_receipts(owner, mission_id))
+            elif action == "/artifact":
+                name, data, digest = engine.artifact(owner, mission_id)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+                self.send_header("X-Content-SHA256", digest)
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(data)
+            else:
+                self._send_json({"error": "Not found"}, status=404)
+        except KeyError:
+            self._send_json({"error": "Mission not found"}, status=404)
+        except AgentMissionConflict as exc:
+            self._send_json({"error": str(exc)}, status=409)
+
     def _get_live_telemetry(self) -> dict:
         """Collects grounded runtime telemetry from attached services or system inspection."""
         from services.core.system_diagnostics import SystemDiagnosticsCollector
@@ -1054,7 +1188,8 @@ class JarvisServer:
         port: int = 8999,
         auth_service: Optional[AuthenticationService] = None,
         sentinel_service: Optional[SecuritySentinelService] = None,
-        x_session_manager: Optional[XSessionManager] = None
+        x_session_manager: Optional[XSessionManager] = None,
+        agent_engine: Optional[Any] = None
     ):
         self.port = port
         self.auth_service = auth_service or getattr(runtime, "auth_service", None)
@@ -1088,6 +1223,11 @@ class JarvisServer:
         JarvisUIHandler.emergency_stop = emergency_stop
         JarvisUIHandler.runtime = runtime
         JarvisUIHandler.mission_service = MissionService(Path.home() / ".hood" / "nova21")
+        engine = agent_engine if agent_engine is not None else getattr(runtime, "agent_engine", None)
+        JarvisUIHandler.agent_engine = engine
+        JarvisUIHandler._agent_runs = {}
+        if engine is not None:
+            engine.recover()  # reconcile work interrupted by a previous crash before serving
         JarvisUIHandler.auth_service = self.auth_service
         JarvisUIHandler.sentinel_service = self.sentinel_service
         JarvisUIHandler.x_session_manager = self.x_session_manager

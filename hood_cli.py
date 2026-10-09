@@ -81,7 +81,12 @@ class HoodSystemRuntime:
             browser_service=self.browser_service
         )
         self.voice_router = VoiceRouter(self.config)
-        self.tool_gateway = ToolGateway(self.config, self.approval_service, self.audit_service)
+        # Durable emergency-stop latch: an engaged stop survives a restart.
+        from packages.security import StopLatch
+        self.data_dir = Path(os.environ.get("HOOD_DATA_DIR") or (Path.home() / ".hood"))
+        self.stop_latch = StopLatch(self.data_dir / "emergency_stop.json")
+        self.tool_gateway = ToolGateway(self.config, self.approval_service, self.audit_service,
+                                        stop_latch=self.stop_latch)
 
         # Desktop Control & Governance
         from services.desktop import DesktopService, FinancialAdvisor, OvernightExecutionManager
@@ -149,6 +154,12 @@ class HoodSystemRuntime:
             evolution_engine=self.evolution_engine,
             desktop_service=self.desktop_service
         )
+        # Multi-agent engine: live providers via the router (budgets, pricing), sandboxed tools,
+        # independent verification. Simulated output is refused here.
+        from services.agents import AgentEngine
+        self.agent_engine = AgentEngine(self.data_dir / "agents", router=self.model_router,
+                                        stop_latch=self.stop_latch)
+        self.emergency_stop.attach("agent_engine", self.agent_engine.halt_all)
         self.commander = HoodCommander(
             self.config,
             self.model_router,
@@ -219,6 +230,36 @@ class HoodSystemRuntime:
         }
 
 
+def _agent_command(runtime, args):
+    """CLI front-end for the agent engine. The local operator acts as the Root Owner."""
+    import json as _json
+    engine, owner = runtime.agent_engine, "user_root_owner_01"
+    cmd = args.agent_command
+    if cmd == "create":
+        result = engine.create_mission(owner, args.objective, args.budget)
+    elif cmd == "approve":
+        result = engine.approve_plan(owner, args.id, args.plan_sha256, approver="local-cli-operator")
+    elif cmd == "run":
+        result = engine.run(owner, args.id)
+    elif cmd == "status":
+        result = engine.status(owner, args.id)
+    elif cmd == "cancel":
+        result = engine.cancel(owner, args.id, actor="local-cli-operator")
+    elif cmd == "events":
+        result = engine.events(owner, args.id)
+    elif cmd == "list":
+        result = engine.list(owner)
+    elif cmd == "artifact":
+        name, data, digest = engine.artifact(owner, args.id)
+        with open(args.out, "xb") as handle:
+            handle.write(data)
+        result = {"written": args.out, "name": name, "sha256": digest, "bytes": len(data)}
+    else:
+        print("Usage: hood_cli.py agent {create,approve,run,status,cancel,events,list,artifact}")
+        sys.exit(2)
+    print(_json.dumps(result, indent=2, default=str))
+
+
 def main():
     parser = argparse.ArgumentParser(description="HOOD Personal AI Operating System")
     subparsers = parser.add_subparsers(dest="command")
@@ -236,6 +277,23 @@ def main():
 
     # Emergency Stop
     subparsers.add_parser("stop", help="Trigger Emergency Stop ('Hood, stop everything')")
+    reset_parser = subparsers.add_parser("stop-reset", help="Release the emergency stop (local Root Owner operator)")
+    reset_parser.add_argument("--confirm", action="store_true", help="Required: confirm the release")
+
+    agent_parser = subparsers.add_parser("agent", help="Multi-agent missions: plan, approve, run, inspect, download")
+    agent_sub = agent_parser.add_subparsers(dest="agent_command")
+    a_create = agent_sub.add_parser("create", help="Plan a mission (calls the configured model provider)")
+    a_create.add_argument("--objective", required=True)
+    a_create.add_argument("--budget", type=float, default=1.0, help="Mission spend cap in USD")
+    a_approve = agent_sub.add_parser("approve", help="Approve the exact plan hash shown by 'create'/'status'")
+    a_approve.add_argument("--id", required=True)
+    a_approve.add_argument("--plan-sha256", required=True)
+    for name in ("run", "status", "cancel", "events"):
+        agent_sub.add_parser(name).add_argument("--id", required=True)
+    a_art = agent_sub.add_parser("artifact", help="Write the verified artifact zip")
+    a_art.add_argument("--id", required=True)
+    a_art.add_argument("--out", required=True)
+    agent_sub.add_parser("list")
 
     # Multi-agent repository audit
     subparsers.add_parser("audit", help="Run multi-agent repository inspection and audit task")
@@ -393,8 +451,23 @@ def main():
         print(f"\nHood Recommendation (H14): {res['hood_recommendation']}")
 
     elif args.command == "stop":
-        res = runtime.emergency_stop.trigger_stop()
-        print(f"Emergency Stop Triggered: {res['status']}")
+        res = runtime.emergency_stop.trigger_stop("CLI emergency stop")
+        print(f"Emergency Stop: {res['status']} (latch engaged: {res['latch_engaged']})")
+        for name, outcome in res["subsystems"].items():
+            print(f"  {name:14} {outcome['status']}" + (f"  {outcome.get('error')}" if outcome.get("error") else ""))
+        if res["incomplete"]:
+            print("  NOT CONFIRMED HALTED: " + ", ".join(res["incomplete"]))
+
+    elif args.command == "stop-reset":
+        if not args.confirm:
+            print("Refusing: pass --confirm to release the emergency stop.")
+            sys.exit(2)
+        # The CLI runs as the local OS account that owns Hood's data files (Root Owner equivalent).
+        runtime.emergency_stop.reset_stop(authorized_by="local-cli-operator", is_root_owner=True)
+        print("Emergency stop released.")
+
+    elif args.command == "agent":
+        _agent_command(runtime, args)
 
     elif args.command == "audit":
         print("Running HOOD Multi-Agent Repository Audit Task...")

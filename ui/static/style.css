@@ -2405,6 +2405,10 @@ body.theme-x .inline-approval-meta code {
 }
 @media (max-width: 600px) {
   .hud-header { flex-wrap: wrap; gap: 8px; }
+  /* Keep EMERGENCY STOP on-screen on phones: actions wrap instead of overflowing. */
+  .hud-actions-block { flex-wrap: wrap; width: 100%; min-width: 0; gap: 6px; }
+  .hud-actions-block > * { flex: 1 1 auto; min-width: 0; }
+  .mobile-nav { max-width: 100%; min-width: 0; }
   .main-surface { min-width: 0; }
   .main-surface > * { min-width: 0; }
   .chat-input-bar { max-width: 100%; }

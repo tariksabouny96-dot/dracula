@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>HOOD</title>
+  <link rel="icon" href="/static/assets/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -164,9 +165,9 @@
 
         <!-- Sovereign Governance Identity Pill -->
         <div class="vnav-governance-pill">
-          <div class="gov-pill-title">ROOT SOVEREIGN</div>
-          <div class="gov-pill-name">ZACK (ZAKARIA)</div>
-          <div class="gov-pill-status val-green">● CONSTITUTIONAL</div>
+          <div class="gov-pill-title">SIGNED-IN PRINCIPAL</div>
+          <div class="gov-pill-name" id="gov-pill-name">NOT SIGNED IN</div>
+          <div class="gov-pill-status val-green" id="gov-pill-status">● —</div>
         </div>
       </aside>
 
@@ -282,7 +283,7 @@
                 <span>ACTIVE MISSION ORCHESTRATION & DAG GRAPH</span>
               </div>
               <div class="deck-status">
-                <span class="status-pill">MAKER-CHECKER SUPERVISED</span>
+                <span class="status-pill">LEGACY COMMANDER TASKS</span>
               </div>
             </div>
             <div id="task-list" class="task-list">
@@ -290,8 +291,23 @@
             </div>
           </div>
 
+          <div class="terminal-deck-card nova-ops" aria-labelledby="agent-ops-title">
+            <div class="terminal-deck-header"><div class="deck-title" id="agent-ops-title">AGENT MISSIONS // PLAN · APPROVE · BUILD · VERIFY</div><span class="status-pill" id="agent-engine-badge">ENGINE STATUS UNKNOWN</span></div>
+            <p class="nova-ops-caption">Hood asks the configured model provider for a task plan. Nothing runs until you approve that exact plan and its budget. Engineer and QA agents then write code in an isolated workspace with no internet access; an independent checker runs the tests. A mission is marked COMPLETED only when those checks pass, and only then can you download the result.</p>
+            <form id="agent-mission-form" class="nova-mission-form">
+              <label for="agent-mission-objective">Objective</label>
+              <textarea id="agent-mission-objective" minlength="10" maxlength="8000" rows="4" required placeholder="Example: Build a small responsive notes web app with create, read, update and delete over a JSON API."></textarea>
+              <label for="agent-mission-budget">Spend cap (USD)</label>
+              <input id="agent-mission-budget" type="number" min="0" max="100" step="0.01" value="1.00" required>
+              <button type="submit" class="nova-action">Plan mission (calls model provider)</button>
+            </form>
+            <div id="agent-mission-feedback" role="status" aria-live="polite"></div>
+            <div class="nova-mission-toolbar"><button id="agent-refresh-missions" class="nova-action" type="button">Refresh agent missions</button></div>
+            <div id="agent-mission-records" aria-live="polite">Agent missions not loaded.</div>
+          </div>
+
           <div class="terminal-deck-card nova-ops" aria-labelledby="nova-ops-title">
-            <div class="terminal-deck-header"><div class="deck-title" id="nova-ops-title">NOVA 2.1 // DURABLE MISSION PLANS</div><span class="status-pill">LOCAL PLAN ONLY · NO AGENT EXECUTION</span></div>
+            <div class="terminal-deck-header"><div class="deck-title" id="nova-ops-title">NOVA 2.1 // DURABLE MISSION PLANS</div><span class="status-pill">LEGACY · LOCAL PLAN ONLY · NO AGENT EXECUTION</span></div>
             <p class="nova-ops-caption">Submit a mission for review. Explicit approval creates a verifiable local Markdown plan. A second confirmation can run a bounded deterministic local task graph and generate an evidence manifest; neither action executes the business objective.</p>
             <form id="nova-mission-form" class="nova-mission-form">
               <label for="nova-mission-title">Mission title</label><input id="nova-mission-title" maxlength="120" minlength="3" required placeholder="Example: Client website delivery plan">
@@ -367,9 +383,9 @@
               </div>
               <div class="info-card">
                 <h4>LEVEL 2 — SELF-HOSTED</h4>
-                <div class="model-name">LLaMA 3.1 8B</div>
+                <div class="model-name">Local model (loopback endpoint)</div>
                 <div class="model-role">Offline Local Fallback & Fast Analysis</div>
-                <span class="tag-status val-cyan">CONTAINED</span>
+                <span class="tag-status val-cyan">NOT CONFIGURED</span>
               </div>
               <div class="info-card">
                 <h4>LEVEL 3 — HOOD PROPRIETARY</h4>
@@ -530,8 +546,8 @@
             <div class="mini-globe-stats">
               <div class="stat-line"><span class="stat-k">Core:</span> <span class="stat-v val-green">UNVERIFIED</span></div>
               <div class="stat-line"><span class="stat-k">Sentinel:</span> <span class="stat-v val-green" id="rt-sentinel-posture">UNVERIFIED</span></div>
-              <div class="stat-line"><span class="stat-k">Provider:</span> <span class="stat-v val-cyan" id="rt-provider-name">GEMINI 2.5</span></div>
-              <div class="stat-line"><span class="stat-k">Local:</span> <span class="stat-v" id="rt-local-model">LLaMA 3.1 8B</span></div>
+              <div class="stat-line"><span class="stat-k">Provider:</span> <span class="stat-v val-cyan" id="rt-provider-name">NOT VERIFIED</span></div>
+              <div class="stat-line"><span class="stat-k">Local:</span> <span class="stat-v" id="rt-local-model">NOT CONFIGURED</span></div>
             </div>
           </div>
 

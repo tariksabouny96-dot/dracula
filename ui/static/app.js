@@ -710,8 +710,10 @@ async function loadTelemetry() {
 
       const sentInteg = document.getElementById('sentinel-integrity');
       if (sentInteg) {
-        sentInteg.textContent = data.sentinel.integrity.drift_detected ? 'DRIFT DETECTED' : 'BASELINES VERIFIED';
-        sentInteg.style.color = data.sentinel.integrity.drift_detected ? '#ff0055' : '#00f2aa';
+        // null/undefined means "not inspected" — never render it as verified.
+        const drift = data.sentinel.integrity ? data.sentinel.integrity.drift_detected : null;
+        sentInteg.textContent = drift === true ? 'DRIFT DETECTED' : (drift === false ? 'BASELINES VERIFIED' : 'NOT INSPECTED');
+        sentInteg.style.color = drift === true ? '#ff0055' : (drift === false ? '#00f2aa' : '#f5c542');
       }
 
       const sentX = document.getElementById('sentinel-x-status');
@@ -863,6 +865,10 @@ async function checkAuthStatus() {
     if (data.authenticated) {
       if (authModal) authModal.style.display = 'none';
       currentAuthUser = { username: data.username, role: data.role };
+      const govName = document.getElementById('gov-pill-name');
+      if (govName) govName.textContent = String(data.username || '').toUpperCase();
+      const govStatus = document.getElementById('gov-pill-status');
+      if (govStatus) govStatus.textContent = '● SIGNED IN · ' + String(data.role || '');
       if (userBadge) userBadge.style.display = 'flex';
       if (userDisplay) userDisplay.textContent = `${data.username.toUpperCase()} (${data.role})`;
       
@@ -1782,3 +1788,132 @@ document.getElementById('nova-mission-form')?.addEventListener('submit', async (
   finally { submit.disabled = false; }
 });
 document.getElementById('nova-refresh-missions')?.addEventListener('click', novaLoadMissions);
+
+// ==========================================================================
+// Agent missions (services/agents). Every value from the server is inserted
+// with textContent; state badges show exactly what the backend reports.
+// ==========================================================================
+(function agentMissions() {
+  const form = document.getElementById('agent-mission-form');
+  const records = document.getElementById('agent-mission-records');
+  const feedback = document.getElementById('agent-mission-feedback');
+  const refresh = document.getElementById('agent-refresh-missions');
+  const badge = document.getElementById('agent-engine-badge');
+  if (!form || !records) return;
+
+  const el = (tag, text, cls) => {
+    const node = document.createElement(tag);
+    if (text !== undefined && text !== null) node.textContent = String(text);
+    if (cls) node.className = cls;
+    return node;
+  };
+  const say = (msg) => { if (feedback) feedback.textContent = msg; };
+
+  async function post(path, body) {
+    const res = await fetch(path, {method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})});
+    let data = {};
+    try { data = await res.json(); } catch (e) { /* non-JSON error */ }
+    if (!res.ok) throw new Error(data.error || ('Request failed (' + res.status + ')'));
+    return data;
+  }
+
+  function button(label, handler) {
+    const b = el('button', label, 'nova-action');
+    b.type = 'button';
+    b.addEventListener('click', async () => {
+      b.disabled = true;
+      try { await handler(); } catch (err) { say(err.message); } finally { b.disabled = false; load(); }
+    });
+    return b;
+  }
+
+  function renderMission(m) {
+    const card = el('div', null, 'nova-mission-record');
+    const mode = m.simulated ? 'SIMULATED MODEL' : (m.provider_mode === 'LIVE' ? 'LIVE MODEL' : 'NO MODEL OUTPUT');
+    card.appendChild(el('h4', m.mission_id));
+    card.appendChild(el('p', 'State: ' + m.state + ' · ' + mode + ' · Spent $' + Number(m.spend || 0).toFixed(4) +
+      ' of $' + Number(m.budget_usd).toFixed(2)));
+    card.appendChild(el('p', 'Objective: ' + m.objective));
+    if (m.error) card.appendChild(el('p', 'Reason: ' + m.error, 'nova-error'));
+    if (m.plan) {
+      card.appendChild(el('p', 'Plan: ' + m.plan.summary));
+      if (m.plan.clarifications_needed && m.plan.clarifications_needed.length) {
+        card.appendChild(el('p', 'Questions before approving: ' + m.plan.clarifications_needed.join(' | ')));
+      }
+    }
+    const list = el('ol');
+    (m.tasks || []).forEach(t => {
+      const deps = t.depends_on && t.depends_on.length ? ' (after ' + t.depends_on.join(', ') + ')' : '';
+      list.appendChild(el('li', '[' + t.state + '] ' + t.role + ': ' + t.title + deps + (t.error ? ' — ' + t.error : '')));
+    });
+    card.appendChild(list);
+    if (m.last_verification) {
+      const v = m.last_verification;
+      card.appendChild(el('p', 'Independent check: ' + v.verdict + ' — ' +
+        (v.checks || []).map(c => c.name + (c.passed ? ' ✓' : ' ✗')).join(', ')));
+    }
+    const actions = el('div');
+    if (m.state === 'AWAITING_PLAN_APPROVAL') {
+      card.appendChild(el('p', 'Plan hash: ' + m.plan_sha256));
+      actions.appendChild(button('Approve this plan and budget', () =>
+        post('/api/agents/missions/' + m.mission_id + '/approve', {confirm: true, plan_sha256: m.plan_sha256})));
+    }
+    if (['QUEUED', 'RUNNING', 'VERIFYING'].includes(m.state) && !m.background_run_active) {
+      actions.appendChild(button('Run agents', () =>
+        post('/api/agents/missions/' + m.mission_id + '/run', {confirm: true})));
+    }
+    if (!['COMPLETED', 'FAILED', 'UNVERIFIED', 'CANCELLED'].includes(m.state)) {
+      actions.appendChild(button('Cancel mission', () => post('/api/agents/missions/' + m.mission_id + '/cancel', {})));
+    }
+    if (m.artifact) {
+      const link = el('a', 'Download verified result (' + m.artifact.bytes + ' bytes)');
+      link.href = '/api/agents/missions/' + m.mission_id + '/artifact';
+      link.setAttribute('download', m.artifact.name);
+      actions.appendChild(link);
+      actions.appendChild(el('p', 'SHA-256: ' + m.artifact.sha256));
+    }
+    card.appendChild(actions);
+    return card;
+  }
+
+  async function load() {
+    try {
+      const res = await fetch('/api/agents/missions', {credentials: 'same-origin', cache: 'no-store'});
+      if (res.status === 503) {
+        if (badge) badge.textContent = 'ENGINE NOT CONFIGURED';
+        records.textContent = 'The agent engine is not configured on this server.';
+        return;
+      }
+      if (!res.ok) { records.textContent = 'Agent missions unavailable (' + res.status + ').'; return; }
+      if (badge) badge.textContent = 'ENGINE CONNECTED';
+      const missions = await res.json();
+      records.replaceChildren();
+      if (!missions.length) { records.textContent = 'No agent missions yet.'; return; }
+      for (const summary of missions.slice(0, 10)) {
+        const detail = await fetch('/api/agents/missions/' + summary.id, {credentials: 'same-origin', cache: 'no-store'});
+        if (detail.ok) records.appendChild(renderMission(await detail.json()));
+      }
+    } catch (err) {
+      records.textContent = 'Could not load agent missions: ' + err.message;
+    }
+  }
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const objective = document.getElementById('agent-mission-objective').value.trim();
+    const budget = Number(document.getElementById('agent-mission-budget').value);
+    say('Planning… this calls the model provider.');
+    try {
+      const m = await post('/api/agents/missions', {objective, budget_usd: budget, confirm: true});
+      say(m.state === 'AWAITING_PLAN_APPROVAL' ? 'Plan ready for your review.' : 'Planning stopped: ' + (m.error || m.state));
+      form.reset();
+    } catch (err) {
+      say(err.message);
+    }
+    load();
+  });
+  if (refresh) refresh.addEventListener('click', load);
+  load();
+  setInterval(load, 5000);
+})();
