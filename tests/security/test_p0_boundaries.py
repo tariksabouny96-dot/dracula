@@ -344,3 +344,26 @@ def test_spend_cap_blocks_new_paid_calls():
     with pytest.raises(BudgetExceededError):
         router.invoke(ModelRequest(prompt="hi", max_tokens=1000, task_id="t"))
     assert stub.calls == 0
+
+
+# ---------------------------------------------------------------- vault
+def test_vault_refuses_world_readable_key_and_rotates(tmp_path, monkeypatch):
+    from packages.auth.vault import SecretVault
+    monkeypatch.delenv("HOOD_VAULT_KEY", raising=False)
+    vault = SecretVault(vault_path=tmp_path / "vault.enc")
+    vault.set_secret("gemini", "api_key", "s3cret")
+    old_cipher = (tmp_path / "vault.enc").read_bytes()
+    vault.rotate_key()
+    assert (tmp_path / "vault.enc").read_bytes() != old_cipher
+    assert SecretVault(vault_path=tmp_path / "vault.enc").get_secret("SECRET://gemini/api_key") == "s3cret"
+    os.chmod(tmp_path / ".vault_key", 0o644)
+    with pytest.raises(PermissionError):
+        SecretVault(vault_path=tmp_path / "vault.enc")
+
+
+def test_vault_key_from_environment_is_not_written_to_disk(tmp_path, monkeypatch):
+    from cryptography.fernet import Fernet
+    from packages.auth.vault import SecretVault
+    monkeypatch.setenv("HOOD_VAULT_KEY", Fernet.generate_key().decode())
+    SecretVault(vault_path=tmp_path / "vault.enc").set_secret("openai", "api_key", "k")
+    assert not (tmp_path / ".vault_key").exists()

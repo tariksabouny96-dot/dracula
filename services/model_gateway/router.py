@@ -61,6 +61,31 @@ class ModelRouter:
             enabled=local_cfg.enabled if local_cfg else False
         )
 
+    def estimate_max_cost(self, request: ModelRequest) -> float:
+        """Worst-case USD cost of this request over the providers it may route to.
+
+        Returns ``float('inf')`` when an eligible paid provider has no price, so
+        callers enforcing a budget refuse rather than guess.
+        """
+        worst = 0.0
+        for name in self.select_provider_order(request):
+            provider = self.providers.get(name)
+            if not provider or not provider.enabled:
+                continue
+            if request.allowed_providers and name not in request.allowed_providers:
+                continue
+            try:
+                _, price, billing = self._price_for(name, provider, request)
+            except ProviderError:
+                continue
+            if billing and price is None:
+                return float("inf")
+            if price is not None:
+                prompt_tokens = estimate_tokens((request.system_prompt or "") + request.prompt)
+                worst = max(worst, prompt_tokens / 1000.0 * price.input_per_1k_usd
+                            + request.max_tokens / 1000.0 * price.output_per_1k_usd)
+        return worst
+
     def register_provider(self, name: ProviderName, provider: BaseModelProvider):
         self.providers[name] = provider
 

@@ -28,8 +28,16 @@ class SecretVault:
         self._load()
 
     def _get_or_create_master_key(self) -> bytes:
+        # Preferred: key supplied by the OS secret store / service manager via env,
+        # so the key never sits beside the ciphertext.
+        env_key = os.environ.get("HOOD_VAULT_KEY")
+        if env_key:
+            return env_key.strip().encode("ascii")
         key_file = self.vault_path.parent / ".vault_key"
         if key_file.exists():
+            if os.name == "posix" and key_file.stat().st_mode & 0o077:
+                raise PermissionError(
+                    f"Vault key {key_file} is readable by other users; run chmod 600 before use")
             return key_file.read_bytes().strip()
         
         # Never derive credentials from host names or static salts.
@@ -73,6 +81,23 @@ class SecretVault:
         finally:
             if os.path.exists(temp_name):
                 os.unlink(temp_name)
+
+    def rotate_key(self) -> bytes:
+        """Re-encrypt every secret under a fresh key; returns the new key.
+
+        When the key lives in the key file it is replaced atomically after the
+        vault is rewritten; with HOOD_VAULT_KEY the caller must store the new key.
+        """
+        new_key = Fernet.generate_key()
+        self._key, self._fernet = new_key, Fernet(new_key)
+        self._save()
+        if not os.environ.get("HOOD_VAULT_KEY"):
+            key_file = self.vault_path.parent / ".vault_key"
+            tmp = key_file.with_suffix(".new")
+            with os.fdopen(os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as handle:
+                handle.write(new_key)
+            os.replace(tmp, key_file)
+        return new_key
 
     @staticmethod
     def normalize_uri(uri_or_provider: str, key_name: Optional[str] = None) -> str:
