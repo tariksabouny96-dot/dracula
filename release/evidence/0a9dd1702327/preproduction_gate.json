@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-10-09T15:09:35.956063+00:00",
-  "commit": "405806e5dfbf7d5323908737f12c8fdccd4fd099",
+  "generated_at": "2026-10-09T15:11:22.703543+00:00",
+  "commit": "0a9dd1702327eb1e446650ac12bf03befdbd06af",
   "working_tree_dirty": [],
   "host": {
     "platform": "Linux-6.18.44-fc-v80-x86_64-with-glibc2.39",
@@ -14,19 +14,19 @@
       "pytest",
       "-q",
       "-rs",
-      "--junitxml=/home/user/dracula/release/evidence/405806e5dfbf/junit.xml"
+      "--junitxml=/home/user/dracula/release/evidence/0a9dd1702327/junit.xml"
     ],
     "exit_code": 0,
-    "output_tail": "........................................................................ [ 20%]\n...........................s..................s......................... [ 41%]\n............................................sss.s....................... [ 61%]\n........................................................................ [ 82%]\n..............................................................           [100%]\n=========================== short test summary info ============================\nSKIPPED [1] tests/browser/test_browser_automation.py:265: BLOCKED_EXTERNAL: live internet test: set HOOD_RUN_LIVE_NETWORK=1 on a host with outbound access\nSKIPPED [1] tests/dev_executor/test_dev_executor.py:213: BLOCKED_EXTERNAL: live provider test: set HOOD_RUN_LIVE_PROVIDER=1 with an approved key, pricing file and spend cap\nSKIPPED [1] tests/integration/test_real_gemini.py:17: BLOCKED_EXTERNAL: live provider test: set HOOD_RUN_LIVE_PROVIDER=1 with an approved key, pricing file and spend cap\nSKIPPED [1] tests/integration/test_real_gemini.py:40: BLOCKED_EXTERNAL: live provider test: set HOOD_RUN_LIVE_PROVIDER=1 with an approved key, pricing file and spend cap\nSKIPPED [1] tests/integration/test_real_internet_intelligence.py:11: BLOCKED_EXTERNAL: live internet test: set HOOD_RUN_LIVE_NETWORK=1 on a host with outbound access\nSKIPPED [1] tests/integration/test_real_orchestration.py:21: BLOCKED_EXTERNAL: live provider test: set HOOD_RUN_LIVE_PROVIDER=1 with an approved key, pricing file and spend cap\n344 passed, 6 skipped in 93.16s (0:01:33)\n",
-    "junit": "release/evidence/405806e5dfbf/junit.xml",
-    "junit_sha256": "e105eeffbfc69df06858c20d3d2952d924c6ff896cd7083aac6033f8ab70725f",
+    "output_tail": "........................................................................ [ 20%]\n...........................s..................s......................... [ 41%]\n............................................sss.s....................... [ 61%]\n........................................................................ [ 82%]\n..............................................................           [100%]\n=========================== short test summary info ============================\nSKIPPED [1] tests/browser/test_browser_automation.py:265: BLOCKED_EXTERNAL: live internet test: set HOOD_RUN_LIVE_NETWORK=1 on a host with outbound access\nSKIPPED [1] tests/dev_executor/test_dev_executor.py:213: BLOCKED_EXTERNAL: live provider test: set HOOD_RUN_LIVE_PROVIDER=1 with an approved key, pricing file and spend cap\nSKIPPED [1] tests/integration/test_real_gemini.py:17: BLOCKED_EXTERNAL: live provider test: set HOOD_RUN_LIVE_PROVIDER=1 with an approved key, pricing file and spend cap\nSKIPPED [1] tests/integration/test_real_gemini.py:40: BLOCKED_EXTERNAL: live provider test: set HOOD_RUN_LIVE_PROVIDER=1 with an approved key, pricing file and spend cap\nSKIPPED [1] tests/integration/test_real_internet_intelligence.py:11: BLOCKED_EXTERNAL: live internet test: set HOOD_RUN_LIVE_NETWORK=1 on a host with outbound access\nSKIPPED [1] tests/integration/test_real_orchestration.py:21: BLOCKED_EXTERNAL: live provider test: set HOOD_RUN_LIVE_PROVIDER=1 with an approved key, pricing file and spend cap\n344 passed, 6 skipped in 93.23s (0:01:33)\n",
+    "junit": "release/evidence/0a9dd1702327/junit.xml",
+    "junit_sha256": "26b9d6164e45b5ede0c0834b4875996ed54a9f8a0b0f40457a2f9ebe95af0aba",
     "counts": {
       "passed": 344,
       "failed": 0,
       "skipped": 6
     }
   },
-  "register_sha256": "6f88adb924a2b3a2c75575b7e621ca262669a6f57ea61252362a3ed652a7d203",
+  "register_sha256": "452f0e6b0eb69f5335b161bc94b77f3d15b7df5cd47161929f9e143cfb113ab0",
   "findings_sha256": "484525bf8f79dd50df18ab309500b750e64abbdcf50dece4ab98b48a097defcf",
   "decision": "NO_GO",
   "gates": {
@@ -69,7 +69,7 @@
         "gemini: Achieved BLOCKED; requires VERIFIED_STAGING",
         "openai: Achieved TESTED_WITH_STUB; requires VERIFIED_STAGING",
         "local_llm: Achieved TESTED_WITH_STUB; requires VERIFIED_TARGET",
-        "voice: Achieved TESTED_WITH_STUB; requires VERIFIED_TARGET",
+        "voice: Achieved NOT_IMPLEMENTED; requires VERIFIED_TARGET",
         "ecommerce: Achieved NOT_IMPLEMENTED; requires VERIFIED_STAGING",
         "freelance: Achieved NOT_IMPLEMENTED; requires VERIFIED_STAGING",
         "marketing: Achieved NOT_IMPLEMENTED; requires VERIFIED_STAGING",
@@ -340,10 +340,10 @@
     {
       "id": "voice",
       "scope": "P1",
-      "achieved_level": "TESTED_WITH_STUB",
+      "achieved_level": "NOT_IMPLEMENTED",
       "required_level": "VERIFIED_TARGET",
       "accepted": false,
-      "reason": "Achieved TESTED_WITH_STUB; requires VERIFIED_TARGET",
+      "reason": "Achieved NOT_IMPLEMENTED; requires VERIFIED_TARGET",
       "tests_passed": 8,
       "tests_failed": [],
       "tests_skipped": [],
