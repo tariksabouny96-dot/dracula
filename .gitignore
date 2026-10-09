@@ -54,3 +54,4 @@ artifacts/desktop_evidence/
 artifacts/browser_downloads/
 artifacts/nodes/
 .hood-live/
+.claude/worktrees/
