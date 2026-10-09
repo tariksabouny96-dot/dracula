@@ -453,7 +453,7 @@
         "services/voice/"
       ],
       "implementation_status": "NOT_IMPLEMENTED",
-      "local_evidence_level": "TESTED_WITH_STUB",
+      "local_evidence_level": "NOT_IMPLEMENTED",
       "required_level": "VERIFIED_TARGET",
       "test_ids": [
         "tests/voice/test_voice_surface.py",
@@ -468,7 +468,7 @@
         "No STT/TTS transport implemented; microphone capture not connected"
       ],
       "independent_reviewer": null,
-      "decision_reason": "Fails closed with a text fallback; no fabricated transcripts."
+      "decision_reason": "Passing tests prove only that voice fails closed with a text fallback; voice itself is not implemented."
     },
     {
       "id": "ecommerce",
