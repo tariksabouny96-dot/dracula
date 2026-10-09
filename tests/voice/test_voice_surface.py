@@ -201,7 +201,8 @@ def test_jarvis_surface_http_server_and_browser_interaction(voice_system):
         browser = BrowserService()
         if browser.is_available():
             browser.launch(headless=True)
-            nav = browser.navigate("http://127.0.0.1:8991/")
+            # Classic cinematic console moved to /classic (HOOD NEXT is default at /).
+            nav = browser.navigate("http://127.0.0.1:8991/classic")
             assert nav["status"] == "success"
 
             dom = browser.inspect_dom()

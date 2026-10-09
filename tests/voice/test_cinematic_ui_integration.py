@@ -79,8 +79,9 @@ def cinematic_server():
 def test_cinematic_frontend_assets_served(cinematic_server):
     base_url = cinematic_server["base_url"]
 
-    # 1. HTML index
-    req = urllib.request.Request(f"{base_url}/")
+    # 1. HTML index (classic cinematic console now lives at /classic;
+    #    HOOD NEXT is the default at /).
+    req = urllib.request.Request(f"{base_url}/classic")
     with urllib.request.urlopen(req) as resp:
         assert resp.status == 200
         html = resp.read().decode("utf-8")
