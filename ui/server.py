@@ -51,7 +51,10 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
         candidate = unquote(raw_path)
         if "\x00" in candidate or "\\" in candidate:
             return str(self.ui_dir / "__blocked_static_path__")
-        if candidate in ("/", "/index.html"):
+        if candidate == "/":
+            # HOOD NEXT console is the default; the classic console stays at /classic.
+            candidate = "next/index.html" if (self.ui_dir / "next" / "index.html").is_file() else "index.html"
+        elif candidate in ("/index.html", "/classic", "/classic/"):
             candidate = "index.html"
         elif candidate.startswith("/static/"):
             candidate = candidate[len("/static/"):]

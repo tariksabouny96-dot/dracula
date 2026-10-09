@@ -49,7 +49,7 @@ FILE_FORMAT = (
 for _role in (AgentRole.ENGINEER, AgentRole.QA):
     SYSTEM_PROMPTS[_role] = SYSTEM_PROMPTS[_role].replace("{FILE_FORMAT}", FILE_FORMAT)
 
-_FILE_BLOCK = re.compile(r"^=== FILE: (?P<path>[^\n]{1,200}?) ===\n(?P<body>.*?)\n=== END FILE ===[ \t]*$",
+_FILE_BLOCK = re.compile(r"^=== FILE: (?P<path>[^\n]{1,200}?) ===\n(?:(?P<body>.*?)\n)??=== END FILE ===[ \t]*$",
                          re.S | re.M)
 
 
@@ -62,7 +62,9 @@ def parse_file_blocks(text: str) -> AgentWorkProduct:
     small models (0/3 valid files vs 3/3 in this format, measured 2026-10-09)."""
     if not isinstance(text, str) or "=== FILE:" not in text:
         raise ValueError("No '=== FILE:' blocks in agent output")
-    files = [{"path": m.group("path").strip(), "content": m.group("body") + "\n"} for m in _FILE_BLOCK.finditer(text)]
+    files = [{"path": m.group("path").strip(),
+              "content": (m.group("body") + "\n") if m.group("body") is not None else ""}
+             for m in _FILE_BLOCK.finditer(text)]
     if not files:
         raise ValueError("File blocks are not terminated with '=== END FILE ==='")
     if len(files) != text.count("=== FILE:"):

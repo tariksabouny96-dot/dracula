@@ -36,7 +36,7 @@ def test_agent_panel_end_to_end_in_browser(stack, viewport):  # noqa: F811
         page.on("pageerror", lambda e: errors.append(str(e)))
         missing = []
         page.on("response", lambda r: missing.append(r.url) if r.status == 404 else None)
-        page.goto(base + "/")
+        page.goto(base + "/classic")
         page.fill("#login-username", "owner")
         page.fill("#login-password", "OwnerPassword123!")
         page.click("#login-form button[type=submit]")

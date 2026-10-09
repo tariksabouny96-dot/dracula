@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#080d1b">
+  <title>HOOD — Intelligence Console</title>
+  <link rel="icon" href="/static/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/next/style.css">
+</head>
+<body>
+<a class="plain" href="#main" style="position:absolute;left:-999px" id="skipLink">Skip to content</a>
+<div id="app" class="app">
+  <aside class="rail" id="rail">
+    <div class="brand"><div class="brand-mark">H<span>◉</span></div><div><strong>HOOD</strong><small>INTELLIGENCE OS</small></div></div>
+    <nav id="nav" aria-label="Main navigation"></nav>
+    <div class="rail-bottom">
+      <div class="mode-note"><span class="signal" id="envSignal"></span><div><b id="envTitle">CHECKING</b><small id="envDetail">Connecting to Hood…</small></div></div>
+      <button class="plain rail-settings" data-page="Settings" type="button">⚙ &nbsp; Workspace settings</button>
+    </div>
+  </aside>
+  <div class="shell">
+    <header class="topbar">
+      <button id="menuToggle" class="icon-btn mobile-menu" aria-label="Toggle navigation" type="button">☰</button>
+      <div class="crumb" id="crumb">COMMAND / OVERVIEW</div>
+      <div class="top-search">
+        <span aria-hidden="true">⌕</span>
+        <input id="globalSearch" placeholder="Search missions, agents, capabilities…" aria-label="Search workspace" autocomplete="off">
+        <kbd>Ctrl K</kbd>
+        <div id="searchResults" class="search-results hidden" role="listbox" aria-label="Search results"></div>
+      </div>
+      <div class="top-right">
+        <span class="source-pill" id="sourcePill">● CHECKING</span>
+        <button class="icon-btn" id="alertsBtn" aria-label="Open approvals" type="button">♢ <span id="approvalCount" class="count-dot hidden">0</span></button>
+        <button class="btn small" id="stopBtn" type="button" title="Emergency stop: halts all agents and tools">■ STOP</button>
+        <button class="user-avatar" id="userBtn" type="button" aria-label="Account">?</button>
+      </div>
+    </header>
+    <main id="main" tabindex="-1" aria-live="polite"></main>
+    <footer class="statusbar">
+      <span><i class="signal" id="connSignal"></i> <span id="connText" class="conn">Live feed: connecting</span></span>
+      <span id="footerStatus">Every action is checked by the server.</span>
+      <span id="clock"></span>
+    </footer>
+  </div>
+</div>
+<div id="authOverlay" class="auth-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+  <form class="auth-card" id="authForm">
+    <h2 id="authTitle">Sign in to HOOD</h2>
+    <p id="authHint">Your session is checked on every request.</p>
+    <div id="authSetupFields" class="hidden">
+      <label for="authDisplay">Display name</label><input id="authDisplay" autocomplete="name">
+    </div>
+    <label for="authUser">Username</label><input id="authUser" autocomplete="username" required>
+    <label for="authPass">Password</label><input id="authPass" type="password" autocomplete="current-password" required>
+    <div id="authError" class="error-box hidden" role="alert"></div>
+    <button class="btn primary" type="submit" id="authSubmit">Sign in</button>
+  </form>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+<div id="modalBackdrop" class="modal-backdrop hidden">
+  <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <button id="modalClose" class="icon-btn modal-close" aria-label="Close dialog" type="button">✕</button>
+    <h2 id="modalTitle"></h2>
+    <div id="modalBody"></div>
+  </section>
+</div>
+<script src="/static/next/app.js"></script>
+</body>
+</html>

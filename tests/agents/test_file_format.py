@@ -26,3 +26,11 @@ def test_malformed_output_is_rejected(text):
 def test_prompts_ask_for_the_block_format():
     for role in (AgentRole.ENGINEER, AgentRole.QA):
         assert "=== FILE: <relative path> ===" in SYSTEM_PROMPTS[role] and "{FILE_FORMAT}" not in SYSTEM_PROMPTS[role]
+
+
+def test_empty_file_blocks_are_valid():
+    # Regression: a real Gemini answer started with an empty app/__init__.py and was rejected.
+    text = ("=== FILE: app/__init__.py ===\n=== END FILE ===\n\n"
+            "=== FILE: app/store.py ===\nimport uuid\n=== END FILE ===\n")
+    work = parse_file_blocks(text)
+    assert [(f.path, f.content) for f in work.files] == [("app/__init__.py", ""), ("app/store.py", "import uuid\n")]
