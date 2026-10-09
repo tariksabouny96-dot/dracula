@@ -9,6 +9,9 @@ from pathlib import Path
 
 import pytest
 
+# All tests here drive a real headless Chromium; skipped on Windows CI (Linux-served surface).
+pytestmark = pytest.mark.browser_e2e
+
 from services.browser.browser_service import _preinstalled_chromium
 from tests.agents.test_agent_engine import OBJECTIVE, needs_netns
 from tests.agents.test_agent_http import stack  # noqa: F401  (fixture)

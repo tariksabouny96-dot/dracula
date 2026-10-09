@@ -185,6 +185,7 @@ def test_ui_approval_workflow_integration(voice_system):
     assert approval.is_approved(req.approval_id) is True
 
 
+@pytest.mark.browser_e2e
 def test_jarvis_surface_http_server_and_browser_interaction(voice_system):
     """Verifies that Jarvis GUI server starts and serves HTML, API chat, and Emergency Stop."""
     interaction = voice_system["interaction"]

@@ -42,6 +42,10 @@ from services.policy.approval_service import ApprovalService
 
 @pytest.fixture(scope="module")
 def browser_service():
+    # Real-browser launch on the Windows CI runner is prone to hang; the dev
+    # workflow it validates is a Linux-served surface covered by the Linux job.
+    if sys.platform == "win32":
+        pytest.skip("BLOCKED_TARGET: real-browser dev-executor flow runs on Linux CI")
     srv = BrowserService()
     if srv.is_available():
         srv.launch(headless=True)

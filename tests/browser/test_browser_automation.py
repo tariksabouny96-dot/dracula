@@ -15,6 +15,9 @@ Verifies:
 """
 
 import pytest
+
+# All tests here drive a real headless Chromium; skipped on Windows CI (Linux-served surface).
+pytestmark = pytest.mark.browser_e2e
 import time
 from pathlib import Path
 

@@ -24,6 +24,14 @@ def pytest_collection_modifyitems(config, items):
                 item.add_marker(pytest.mark.skip(reason="BLOCKED_EXTERNAL: " + reason))
         if item.get_closest_marker("windows_only") and sys.platform != "win32":
             item.add_marker(pytest.mark.skip(reason="BLOCKED_TARGET: requires the owner's Windows machine"))
+        # Real-browser E2E drives a headless Chromium against the web console,
+        # which is a Linux-served production surface fully exercised by the
+        # Linux CI job. Headless Chromium on the Windows runner is prone to
+        # hang/flake, so these are skipped there with an explicit reason
+        # (never a silent pass).
+        if item.get_closest_marker("browser_e2e") and sys.platform == "win32":
+            item.add_marker(pytest.mark.skip(
+                reason="BLOCKED_TARGET: real-browser E2E runs on Linux CI; the web console is a Linux-served surface"))
 
 
 @pytest.fixture(autouse=True)
