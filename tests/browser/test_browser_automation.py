@@ -181,32 +181,40 @@ def test_approval_gated_consequential_browser_action(browser_service, local_web_
     # Navigate to consequential page (Risk L0 - allowed)
     gw.invoke_tool("browser_navigate", {"url": f"{local_web_server}/consequential"})
 
-    # 1. Attempt consequential action WITHOUT approval -> MUST BE BLOCKED
-    with pytest.raises(PermissionDeniedError) as exc_info:
-        gw.invoke_tool("browser_submit", {
-            "selector": "#btn-consequential-submit",
-            "is_consequential_browser": True
-        })
-    assert "requires explicit approval" in str(exc_info.value)
+    params = {"selector": "#btn-consequential-submit", "is_consequential_browser": True}
 
-    # 2. Create approval request and simulate explicit approval by Zak
-    req = appr_svc.create_request(
-        task_id="task-pay",
-        action_type="browser_submit",
-        target="http://127.0.0.1:8999/consequential",
-        reason="Confirm and submit application fee",
-        risk_level=RiskLevel.L3,
-        recommended_option="Approve payment"
-    )
+    # 1. No capability grant -> blocked before any approval is even considered.
+    with pytest.raises(PermissionDeniedError, match="not granted"):
+        gw.invoke_tool("browser_submit", params, task_id="task-pay")
+
+    # 2. Grant but no approval -> blocked.
+    gw.issue_capability_grant("browser:submit_consequential", "browser_submit", "Hood", ttl_seconds=120)
+    with pytest.raises(PermissionDeniedError, match="requires explicit approval"):
+        gw.invoke_tool("browser_submit", params, task_id="task-pay")
+
+    import hashlib, json as _json
+    digest = hashlib.sha256(_json.dumps(params, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+    # 3. A generic "yes" (approval without the exact parameter hash) is not enough.
+    vague = appr_svc.create_request(task_id="task-pay", action_type="browser_submit", target="browser_submit",
+                                    reason="Confirm and submit application fee", risk_level=RiskLevel.L3,
+                                    recommended_option="Approve payment")
+    appr_svc.resolve_request(vague.approval_id, approved=True, resolved_by="Zak")
+    with pytest.raises(PermissionDeniedError, match="exact parameter hash"):
+        gw.invoke_tool("browser_submit", params, task_id="task-pay", approval_id=vague.approval_id)
+
+    # 4. Exact action-bound approval -> MUST SUCCEED
+    req = appr_svc.create_request(task_id="task-pay", action_type="browser_submit", target="browser_submit",
+                                  reason="Confirm and submit application fee", risk_level=RiskLevel.L3,
+                                  options=[{"parameter_sha256": digest}], recommended_option="Approve payment",
+                                  principal="Hood")
     appr_svc.resolve_request(req.approval_id, approved=True, resolved_by="Zak")
-
-    # 3. Execute consequential action WITH valid approval -> MUST SUCCEED
-    res = gw.invoke_tool(
-        "browser_submit",
-        {"selector": "#btn-consequential-submit", "is_consequential_browser": True},
-        approval_id=req.approval_id
-    )
+    res = gw.invoke_tool("browser_submit", params, task_id="task-pay", approval_id=req.approval_id)
     assert res["status"] == "submitted"
+
+    # 5. Replay of the consumed approval is refused.
+    with pytest.raises(PermissionDeniedError, match="already been used"):
+        gw.invoke_tool("browser_submit", params, task_id="task-pay", approval_id=req.approval_id)
 
     # Verify that the browser DOM transitioned
     dom = browser_service.inspect_dom()
@@ -254,6 +262,7 @@ def test_method_router_escalation_to_browser(browser_service, local_web_server):
     assert "screenshot_path" in packet_browser.metadata
 
 
+@pytest.mark.live_network
 def test_real_public_web_safe_task(browser_service):
     """
     Executes a real public-web safe interaction task against a legitimate public resource:

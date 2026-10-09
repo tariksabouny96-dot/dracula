@@ -8,6 +8,7 @@ import pytest
 from services.internet_intelligence.engine import InternetIntelligenceEngine
 
 
+@pytest.mark.live_network
 def test_live_http_retrieval_and_evidence():
     """Retrieves a public webpage and verifies structured evidence packet."""
     engine = InternetIntelligenceEngine()

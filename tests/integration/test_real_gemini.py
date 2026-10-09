@@ -14,6 +14,7 @@ from services.model_gateway.cost_controller import CostController
 from services.model_gateway.gemini_adapter import GeminiProviderAdapter
 
 
+@pytest.mark.live_provider
 def test_gemini_adapter_live_call():
     """Verifies that the GeminiProviderAdapter successfully connects to Google Gemini API using vault credentials."""
     config = load_config()
@@ -36,6 +37,7 @@ def test_gemini_adapter_live_call():
     assert resp.usage.estimated_cost_usd == 0.0  # Free tier verification
 
 
+@pytest.mark.live_provider
 def test_model_router_with_cost_ledger():
     """Verifies that ModelRouter records live calls into the CostController call ledger."""
     config = load_config()

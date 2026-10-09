@@ -176,12 +176,13 @@ capabilities:
       gpu-worker: false
     min_version: "1.40.0"
     detection:
-      command: [".venv\\Scripts\\python.exe", "-c", "import importlib.metadata; print('playwright', importlib.metadata.version('playwright'))"]
+      command: ["{python}", "-c", "import importlib.metadata; print('playwright', importlib.metadata.version('playwright'))"]
       regex: 'playwright (\d+\.\d+\.\d+)'
     smoke_test:
-      command: [".venv\\Scripts\\python.exe", "-c", "from playwright.sync_api import sync_playwright; p = sync_playwright().start(); p.stop()"]
+      command: ["{python}", "-c", "from playwright.sync_api import sync_playwright; p = sync_playwright().start(); p.stop()"]
     install_strategy:
       windows: ".venv\\Scripts\\pip.exe install playwright && .venv\\Scripts\\playwright.exe install chromium"
+      linux: ".venv/bin/pip install playwright && .venv/bin/playwright install chromium"
     notes: "Deterministic browser automation for web tasks."
 
   secret_backend:

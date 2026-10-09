@@ -210,6 +210,7 @@ def test_tool_gateway_dev_tools_integration(dev_executor):
     assert "requirements.txt" in result or "server.py" in result["entrypoints"]
 
 
+@pytest.mark.live_provider
 def test_end_to_end_autonomous_break_fix_scenario(dev_executor):
     """
     Executes full autonomous defect reproduction, diagnosis, solution formulation,

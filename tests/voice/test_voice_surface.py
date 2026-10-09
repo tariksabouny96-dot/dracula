@@ -94,7 +94,8 @@ def test_gemini_live_adapter_and_disabled_openai(voice_system):
     assert len(capabilities) >= 3
     gemini_cap = next(c for c in capabilities if c["provider"] == "GEMINI_LIVE")
     assert gemini_cap["interruption_support"] is True
-    assert gemini_cap["cost_class"] == "free-tier ($0.00)"
+    # Billing is not verified; the capability must not advertise a free tier.
+    assert gemini_cap["cost_class"] == "UNVERIFIED"
 
     # 2. OpenAI Realtime strictly disabled
     openai_cap = next(c for c in capabilities if c["provider"] == "OPENAI_REALTIME")
@@ -110,15 +111,16 @@ def test_shared_voice_text_continuity_and_barge_in(voice_system):
     interaction = voice_system["interaction"]
     session_id = "test_shared_continuity"
 
-    # Step 1: Voice input starts interaction
-    hood_reply1 = interaction.handle_voice_input(b"mock_voice", session_id=session_id)
-    assert hood_reply1.sender == "Hood"
-    assert hood_reply1.modality == "voice"
-
+    # Step 1: No STT provider is connected. Voice input must fail visibly and must
+    # not inject a fabricated transcript into the shared conversation.
+    with pytest.raises(NotImplementedError):
+        interaction.handle_voice_input(b"mock_voice", session_id=session_id)
     session = interaction.sessions[session_id]
-    assert len(session.messages) == 2
+    assert session.messages == []
+    assert session.ui_state == UIState.IDLE
 
-    # Step 2: Text input in the exact same active conversation session
+    # Step 2: Text remains a working accessible fallback in the same session.
+    interaction.handle_text_input("Status check.", session_id=session_id)
     hood_reply2 = interaction.handle_text_input("Focus on authentication.", session_id=session_id)
     assert hood_reply2.sender == "Hood"
     assert len(session.messages) == 4
@@ -138,24 +140,23 @@ def test_voice_cost_telemetry_and_privacy_state(voice_system):
     router = voice_system["router"]
     session_id = "telemetry_session_001"
 
-    # Start session
+    # Start session: no audio leaves the machine and no free tier is claimed.
     metrics = router.start_voice_session(session_id)
-    assert metrics.is_free_tier is True
-    assert router.microphone_privacy == MicrophonePrivacyState.STREAMING_TO_PROVIDER
-
-    # Transcribe and speak
-    router.transcribe_audio(b"audio_bytes", session_id)
-    router.speak("All systems nominal.", session_id)
-
-    # End session
-    ended_metrics = router.end_voice_session(session_id)
-    assert ended_metrics.end_time is not None
-    assert ended_metrics.audio_input_duration_seconds > 0
-    assert ended_metrics.audio_output_duration_seconds > 0
+    assert metrics.is_free_tier is False
     assert router.microphone_privacy == MicrophonePrivacyState.LOCAL_WAKE_ACTIVE
 
-    ledger = router.get_cost_ledger()
-    assert len(ledger) >= 1
+    # No STT/TTS provider is connected: both fail closed instead of faking audio.
+    with pytest.raises(NotImplementedError):
+        router.transcribe_audio(b"audio_bytes", session_id)
+    with pytest.raises(NotImplementedError):
+        router.speak("All systems nominal.", session_id)
+
+    # Ending the session records zero measured audio, not invented durations.
+    ended_metrics = router.end_voice_session(session_id)
+    assert ended_metrics.end_time is not None
+    assert ended_metrics.audio_input_duration_seconds == 0
+    assert ended_metrics.audio_output_duration_seconds == 0
+    assert router.microphone_privacy == MicrophonePrivacyState.LOCAL_WAKE_ACTIVE
 
 
 def test_ui_approval_workflow_integration(voice_system):

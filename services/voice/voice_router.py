@@ -81,7 +81,7 @@ class VoiceRouter:
             session_id=session_id,
             provider=self.current_provider_mode,
             start_time=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            is_free_tier=True,
+            is_free_tier=False,  # billing tier unknown; never claim free usage
             estimated_cost_usd=0.0
         )
         self.session_metrics[session_id] = metrics

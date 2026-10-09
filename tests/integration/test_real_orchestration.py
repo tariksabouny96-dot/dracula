@@ -18,6 +18,7 @@ from services.tool_gateway.tools import FSListDirTool, GitOpsTool, TestRunnerToo
 from services.core.hood_commander import HoodCommander
 
 
+@pytest.mark.live_provider
 def test_real_orchestrated_audit_task(tmp_path):
     """Executes the full multi-agent audit task, verifying DAG scheduling and maker-checker validation."""
     config = load_config()

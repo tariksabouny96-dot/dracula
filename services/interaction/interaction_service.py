@@ -182,7 +182,12 @@ class InteractionService:
             self.trigger_barge_in_interruption(sid)
 
         session.ui_state = UIState.LISTENING
-        stt_res = self.voice_router.transcribe_audio(audio_data, sid)
+        try:
+            stt_res = self.voice_router.transcribe_audio(audio_data, sid)
+        except NotImplementedError:
+            # No speech-to-text provider: fail visibly, never invent a transcript.
+            session.ui_state = UIState.IDLE
+            raise
 
         user_msg = ConversationMessage(sender="Zak", modality="voice", text=stt_res.transcript, speaker_id="zak")
         session.messages.append(user_msg)

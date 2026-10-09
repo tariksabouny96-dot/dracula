@@ -267,7 +267,8 @@ def audit_dependency(key: str, spec: dict, role: str, log_file: Path) -> dict:
     if platform.system() == "Windows" and binary_name == "npm":
         binary_name = "npm.cmd"
 
-    exe_path = locate_executable(binary_name)
+    # "{python}" means the interpreter running Hood (the project venv), on any OS.
+    exe_path = sys.executable if binary_name == "{python}" else locate_executable(binary_name)
     if not exe_path:
         if is_required:
             report_entry["status"] = "MISSING"
@@ -310,7 +311,7 @@ def audit_dependency(key: str, spec: dict, role: str, log_file: Path) -> dict:
         # Run smoke test
         smoke_cfg = spec.get("smoke_test")
         if smoke_cfg and "command" in smoke_cfg:
-            s_cmd = list(smoke_cfg["command"])
+            s_cmd = [sys.executable if tok == "{python}" else tok for tok in smoke_cfg["command"]]
             s_cmd[0] = exe_path
             s_ok, _, _ = run_command(s_cmd)
             report_entry["smoke_test_passed"] = s_ok
