@@ -38,7 +38,14 @@ class ModelRouter:
         model = resolve(request) if callable(resolve) else None
         if provider_name.value in NON_BILLING_PROVIDERS:
             return model, None, False
-        price = self.price_table.get(provider_name.value, {}).get(model) if model else None
+        table = self.price_table.get(provider_name.value, {})
+        # Every model the adapter may fall back to must be priced; budget for the dearest one.
+        candidates = getattr(provider, "candidate_models", None)
+        names = candidates(request) if callable(candidates) else [model]
+        if not names or any(n is None or n not in table for n in names):
+            return model, None, True
+        price = max((table[n] for n in names),
+                    key=lambda p: p.input_per_1k_usd + p.output_per_1k_usd)
         return model, price, True
 
     def _init_providers(self):

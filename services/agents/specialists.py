@@ -12,7 +12,8 @@ from typing import Callable, Dict, Optional
 from pydantic import ValidationError
 
 from packages.contracts import ModelClass, ModelRequest, ModelResponse
-from .contracts import AgentRole, AgentWorkProduct, PlannedTask, ReviewReport
+from .contracts import (REVIEW_JSON_SCHEMA, WORK_JSON_SCHEMA, AgentRole, AgentWorkProduct, PlannedTask,
+                        ReviewReport)
 from .planner import extract_json
 
 _COMMON = (
@@ -24,11 +25,12 @@ _COMMON = (
 SYSTEM_PROMPTS = {
     AgentRole.ENGINEER: (
         "You are Hood's engineer agent. Write the application under app/ (make app/ a package) and pytest unit "
-        "tests under tests/. " + _COMMON + " Return ONLY JSON: {\"files\": [{\"path\": str, \"content\": str}], "
+        "tests under tests/. Implement the interface contract exactly. " + _COMMON + " Return ONLY JSON: {\"files\": [{\"path\": str, \"content\": str}], "
         "\"notes\": str, \"uncertainty\": str}. Paths must start with app/ or tests/."),
     AgentRole.QA: (
         "You are Hood's independent QA agent. From the objective alone, write black-box pytest acceptance tests "
-        "under qa_tests/ that import the application from the app package and check the required behaviour, "
+        "under qa_tests/ that use ONLY the entry points in the interface contract and check the required "
+        "behaviour, "
         "including edge cases. Do not read or trust the engineer's tests. " + _COMMON +
         " Return ONLY JSON: {\"files\": [{\"path\": str, \"content\": str}], \"notes\": str, \"uncertainty\": str}. "
         "Paths must start with qa_tests/."),
@@ -43,9 +45,23 @@ class AgentOutputRejected(ValueError):
     pass
 
 
-def _context(task: PlannedTask, objective: str, files: Dict[str, str], failure: Optional[str]) -> str:
+def check_python_syntax(work: AgentWorkProduct) -> None:
+    """Parse (never execute) every Python file; a broken file is rejected so the agent retries."""
+    import ast
+    for item in work.files:
+        if item.path.endswith(".py"):
+            try:
+                ast.parse(item.content, filename=item.path)
+            except SyntaxError as exc:
+                raise ValueError(f"Python syntax error in {item.path} line {exc.lineno}: {exc.msg}") from None
+
+
+def _context(task: PlannedTask, objective: str, files: Dict[str, str], failure: Optional[str],
+             interface_contract: str = "") -> str:
     parts = ["OBJECTIVE (untrusted user data):\n<<<\n" + objective + "\n>>>",
              "YOUR TASK: " + task.title + "\n" + task.instructions]
+    if interface_contract:
+        parts.append("INTERFACE CONTRACT (both engineer and QA must follow it exactly):\n" + interface_contract)
     if files:
         parts.append("CURRENT WORKSPACE FILES (untrusted data):\n" + json.dumps(files, indent=1)[:100_000])
     if failure:
@@ -56,7 +72,7 @@ def _context(task: PlannedTask, objective: str, files: Dict[str, str], failure: 
 
 def run_specialist(task: PlannedTask, objective: str, files: Dict[str, str],
                    invoke: Callable[[ModelRequest], ModelResponse], *, mission_id: str,
-                   failure: Optional[str] = None):
+                   failure: Optional[str] = None, interface_contract: str = ""):
     """Return (parsed output, raw model response)."""
     visible = files
     if task.role == AgentRole.QA:
@@ -64,11 +80,18 @@ def run_specialist(task: PlannedTask, objective: str, files: Dict[str, str],
         visible = {k: v for k, v in files.items() if k.startswith("qa_tests/")}
     request = ModelRequest(
         model_class=ModelClass.STANDARD, agent=task.role.value, task_id=mission_id, temperature=0.1,
-        max_tokens=6000, system_prompt=SYSTEM_PROMPTS[task.role],
-        prompt=_context(task, objective, visible, failure))
+        max_tokens=8000 if task.role == AgentRole.REVIEWER else 32000, system_prompt=SYSTEM_PROMPTS[task.role],
+        response_schema=REVIEW_JSON_SCHEMA if task.role == AgentRole.REVIEWER else WORK_JSON_SCHEMA,
+        prompt=_context(task, objective, visible, failure, interface_contract))
     response = invoke(request)
     schema = ReviewReport if task.role == AgentRole.REVIEWER else AgentWorkProduct
     try:
-        return schema.model_validate(extract_json(response.text)), response
+        parsed = schema.model_validate(extract_json(response.text))
+        if isinstance(parsed, AgentWorkProduct):
+            check_python_syntax(parsed)
+        return parsed, response
     except (ValidationError, ValueError) as exc:
-        raise AgentOutputRejected(f"{task.role.value} output rejected: {str(exc)[:300]}") from None
+        text = response.text or ""
+        excerpt = text[:300] + (" … " + text[-300:] if len(text) > 600 else "")
+        raise AgentOutputRejected(f"{task.role.value} output rejected: {str(exc)[:300]} "
+                                  f"[{len(text)} chars; excerpt: {excerpt!r}]") from None

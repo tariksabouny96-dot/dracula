@@ -327,8 +327,9 @@ def test_crash_after_model_call_reapplies_without_new_model_call(tmp_path):
 def test_repeated_crash_blocks_for_operator(tmp_path):
     engine = make_engine(tmp_path)
     mid = approved(engine)["mission_id"]
+    from services.agents.engine import MAX_TASK_ATTEMPTS
     past = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
-    for _ in range(2):
+    for _ in range(MAX_TASK_ATTEMPTS):
         task, _ = engine._claim(OWNER, mid)
         with sqlite3.connect(engine.db_path) as db:
             db.execute("UPDATE tasks SET lease_expires=? WHERE mission_id=?", (past, mid))
@@ -446,3 +447,87 @@ def test_refused_before_sending_is_not_charged(tmp_path):
     call = engine.spend(OWNER, status["mission_id"])["calls"][0]
     assert call["reserved_usd"] > 0 and call["actual_usd"] == 0
     assert engine.spend(OWNER, status["mission_id"])["total_usd"] == 0
+
+
+def test_operator_retry_after_provider_outage(tmp_path):
+    calls = {"n": 0}
+    base = ScriptedModel()
+
+    def flaky(request):
+        if request.agent == "engineer" and calls["n"] == 0:
+            calls["n"] += 1
+            raise ProviderError("Gemini server error (503): high demand")
+        return base(request)
+    engine = make_engine(tmp_path, flaky)
+    mid = approved(engine)["mission_id"]
+    blocked = engine.step(OWNER, mid)
+    assert blocked["state"] == "BLOCKED" and "503" in blocked["error"]
+    with pytest.raises(MissionConflict):
+        engine.step(OWNER, mid)
+    with pytest.raises(KeyError):
+        engine.retry_blocked("intruder", mid, "x")
+    resumed = engine.retry_blocked(OWNER, mid, "owner")
+    assert resumed["state"] == "QUEUED" and resumed["error"] is None
+    if network_isolation_available():
+        assert engine.run(OWNER, mid)["state"] == "COMPLETED"
+    with pytest.raises(MissionConflict):
+        engine.retry_blocked(OWNER, mid, "owner")
+
+
+
+def test_syntax_broken_agent_output_is_retried_not_written(tmp_path):
+    broken = json.dumps({"files": [{"path": "qa_tests/test_x.py", "content": "def test_x(:\n    pass\n"}],
+                         "notes": "", "uncertainty": ""})
+    seen = {"qa": 0}
+    base = ScriptedModel()
+
+    def model(request):
+        if request.agent == "qa":
+            seen["qa"] += 1
+            if seen["qa"] == 1:
+                return base.__class__(overrides={"qa": broken})(request)
+        return base(request)
+    engine = make_engine(tmp_path, model)
+    mid = approved(engine)["mission_id"]
+    engine.step(OWNER, mid)          # engineer
+    after_bad = engine.step(OWNER, mid)  # qa: first answer has a syntax error
+    qa = next(t for t in after_bad["tasks"] if t["role"] == "qa")
+    assert qa["state"] == "QUEUED" and "syntax error" in qa["error"]
+    assert not (engine.root / "workspaces" / mid / "qa_tests" / "test_x.py").exists()
+    good = engine.step(OWNER, mid)
+    assert next(t for t in good["tasks"] if t["role"] == "qa")["state"] == "COMPLETED"
+
+
+@needs_netns
+def test_uncollectable_qa_suite_is_repaired_by_qa_not_engineer(tmp_path):
+    # Valid syntax, but the suite cannot be collected (imports a module that does not exist).
+    broken_import = json.dumps({"files": [{"path": "qa_tests/test_acceptance.py",
+                                           "content": "import app.does_not_exist\n\ndef test_a():\n    pass\n"}],
+                                "notes": "", "uncertainty": ""})
+    calls = {"qa": 0}
+    base = ScriptedModel()
+
+    def model(request):
+        if request.agent == "qa":
+            calls["qa"] += 1
+            if calls["qa"] == 1:
+                return ScriptedModel(overrides={"qa": broken_import})(request)
+        return base(request)
+    engine = make_engine(tmp_path, model)
+    final = engine.run(OWNER, approved(engine)["mission_id"])
+    roles = [(t["task_id"], t["role"]) for t in final["tasks"]]
+    assert ("qa_repair_1", "qa") in roles, roles
+    # After QA repaired its suite, the real planted bug was found and repaired by the engineer.
+    assert final["state"] == "COMPLETED" and ("repair_2", "engineer") in roles
+
+
+def test_interface_contract_reaches_engineer_and_qa(tmp_path):
+    plan = json.loads(json.dumps(PLAN))
+    plan["interface_contract"] = "app.server.make_server(port=0) -> HTTPServer"
+    model = ScriptedModel(plan=plan)
+    engine = make_engine(tmp_path, model)
+    mid = approved(engine)["mission_id"]
+    engine.step(OWNER, mid)
+    engine.step(OWNER, mid)
+    prompts = {r.agent: r.prompt for r in model.requests if r.agent in ("engineer", "qa")}
+    assert all("INTERFACE CONTRACT" in p and "make_server(port=0)" in p for p in prompts.values())

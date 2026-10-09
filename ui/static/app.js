@@ -1878,6 +1878,10 @@ document.getElementById('nova-refresh-missions')?.addEventListener('click', nova
       actions.appendChild(button('Run agents', () =>
         post('/api/agents/missions/' + m.mission_id + '/run', {confirm: true})));
     }
+    if (m.state === 'BLOCKED' && m.approved_by) {
+      actions.appendChild(button('Retry blocked work', () =>
+        post('/api/agents/missions/' + m.mission_id + '/retry', {confirm: true})));
+    }
     if (!['COMPLETED', 'FAILED', 'UNVERIFIED', 'CANCELLED'].includes(m.state)) {
       actions.appendChild(button('Cancel mission', () => post('/api/agents/missions/' + m.mission_id + '/cancel', {})));
     }

@@ -1029,6 +1029,11 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
                 self._send_json({"status": "RUN_STARTED", "mission_id": mission_id}, status=202)
             elif action == "/cancel":
                 self._send_json(engine.cancel(owner, mission_id, session.username))
+            elif action == "/retry":
+                if payload.get("confirm") is not True:
+                    self._send_json({"error": "Explicit retry confirmation required"}, status=400)
+                    return
+                self._send_json(engine.retry_blocked(owner, mission_id, session.username))
             else:
                 self._send_json({"error": "Not found"}, status=404)
         except KeyError:

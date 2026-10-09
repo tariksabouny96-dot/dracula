@@ -38,6 +38,10 @@ def load_price_table(path: Optional[str] = None) -> Dict[str, Dict[str, ModelPri
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
     table: Dict[str, Dict[str, ModelPrice]] = {}
     for provider, models in raw.items():
+        if provider.startswith("_"):  # "_comment" and other annotations
+            continue
+        if not isinstance(models, dict):
+            raise ValueError(f"Pricing for provider {provider!r} must be an object")
         for model, entry in models.items():
             price = ModelPrice(float(entry["input_per_1k_usd"]), float(entry["output_per_1k_usd"]),
                                str(entry.get("as_of", "unknown")), str(entry.get("source", "unspecified")))

@@ -42,6 +42,11 @@ def verify(workspace: Workspace) -> VerificationDecision:
         result.tests_collected = _count_tests(result.output_tail)
         if result.exit_code == 5:  # pytest: no tests collected
             result.passed = False
+        # Exit 2 with a collection error means the test files themselves are broken.
+        if result.exit_code in (2, 4) or "error during collection" in result.output_tail \
+                or "errors during collection" in result.output_tail:
+            result.passed = False
+            result.suite_invalid = True
         checks.append(result)
     digest_after = workspace.digest()
     if digest_after != digest_before:

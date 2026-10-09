@@ -234,6 +234,10 @@ class ModelRequest(BaseModel):
     task_id: Optional[str] = None
     agent: Optional[str] = None
     project: str = "default"
+    # e.g. "application/json": ask the provider for structured output (still validated by Hood).
+    response_mime_type: Optional[str] = None
+    # JSON Schema the provider should constrain decoding to (output is still validated by Hood).
+    response_schema: Optional[Dict[str, Any]] = None
 
 
 class ModelResponse(BaseModel):

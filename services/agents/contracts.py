@@ -85,6 +85,9 @@ class PlannedTask(_Strict):
 class MissionPlan(_Strict):
     summary: str = Field(min_length=10, max_length=2000)
     deliverable: str = Field(min_length=3, max_length=400)
+    # Exact entry points both the engineer (implements) and QA (tests) must use. Shared
+    # contract keeps their work independent but compatible.
+    interface_contract: str = Field(default="", max_length=3000)
     tasks: List[PlannedTask] = Field(min_length=1, max_length=MAX_TASKS)
     clarifications_needed: List[str] = Field(default_factory=list, max_length=8)
 
@@ -120,6 +123,9 @@ class CheckResult(_Strict):
     output_tail: str = ""
     duration_ms: int = 0
     tests_collected: Optional[int] = None
+    # True when the suite itself could not be collected (syntax/import error in the tests),
+    # which says nothing about the application.
+    suite_invalid: bool = False
 
 
 class VerificationVerdict(str, Enum):
@@ -133,3 +139,36 @@ class VerificationDecision(_Strict):
     checks: List[CheckResult]
     workspace_sha256: str
     reason: str = ""
+
+
+# JSON Schemas handed to providers that support constrained decoding. They mirror the
+# pydantic models above; Hood still validates every response with those models.
+_STR = {"type": "string"}
+PLAN_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": _STR, "deliverable": _STR, "interface_contract": _STR,
+        "tasks": {"type": "array", "items": {"type": "object", "properties": {
+            "id": _STR, "role": {"type": "string", "enum": ["engineer", "qa", "reviewer"]},
+            "title": _STR, "instructions": _STR, "depends_on": {"type": "array", "items": _STR}},
+            "required": ["id", "role", "title", "instructions", "depends_on"]}},
+        "clarifications_needed": {"type": "array", "items": _STR}},
+    "required": ["summary", "deliverable", "interface_contract", "tasks", "clarifications_needed"],
+}
+WORK_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "files": {"type": "array", "items": {"type": "object", "properties": {"path": _STR, "content": _STR},
+                                             "required": ["path", "content"]}},
+        "notes": _STR, "uncertainty": _STR},
+    "required": ["files", "notes", "uncertainty"],
+}
+REVIEW_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "findings": {"type": "array", "items": {"type": "object", "properties": {
+            "severity": {"type": "string", "enum": ["info", "low", "medium", "high", "critical"]},
+            "path": _STR, "message": _STR}, "required": ["severity", "path", "message"]}},
+        "notes": _STR},
+    "required": ["findings", "notes"],
+}

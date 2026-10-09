@@ -380,3 +380,11 @@ def test_code_modifier_uses_canonical_confinement(tmp_path):
         with pytest.raises(PermissionError):
             mod._validate_path(bad)
     assert mod._validate_path("pkg/mod.py") == (tmp_path / "pkg/mod.py").resolve()
+
+
+def test_repo_pricing_file_loads_and_declares_source():
+    from pathlib import Path
+    from packages.config.pricing import load_price_table
+    table = load_price_table(str(Path(__file__).resolve().parents[2] / "config" / "model_pricing.free-tier.json"))
+    price = table["gemini"]["gemini-3.8-flash"]
+    assert price.source.startswith("owner-declared") and price.as_of

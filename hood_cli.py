@@ -247,6 +247,8 @@ def _agent_command(runtime, args):
         result = engine.status(owner, args.id)
     elif cmd == "cancel":
         result = engine.cancel(owner, args.id, actor="local-cli-operator")
+    elif cmd == "retry":
+        result = engine.retry_blocked(owner, args.id, actor="local-cli-operator")
     elif cmd == "events":
         result = engine.events(owner, args.id)
     elif cmd == "list":
@@ -290,7 +292,7 @@ def main():
     a_approve = agent_sub.add_parser("approve", help="Approve the exact plan hash shown by 'create'/'status'")
     a_approve.add_argument("--id", required=True)
     a_approve.add_argument("--plan-sha256", required=True)
-    for name in ("run", "status", "cancel", "events"):
+    for name in ("run", "status", "cancel", "events", "retry"):
         agent_sub.add_parser(name).add_argument("--id", required=True)
     a_art = agent_sub.add_parser("artifact", help="Write the verified artifact zip")
     a_art.add_argument("--id", required=True)

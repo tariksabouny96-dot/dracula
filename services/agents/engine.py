@@ -49,7 +49,7 @@ from services.model_gateway.base import ProviderNotConfiguredError
 
 LEASE_SECONDS = 600
 MAX_REPAIRS = 2
-MAX_TASK_ATTEMPTS = 2
+MAX_TASK_ATTEMPTS = 3
 
 
 class MissionConflict(RuntimeError):
@@ -356,6 +356,33 @@ class AgentEngine:
             self._event(db, mission_id, actor, "PROCESSES_KILLED", {"count": killed})
         return self.status(owner, mission_id)
 
+    def retry_blocked(self, owner: str, mission_id: str, actor: str) -> Dict[str, Any]:
+        """Operator decision to retry a BLOCKED mission (e.g. provider outage, raised budget).
+
+        Blocked tasks are re-queued; a task whose model proposal was already persisted
+        re-applies that proposal instead of calling the model again.
+        """
+        self.stop_latch.check()
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            mission = self._mission(owner, mission_id, db)
+            if mission["state"] != MissionState.BLOCKED.value:
+                db.execute("ROLLBACK")
+                raise MissionConflict(f"Mission is {mission['state']}; only BLOCKED missions can be retried")
+            if not mission["approved_by"]:
+                db.execute("ROLLBACK")
+                raise MissionConflict("Mission was blocked before plan approval; create a new mission")
+            requeued = db.execute("UPDATE tasks SET state=?, fence=fence+1, lease_owner=NULL, error=NULL, "
+                                  "updated=? WHERE mission_id=? AND state=?",
+                                  (TaskState.QUEUED.value, _now(), mission_id, TaskState.BLOCKED.value)).rowcount
+            done = db.execute("SELECT COUNT(*) FROM tasks WHERE mission_id=? AND state=?",
+                              (mission_id, TaskState.COMPLETED.value)).fetchone()[0]
+            self._receipt(db, mission_id, None, "OPERATOR_RETRY", {"retried_by": actor, "tasks_requeued": requeued,
+                                                                   "previous_error": mission["error"]})
+            self._set_state(db, mission_id, MissionState.RUNNING if done else MissionState.QUEUED, actor, error=None)
+            db.execute("COMMIT")
+        return self.status(owner, mission_id)
+
     def halt_all(self) -> Dict[str, Any]:
         """Emergency-stop hook: kill every sandbox process and block in-flight work."""
         with self._ws_lock:
@@ -487,10 +514,11 @@ class AgentEngine:
             if task_row["proposal"]:
                 output = json.loads(task_row["proposal"])  # recovery: re-apply, no new model call
             else:
+                plan = json.loads(mission["plan"]) if mission["plan"] else {}
                 parsed, response = run_specialist(
                     task, mission["objective"], ws.read_files(),
                     lambda req: self._call_model(mission, task.id, req), mission_id=mission_id,
-                    failure=task_row["failure_context"])
+                    failure=task_row["failure_context"], interface_contract=plan.get("interface_contract", ""))
                 output = {"schema": "review" if task.role == AgentRole.REVIEWER else "work",
                           "data": parsed.model_dump(mode="json"),
                           "provider": getattr(response.provider, "value", str(response.provider)),
@@ -572,23 +600,32 @@ class AgentEngine:
             self._receipt(db, mission_id, None, "VERIFICATION", {
                 "verdict": decision.verdict.value, "workspace_sha256": decision.workspace_sha256,
                 "checks": [{"name": c.name, "exit_code": c.exit_code, "passed": c.passed,
-                            "tests_collected": c.tests_collected} for c in decision.checks],
+                            "tests_collected": c.tests_collected, "suite_invalid": c.suite_invalid}
+                           for c in decision.checks],
                 "network_isolated": ws.network_isolated, "verifier": "deterministic-process-checks"})
             if decision.verdict == VerificationVerdict.PASS:
                 db.execute("COMMIT")
                 return self._package(owner, mission_id, decision)
             if decision.verdict == VerificationVerdict.FAIL and mission["repairs"] < MAX_REPAIRS:
-                repair_id = f"repair_{mission['repairs'] + 1}"
-                report = "\n\n".join(f"[{c.name}] exit={c.exit_code}\n{c.output_tail[-3000:]}"
-                                     for c in decision.checks if not c.passed)
+                n = mission["repairs"] + 1
+                broken_qa = any(c.suite_invalid for c in decision.checks if c.name == "independent_acceptance_tests")
+                failing = [c for c in decision.checks if not c.passed]
+                report = "\n\n".join(f"[{c.name}] exit={c.exit_code}\n{c.output_tail[-3000:]}" for c in failing)
+                if broken_qa:
+                    # The acceptance suite cannot even be collected: the QA agent fixes its own tests.
+                    role, repair_id, title = AgentRole.QA, f"qa_repair_{n}", "Repair broken acceptance tests"
+                    instructions = ("Your acceptance tests could not be collected. Fix them so they run, keep testing the "
+                                    "objective through the interface contract only, and do not weaken assertions.")
+                else:
+                    role, repair_id, title = AgentRole.ENGINEER, f"repair_{n}", "Repair failing checks"
+                    instructions = ("Fix the application so that the failing independent checks pass. "
+                                    "Do not modify or delete tests to make them pass.")
                 seq = db.execute("SELECT COALESCE(MAX(seq),0)+1 FROM tasks WHERE mission_id=?", (mission_id,)).fetchone()[0]
                 db.execute("INSERT INTO tasks (mission_id, task_id, seq, role, title, instructions, depends_on, state, "
                            "failure_context, updated) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                           (mission_id, repair_id, seq, AgentRole.ENGINEER.value,
-                            "Repair failing checks", "Fix the application so that the failing independent checks pass. "
-                            "Do not modify or delete tests to make them pass.", "[]", TaskState.QUEUED.value,
+                           (mission_id, repair_id, seq, role.value, title, instructions, "[]", TaskState.QUEUED.value,
                             report, _now()))
-                self._set_state(db, mission_id, MissionState.RUNNING, "verifier", repairs=mission["repairs"] + 1,
+                self._set_state(db, mission_id, MissionState.RUNNING, "verifier", repairs=n,
                                 verdict=decision.verdict.value, error=decision.reason)
             else:
                 final = MissionState.FAILED if decision.verdict == VerificationVerdict.FAIL else MissionState.UNVERIFIED
