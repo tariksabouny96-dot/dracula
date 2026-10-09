@@ -1,0 +1,23 @@
+{
+  "name": "hood-system",
+  "version": "0.1.0",
+  "description": "Hood Personal AI Operating System and Executive Orchestrator",
+  "private": true,
+  "scripts": {
+    "bootstrap": "python infra/bootstrap/bootstrap.py --role dev-temporary",
+    "test": "python -m pytest tests -v",
+    "test:unit": "python -m pytest tests/unit -v",
+    "test:integration": "python -m pytest tests/integration -v",
+    "test:acceptance": "python -m pytest tests/acceptance -v"
+  },
+  "keywords": [
+    "ai",
+    "orchestration",
+    "executive",
+    "operating-system",
+    "hood",
+    "governance"
+  ],
+  "author": "Zak",
+  "license": "UNLICENSED"
+}

@@ -1,0 +1,198 @@
+# HOOD System Dependency Specification
+# Governed by Master System Specification Appendix F & Build Instructions v1.0
+
+capabilities:
+  git:
+    name: "Git Source Control"
+    required_roles:
+      dev-temporary: true
+      local-primary: true
+      cloud-core: true
+      gpu-worker: true
+      desktop-node: true
+      laptop-node: true
+    min_version: "2.30.0"
+    detection:
+      command: ["git", "--version"]
+      regex: 'git version (\d+\.\d+\.\d+)'
+    smoke_test:
+      command: ["git", "status"]
+    install_strategy:
+      windows: "winget install --id Git.Git -e --source winget"
+      linux: "apt-get install -y git"
+    requires_admin: false
+    can_reboot: false
+    notes: "Repository and migration backbone."
+
+  python:
+    name: "Python 3 Runtime"
+    required_roles:
+      dev-temporary: true
+      local-primary: true
+      cloud-core: true
+      gpu-worker: true
+      desktop-node: true
+      laptop-node: true
+    min_version: "3.12.0"
+    max_version: "3.14.0"
+    detection:
+      command: ["python", "--version"]
+      regex: 'Python (\d+\.\d+\.\d+)'
+    smoke_test:
+      command: ["python", "-c", "import sys, platform; assert sys.version_info >= (3, 12)"]
+    install_strategy:
+      windows: "winget install Python.Python.3.13"
+      linux: "apt-get install -y python3 python3-venv python3-pip"
+    requires_admin: false
+    can_reboot: false
+    notes: "Core runtime for workers, analysis, and orchestration."
+
+  python_venv:
+    name: "Python Virtual Environment"
+    required_roles:
+      dev-temporary: true
+      local-primary: true
+      cloud-core: true
+      gpu-worker: true
+      desktop-node: true
+      laptop-node: true
+    min_version: "3.12.0"
+    detection:
+      command: ["python", "-m", "venv", "--help"]
+      regex: 'usage: venv'
+    smoke_test:
+      custom: "verify_venv"
+    requires_admin: false
+    can_reboot: false
+    notes: "Ensures strict project dependency isolation without global pollution."
+
+  nodejs:
+    name: "Node.js Runtime"
+    required_roles:
+      dev-temporary: true
+      local-primary: true
+      cloud-core: true
+      gpu-worker: false
+    min_version: "20.0.0"
+    detection:
+      command: ["node", "--version"]
+      regex: 'v(\d+\.\d+\.\d+)'
+    smoke_test:
+      command: ["node", "-e", "console.log(process.version)"]
+    install_strategy:
+      windows: "winget install OpenJS.NodeJS.LTS"
+      linux: "apt-get install -y nodejs"
+    requires_admin: false
+    can_reboot: false
+    notes: "Runtime for desktop/web UI and TypeScript orchestration."
+
+  npm:
+    name: "Node Package Manager"
+    required_roles:
+      dev-temporary: true
+      local-primary: true
+      cloud-core: true
+      gpu-worker: false
+    min_version: "9.0.0"
+    detection:
+      windows_cmd: "npm.cmd"
+      command: ["npm", "--version"]
+      regex: '(\d+\.\d+\.\d+)'
+    smoke_test:
+      windows_cmd: "npm.cmd"
+      command: ["npm", "--version"]
+    requires_admin: false
+    can_reboot: false
+    notes: "On Windows, npm.cmd is used when PowerShell blocks npm.ps1 to preserve security."
+
+  docker:
+    name: "Docker / Container Engine"
+    required_roles:
+      dev-temporary: false
+      local-primary: false
+      cloud-core: true
+      gpu-worker: false
+    min_version: "24.0.0"
+    detection:
+      command: ["docker", "--version"]
+      regex: 'Docker version (\d+\.\d+\.\d+)'
+    smoke_test:
+      command: ["docker", "info"]
+    install_strategy:
+      windows: "winget install Docker.DockerDesktop"
+      linux: "apt-get install -y docker.io"
+    requires_admin: true
+    can_reboot: true
+    notes: "Deferred on dev-temporary to preserve 256GB SSD storage."
+
+  wsl2:
+    name: "Windows Subsystem for Linux (WSL2)"
+    required_roles:
+      dev-temporary: false
+      local-primary: false
+      cloud-core: false
+      gpu-worker: false
+    min_version: "2.0.0"
+    detection:
+      command: ["wsl", "--status"]
+      regex: 'Default Version:\s*(\d+)'
+    requires_admin: true
+    can_reboot: true
+    notes: "Optional; not mandatory for native/API-first Hood Core."
+
+  postgresql:
+    name: "PostgreSQL Database Engine"
+    required_roles:
+      dev-temporary: false # Local SQLite fallback used for V0 dev-temporary to protect disk
+      local-primary: true
+      cloud-core: true
+      gpu-worker: false
+    min_version: "15.0"
+    detection:
+      command: ["psql", "--version"]
+      regex: 'psql \(PostgreSQL\) (\d+\.\d+)'
+    smoke_test:
+      command: ["psql", "--version"]
+    requires_admin: true
+    can_reboot: false
+    notes: "PostgreSQL schema is prepared; SQLite/in-memory adapter used for dev-temporary V0."
+
+  pgvector:
+    name: "pgvector Extension"
+    required_roles:
+      dev-temporary: false
+      local-primary: true
+      cloud-core: true
+      gpu-worker: false
+    min_version: "0.5.0"
+    notes: "Verified when PostgreSQL instance is provisioned."
+
+  playwright:
+    name: "Playwright Automation"
+    required_roles:
+      dev-temporary: true
+      local-primary: true
+      cloud-core: false
+      gpu-worker: false
+    min_version: "1.40.0"
+    detection:
+      command: [".venv\\Scripts\\python.exe", "-c", "import importlib.metadata; print('playwright', importlib.metadata.version('playwright'))"]
+      regex: 'playwright (\d+\.\d+\.\d+)'
+    smoke_test:
+      command: [".venv\\Scripts\\python.exe", "-c", "from playwright.sync_api import sync_playwright; p = sync_playwright().start(); p.stop()"]
+    install_strategy:
+      windows: ".venv\\Scripts\\pip.exe install playwright && .venv\\Scripts\\playwright.exe install chromium"
+    notes: "Deterministic browser automation for web tasks."
+
+  secret_backend:
+    name: "Secure Secret Vault Backend"
+    required_roles:
+      dev-temporary: true
+      local-primary: true
+      cloud-core: true
+      gpu-worker: true
+      desktop-node: true
+      laptop-node: true
+    smoke_test:
+      custom: "verify_secret_backend"
+    notes: "OS keychain / DPAPI / encrypted vault adapter."

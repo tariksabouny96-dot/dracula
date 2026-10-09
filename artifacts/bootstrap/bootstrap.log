@@ -1,0 +1,19 @@
+=== HOOD BOOTSTRAP LOG - 2026-10-09T12:06:29.889332+00:00 ===
+[2026-10-09T12:06:29.889372+00:00] Starting HOOD Bootstrap audit for role: 'dev-temporary'
+[2026-10-09T12:06:29.889411+00:00] Machine: f0cf5039bb2b (Linux 6.18.44)
+[2026-10-09T12:06:29.889425+00:00] Collecting machine and hardware profile...
+[2026-10-09T12:06:29.900208+00:00] Saved machine profile to /mnt/data/HOOD_NOVA25/artifacts/bootstrap/machine-profile.json
+[2026-10-09T12:06:29.907640+00:00] Auditing 11 dependencies according to policy...
+[2026-10-09T12:06:29.910275+00:00]   [PASS] Git Source Control: 2.47.3 (/usr/bin/git)
+[2026-10-09T12:06:30.980472+00:00]   [PASS] Python 3 Runtime: 3.13.5 (/opt/pyvenv/bin/python)
+[2026-10-09T12:06:30.981629+00:00]   [PASS] Python Virtual Environment: 3.13.5 (None)
+[2026-10-09T12:06:31.018966+00:00]   [PASS] Node.js Runtime: 22.16.0 (/opt/nvm/versions/node/v22.16.0/bin/node)
+[2026-10-09T12:06:31.240772+00:00]   [PASS] Node Package Manager: 10.9.2 (/opt/nvm/versions/node/v22.16.0/bin/npm)
+[2026-10-09T12:06:31.241040+00:00]   [SKIP] Docker / Container Engine: Not required for role 'dev-temporary'
+[2026-10-09T12:06:31.241105+00:00]   [SKIP] Windows Subsystem for Linux (WSL2): Not required for role 'dev-temporary'
+[2026-10-09T12:06:31.241152+00:00]   [SKIP] PostgreSQL Database Engine: Not required for role 'dev-temporary'
+[2026-10-09T12:06:31.241165+00:00]   [SKIP] pgvector Extension: Not required for role 'dev-temporary'
+[2026-10-09T12:06:31.241209+00:00]   [MISSING/INCOMPATIBLE] Playwright Automation: Required dependency '.venv\Scripts\python.exe' not found on PATH or known locations
+[2026-10-09T12:06:31.241230+00:00]   [PASS] Secure Secret Vault Backend: 1.0.0 (None)
+[2026-10-09T12:06:31.241565+00:00] Saved dependency report to /mnt/data/HOOD_NOVA25/artifacts/bootstrap/dependency-report.json
+[2026-10-09T12:06:31.241673+00:00] Saved summary report to /mnt/data/HOOD_NOVA25/artifacts/bootstrap/bootstrap-summary.md
