@@ -1,6 +1,12 @@
 """
 HOOD Domain Lead Agent Hierarchy & Registry
 Governed by Master System Specification Section 4.1 & Build Instructions Section 12.
+
+These legacy domain leads produce model *reasoning* only. A lead's output is an
+analysis, never a verified outcome: it carries no success verdict, no fabricated
+evidence, and is explicitly marked UNVERIFIED. Independent verification of
+postconditions is the job of the multi-agent engine's checker
+(services/agents/engine.py), not of these leads (finding F09).
 """
 
 from abc import ABC, abstractmethod
@@ -26,6 +32,67 @@ class BaseAgent(ABC):
     def execute(self, task: TaskNode) -> AgentResponseContract:
         pass
 
+    def _reason(
+        self,
+        task: TaskNode,
+        system_prompt: str,
+        model_class: ModelClass = ModelClass.STANDARD
+    ) -> AgentResponseContract:
+        """Run the lead's model and return an honest, explicitly-unverified response.
+
+        No lead fabricates a verdict. The model's text is reported as analysis;
+        confidence stays modest; evidence is marked AI reasoning and non-primary;
+        and simulated (mock/fallback) output is labelled as such so a caller can
+        never mistake it for a live, verified result.
+        """
+        req = ModelRequest(
+            model_class=model_class,
+            prompt=f"Task: {task.title}\nObjective: {task.objective}\nInputs: {task.inputs}",
+            system_prompt=system_prompt,
+            task_id=task.task_id,
+            agent=self.name,
+        )
+        resp = self.model_router.invoke(req)
+        simulated = bool(getattr(resp, "is_mock", False) or getattr(resp, "is_fallback", False))
+
+        result: Dict[str, Any] = {
+            "analysis": resp.text,
+            "verdict": "UNVERIFIED",
+        }
+        if simulated:
+            result["simulated"] = True
+
+        return AgentResponseContract(
+            task_id=task.task_id,
+            parent_task=task.parent_task_id,
+            agent=self.name,
+            objective=task.objective,
+            inputs=task.inputs,
+            context_used=["project_contracts", "system_config"],
+            result=result,
+            evidence=[EvidencePacket(
+                claim=f"{self.domain} lead analysis (model reasoning; not independently verified)",
+                source=f"Model Gateway ({resp.provider.value}/{resp.model_name})",
+                source_type="ai_reasoning",
+                is_primary=False,
+                confidence=0.5,
+                verifying_agent=self.name,
+            )],
+            assumptions=[],
+            confidence=0.3 if simulated else 0.5,
+            risks=[],
+            unknowns=["Lead output is unverified until the independent checker confirms postconditions"],
+            alternatives=[],
+            recommendation=(resp.text or "").strip()[:200],
+            artifacts=[],
+            # Reasoning only: no verified tool was used, so the context bus must
+            # classify this as derived inference, not verified-primary evidence.
+            tools_used=[],
+            cost=resp.usage.estimated_cost_usd,
+            execution_time_ms=resp.latency_ms,
+            followup=[],
+        )
+
 
 class EngineeringLeadAgent(BaseAgent):
     def __init__(self, model_router: ModelRouter):
@@ -37,46 +104,9 @@ class EngineeringLeadAgent(BaseAgent):
         )
 
     def execute(self, task: TaskNode) -> AgentResponseContract:
-        # Prompt model for technical execution / code synthesis
-        req = ModelRequest(
-            model_class=ModelClass.STANDARD,
-            prompt=f"Task: {task.title}\nObjective: {task.objective}\nInputs: {task.inputs}",
+        return self._reason(
+            task,
             system_prompt=f"You are the HOOD {self.name}. Design robust, tested, portable code and architecture.",
-            task_id=task.task_id,
-            agent=self.name
-        )
-        resp = self.model_router.invoke(req)
-
-        return AgentResponseContract(
-            task_id=task.task_id,
-            parent_task=task.parent_task_id,
-            agent=self.name,
-            objective=task.objective,
-            inputs=task.inputs,
-            context_used=["project_contracts", "system_config"],
-            result=resp.text,
-            evidence=[EvidencePacket(
-                claim=f"Technical implementation analyzed by {self.name}",
-                source=f"Model Gateway ({resp.provider.value}/{resp.model_name})",
-                source_type="ai_reasoning",
-                is_primary=True,
-                confidence=0.95,
-                verifying_agent=self.name
-            )],
-            assumptions=["Target runtime matches system dependencies", "Portable architecture maintained"],
-            confidence=0.95,
-            risks=["Environment differences during cross-platform migration"],
-            unknowns=[],
-            alternatives=[
-                {"name": "Option A (Modular micro-services)", "cost": "medium", "risk": "low"},
-                {"name": "Option B (Monolithic script)", "cost": "low", "risk": "high"}
-            ],
-            recommendation="Option A: Maintain clean modular boundaries between services",
-            artifacts=[],
-            tools_used=["model_gateway"],
-            cost=resp.usage.estimated_cost_usd,
-            execution_time_ms=resp.latency_ms,
-            followup=["Run unit tests to verify implementation"]
         )
 
 
@@ -90,40 +120,11 @@ class CybersecurityLeadAgent(BaseAgent):
         )
 
     def execute(self, task: TaskNode) -> AgentResponseContract:
-        req = ModelRequest(
-            model_class=ModelClass.STANDARD,
-            prompt=f"Review security posture for Task: {task.title}\nObjective: {task.objective}",
+        # Never emits a PASS/FAIL verdict: a security opinion from a model is not
+        # an audit. The result is advisory analysis only.
+        return self._reason(
+            task,
             system_prompt="You are the HOOD Cybersecurity Lead. Enforce least privilege, secret isolation, and sandboxing.",
-            task_id=task.task_id,
-            agent=self.name
-        )
-        resp = self.model_router.invoke(req)
-
-        return AgentResponseContract(
-            task_id=task.task_id,
-            parent_task=task.parent_task_id,
-            agent=self.name,
-            objective=task.objective,
-            inputs=task.inputs,
-            result={"security_audit": "PASSED", "details": resp.text},
-            evidence=[EvidencePacket(
-                claim="Security boundaries and credential isolation inspected",
-                source=self.name,
-                source_type="security_audit",
-                confidence=1.0,
-                verifying_agent=self.name
-            )],
-            assumptions=["No plaintext secrets exposed", "Capabilities are least-privilege"],
-            confidence=1.0,
-            risks=[],
-            unknowns=[],
-            alternatives=[],
-            recommendation="Preserve secret reference pointers (SECRET://) and capability tokens",
-            artifacts=[],
-            tools_used=["vault_inspector"],
-            cost=resp.usage.estimated_cost_usd,
-            execution_time_ms=resp.latency_ms,
-            followup=[]
         )
 
 
@@ -137,20 +138,9 @@ class CommerceLeadAgent(BaseAgent):
         )
 
     def execute(self, task: TaskNode) -> AgentResponseContract:
-        return AgentResponseContract(
-            task_id=task.task_id,
-            agent=self.name,
-            objective=task.objective,
-            result={"commercial_analysis": "Completed within budget"},
-            evidence=[],
-            assumptions=[],
-            confidence=0.9,
-            risks=["Market price fluctuation"],
-            unknowns=[],
-            alternatives=[],
-            recommendation="Proceed with standard verified suppliers",
-            tools_used=[],
-            cost=0.0
+        return self._reason(
+            task,
+            system_prompt="You are the HOOD Commerce Lead. Analyse pricing, suppliers and commercial risk.",
         )
 
 
@@ -164,26 +154,9 @@ class ResearchLeadAgent(BaseAgent):
         )
 
     def execute(self, task: TaskNode) -> AgentResponseContract:
-        return AgentResponseContract(
-            task_id=task.task_id,
-            agent=self.name,
-            objective=task.objective,
-            result={"research_summary": "Evidence-backed synthesis assembled"},
-            evidence=[EvidencePacket(
-                claim=f"Primary source validation for {task.title}",
-                source="Internet Intelligence Gateway",
-                source_type="primary_api",
-                confidence=0.95,
-                verifying_agent=self.name
-            )],
-            assumptions=[],
-            confidence=0.95,
-            risks=[],
-            unknowns=[],
-            alternatives=[],
-            recommendation="Rely on primary official API data over raw scraping",
-            tools_used=["internet_intelligence"],
-            cost=0.0
+        return self._reason(
+            task,
+            system_prompt="You are the HOOD Research Lead. Summarise findings and flag unverified claims.",
         )
 
 
@@ -197,20 +170,9 @@ class DataLeadAgent(BaseAgent):
         )
 
     def execute(self, task: TaskNode) -> AgentResponseContract:
-        return AgentResponseContract(
-            task_id=task.task_id,
-            agent=self.name,
-            objective=task.objective,
-            result={"pipeline_status": "VALIDATED"},
-            evidence=[],
-            assumptions=[],
-            confidence=1.0,
-            risks=[],
-            unknowns=[],
-            alternatives=[],
-            recommendation="Maintain strict schema validation and typing",
-            tools_used=[],
-            cost=0.0
+        return self._reason(
+            task,
+            system_prompt="You are the HOOD Data Lead. Reason about pipelines, schema and data quality.",
         )
 
 
@@ -224,20 +186,11 @@ class OperationsLeadAgent(BaseAgent):
         )
 
     def execute(self, task: TaskNode) -> AgentResponseContract:
-        return AgentResponseContract(
-            task_id=task.task_id,
-            agent=self.name,
-            objective=task.objective,
-            result={"system_health": "OPTIMAL", "resource_utilization": "LOW"},
-            evidence=[],
-            assumptions=[],
-            confidence=1.0,
-            risks=[],
-            unknowns=[],
-            alternatives=[],
-            recommendation="Keep periodic checkpoint snapshots active",
-            tools_used=["resource_monitor"],
-            cost=0.0
+        # Does NOT assert "system health OPTIMAL": real telemetry comes from the
+        # grounded diagnostics path in the commander, not from this reasoning lead.
+        return self._reason(
+            task,
+            system_prompt="You are the HOOD Operations Lead. Reason about reliability, scheduling and recovery.",
         )
 
 
