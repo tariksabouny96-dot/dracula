@@ -180,6 +180,9 @@ class MemoryObject(BaseModel):
     type: MemoryType
     content: str
     project: str = "default"
+    # The principal (authenticated owner/user) a memory belongs to. Memory is
+    # isolated per principal; "system" is shared/governance memory visible to all.
+    principal: str = "default"
     source: str = "system"
     source_agent: str = "Hood"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

@@ -419,6 +419,7 @@ class InteractionService:
                         type=MemoryType.EPISODIC,
                         content=content,
                         project="personal",
+                        principal=self._principal_username(session.session_id),
                         source="user_chat",
                         source_agent="Zak",
                         confidence=1.0
@@ -439,8 +440,9 @@ class InteractionService:
                 found_facts = []
                 if self.memory_service:
                     try:
-                        p_mems = self.memory_service.query_memories(project="personal")
-                        c_mems = self.memory_service.query_memories(project="conversation")
+                        principal = self._principal_username(session.session_id)
+                        p_mems = self.memory_service.query_memories(project="personal", principal=principal)
+                        c_mems = self.memory_service.query_memories(project="conversation", principal=principal)
                         for m in p_mems + c_mems:
                             if q_lower in m.content.lower():
                                 found_facts.append(m.content)
@@ -711,9 +713,10 @@ class InteractionService:
         retrieved_memories: List[str] = []
         if is_personal_memory and self.memory_service:
             try:
-                # Query personal and general memories safely
-                p_mems = self.memory_service.query_memories(project="personal")
-                c_mems = self.memory_service.query_memories(project="conversation")
+                # Query personal and general memories safely, scoped to this principal
+                principal = self._principal_username(session.session_id)
+                p_mems = self.memory_service.query_memories(project="personal", principal=principal)
+                c_mems = self.memory_service.query_memories(project="conversation", principal=principal)
                 for m in p_mems + c_mems:
                     if m.content and m.content not in retrieved_memories:
                         retrieved_memories.append(m.content)
@@ -985,6 +988,7 @@ class InteractionService:
             type=MemoryType.EPISODIC,
             content=content,
             project="conversation",
+            principal=self._principal_username(session.session_id),
             source="user_chat",
             source_agent="Zak",
             confidence=0.95

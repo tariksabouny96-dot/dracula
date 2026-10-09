@@ -47,6 +47,10 @@ class MemoryService:
         conn.row_factory = sqlite3.Row
         return conn
 
+    # The shared principal: governance and other system-owned memory that every
+    # authenticated principal may read. Never used as a personal owner id.
+    SYSTEM_PRINCIPAL = "system"
+
     def _init_sqlite(self):
         with self._get_connection() as conn:
             conn.execute("""
@@ -55,6 +59,7 @@ class MemoryService:
                 type TEXT NOT NULL,
                 content TEXT NOT NULL,
                 project TEXT NOT NULL,
+                principal TEXT NOT NULL DEFAULT 'default',
                 source TEXT NOT NULL,
                 source_agent TEXT NOT NULL,
                 created_at TEXT NOT NULL,
@@ -71,7 +76,12 @@ class MemoryService:
                 learning_status TEXT NOT NULL DEFAULT 'OBSERVATION'
             )
             """)
+            # Migrate pre-principal databases in place so old rows keep working.
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(memories)").fetchall()}
+            if "principal" not in cols:
+                conn.execute("ALTER TABLE memories ADD COLUMN principal TEXT NOT NULL DEFAULT 'default'")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_proj_type ON memories(project, type)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_principal ON memories(principal, project, type)")
             conn.commit()
 
     def write_memory(self, memory: MemoryObject, caller_agent: str = "Hood") -> MemoryObject:
@@ -94,16 +104,17 @@ class MemoryService:
 
             conn.execute("""
             INSERT OR REPLACE INTO memories (
-                memory_id, type, content, project, source, source_agent,
+                memory_id, type, content, project, principal, source, source_agent,
                 created_at, valid_from, valid_until, confidence, evidence,
                 verification_status, sensitivity, access_policy, version,
                 supersedes, related_memories, learning_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 memory.memory_id,
                 memory.type.value,
                 memory.content,
                 memory.project,
+                memory.principal,
                 memory.source,
                 memory.source_agent,
                 memory.created_at.isoformat(),
@@ -136,12 +147,24 @@ class MemoryService:
         memory_types: Optional[List[MemoryType]] = None,
         is_x_active: bool = False,
         query_text: Optional[str] = None,
-        include_superseded: bool = False
+        include_superseded: bool = False,
+        principal: Optional[str] = None
     ) -> List[MemoryObject]:
-        """Queries memories enforcing project/client isolation and X-Sealed isolation."""
+        """Queries memories enforcing project/client isolation and X-Sealed isolation.
+
+        When ``principal`` is supplied, isolation is also enforced per principal:
+        only that principal's own rows and shared ``system`` rows are returned, so
+        one authenticated user can never read another's memory. ``principal=None``
+        is the legacy/administrative view (no principal filter) and must only be
+        used by trusted, non-principal-facing callers.
+        """
         with self._get_connection() as conn:
             query = "SELECT * FROM memories WHERE project = ?"
             params: List[Any] = [project]
+
+            if principal is not None:
+                query += " AND principal IN (?, ?)"
+                params.extend([principal, self.SYSTEM_PRINCIPAL])
 
             if memory_types:
                 type_placeholders = ",".join("?" for _ in memory_types)
@@ -174,15 +197,22 @@ class MemoryService:
 
             return memories
 
-    def query_semantic(
+    def query_lexical(
         self,
         query_text: str,
         project: str,
         top_k: int = 5,
-        is_x_active: bool = False
+        is_x_active: bool = False,
+        principal: Optional[str] = None
     ) -> List[MemoryObject]:
-        """Performs semantic relevance ranking over memories within project isolation."""
-        all_candidates = self.query_memories(project=project, is_x_active=is_x_active)
+        """Ranks memories by lexical token overlap (NOT semantic embeddings).
+
+        This is a bag-of-words Dice-coefficient match, kept honest about what it
+        is (see F26). It respects project, principal and X-Sealed isolation.
+        """
+        all_candidates = self.query_memories(
+            project=project, is_x_active=is_x_active, principal=principal
+        )
         query_tokens = _tokenize(query_text)
 
         scored = []
@@ -195,18 +225,64 @@ class MemoryService:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [item[1] for item in scored[:top_k]]
 
+    # Trust ladder: a lesson may only climb this ladder, one or more rungs at a
+    # time, and only with evidence. SUPERSEDED is terminal and is never reached
+    # through promotion (write_memory handles supersession).
+    _TRUST_LADDER = {
+        LearningStatus.OBSERVATION: 0,
+        LearningStatus.CANDIDATE: 1,
+        LearningStatus.PROVISIONAL: 2,
+        LearningStatus.ESTABLISHED: 3,
+    }
+
     def promote_lesson(
         self,
         memory_id: str,
         target_status: LearningStatus,
-        verification_evidence: str
+        verification_evidence: str,
+        promoted_by: Optional[str] = None
     ) -> MemoryObject:
+        """Promote a lesson up the trust ladder under enforced rules.
+
+        - Governance memory is never promotable.
+        - Promotion requires non-empty verification evidence.
+        - Status may only move forward along OBSERVATION -> CANDIDATE ->
+          PROVISIONAL -> ESTABLISHED; it may never move backward and never to
+          SUPERSEDED.
+        - Promotion to ESTABLISHED (full trust) requires the owner's authority
+          (``promoted_by == "Zak"``); agents may raise a lesson no higher than
+          PROVISIONAL on their own.
+        """
         mem = self.get_memory(memory_id)
         if not mem:
             raise KeyError(f"Memory {memory_id} not found")
 
         if mem.type == MemoryType.GOVERNANCE:
             raise GovernanceViolationError("Cannot mutate governance via learning pipeline.")
+
+        if not (verification_evidence and verification_evidence.strip()):
+            raise GovernanceViolationError(
+                "Trust promotion requires non-empty verification evidence."
+            )
+
+        if target_status not in self._TRUST_LADDER:
+            raise GovernanceViolationError(
+                f"{target_status.value} is not a promotable trust level."
+            )
+        current_rank = self._TRUST_LADDER.get(mem.learning_status, -1)
+        if current_rank < 0:
+            raise GovernanceViolationError(
+                f"Memory in {mem.learning_status.value} cannot be promoted."
+            )
+        if self._TRUST_LADDER[target_status] <= current_rank:
+            raise GovernanceViolationError(
+                f"Trust promotion must move forward: "
+                f"{mem.learning_status.value} -> {target_status.value} is not allowed."
+            )
+        if target_status == LearningStatus.ESTABLISHED and promoted_by != "Zak":
+            raise GovernanceViolationError(
+                "Promotion to ESTABLISHED (full trust) requires owner authority (Zak)."
+            )
 
         mem.learning_status = target_status
         mem.verification_status = "VERIFIED"
@@ -259,13 +335,14 @@ class MemoryService:
             for r in records:
                 conn.execute("""
                 INSERT OR REPLACE INTO memories (
-                    memory_id, type, content, project, source, source_agent,
+                    memory_id, type, content, project, principal, source, source_agent,
                     created_at, valid_from, valid_until, confidence, evidence,
                     verification_status, sensitivity, access_policy, version,
                     supersedes, related_memories, learning_status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     r["memory_id"], r["type"], r["content"], r["project"],
+                    r.get("principal", "default"),
                     r["source"], r["source_agent"], r["created_at"],
                     r["valid_from"], r.get("valid_until"), r.get("confidence", 1.0),
                     r.get("evidence", "[]"), r.get("verification_status", "UNVERIFIED"),
@@ -318,6 +395,7 @@ class MemoryService:
             type=MemoryType(row["type"]),
             content=row["content"],
             project=row["project"],
+            principal=row["principal"] if "principal" in row.keys() else "default",
             source=row["source"],
             source_agent=row["source_agent"],
             created_at=datetime.fromisoformat(row["created_at"]),

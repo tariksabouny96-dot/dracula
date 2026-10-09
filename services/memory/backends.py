@@ -182,14 +182,28 @@ class SQLiteBackend(MemoryBackend):
 
 
 class PostgreSQLBackend(MemoryBackend):
+    """In-memory stand-in for a future PostgreSQL + pgvector backend.
+
+    This is NOT a real PostgreSQL connection and performs NO semantic/vector
+    search: records live in a process-local dict and `query_by_project` is a
+    plain project filter. It exists so migration and contract logic can be
+    exercised offline. To avoid ever reporting a simulated store as a live
+    production database, supplying a real `connection_str` raises instead of
+    silently simulating; a genuine driver-backed backend must replace this
+    class before any production use (F26).
     """
-    PostgreSQL + pgvector production backend adapter.
-    Matches infra/database/schema.sql relational structure.
-    Operates in live mode if psycopg2 / real PG connection string is supplied,
-    or simulated safe adapter mode for local validation without requiring paid cloud hosting.
-    """
+
+    is_simulated = True
+    backend_mode = "simulated_in_memory"
+
     def __init__(self, connection_str: Optional[str] = None):
-        self.connection_str = connection_str
+        if connection_str:
+            raise NotImplementedError(
+                "PostgreSQLBackend is a simulated in-memory stand-in and cannot "
+                "connect to a real PostgreSQL instance. A driver-backed backend "
+                "must be implemented before supplying a connection string."
+            )
+        self.connection_str = None
         self._in_memory_records: Dict[str, Dict[str, Any]] = {}
 
     def store_memory(self, memory: MemoryObject) -> MemoryObject:

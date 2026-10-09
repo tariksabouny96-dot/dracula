@@ -60,7 +60,7 @@ def test_semantic_memory_search(tmp_path):
         content="PostgreSQL schema defines pgvector tables for long-term production storage."
     ))
 
-    results = svc.query_semantic("Gemini Google API routing", project="ai_system", top_k=2)
+    results = svc.query_lexical("Gemini Google API routing", project="ai_system", top_k=2)
     assert len(results) > 0
     top_result = results[0]
     assert "Gemini" in top_result.content

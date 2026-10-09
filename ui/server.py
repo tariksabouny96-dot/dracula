@@ -950,8 +950,11 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             mem_service = getattr(self.interaction_service, "memory_service", None) if self.interaction_service else None
             if mem_service:
                 try:
-                    p_mems = [m.model_dump(mode="json") for m in mem_service.query_memories(project="personal")]
-                    c_mems = [m.model_dump(mode="json") for m in mem_service.query_memories(project="conversation")]
+                    # Scope the listing to the authenticated principal so one user
+                    # never sees another's memory through this endpoint (F25).
+                    principal = curr_session.username
+                    p_mems = [m.model_dump(mode="json") for m in mem_service.query_memories(project="personal", principal=principal)]
+                    c_mems = [m.model_dump(mode="json") for m in mem_service.query_memories(project="conversation", principal=principal)]
                     all_mems = p_mems + c_mems
                     self._send_json({
                         "count": len(all_mems),

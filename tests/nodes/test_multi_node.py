@@ -490,3 +490,11 @@ def test_node_migration_bundle_export_import(tmp_cluster_dir):
     assert import_res["success"] is True
     assert import_res["node_id"] == "node-test-export"
     assert import_res["integrity_verified"] is True
+
+
+def test_postgresql_backend_refuses_to_fake_a_live_connection():
+    """A simulated PG backend must never masquerade as a real database (F26)."""
+    import pytest
+    assert PostgreSQLBackend.is_simulated is True
+    with pytest.raises(NotImplementedError):
+        PostgreSQLBackend(connection_str="postgresql://user:pass@prod-db:5432/hood")
