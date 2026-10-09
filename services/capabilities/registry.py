@@ -34,6 +34,32 @@ CAPABILITIES = (
 )
 
 
+# Live state providers registered by feature modules: id -> callable returning
+# {"state": <taxonomy value>, "detail": str}. Taxonomy (merge contract): unavailable,
+# not_configured, checking, verified_online, degraded, offline, simulated, blocked,
+# awaiting_approval, failed, unknown. Missing telemetry is "unknown", never healthy.
+STATE_PROVIDERS = {}
+STATE_TAXONOMY = {"unavailable", "not_configured", "checking", "verified_online", "degraded", "offline",
+                  "simulated", "blocked", "awaiting_approval", "failed", "unknown", "available"}
+
+
+def register_state_provider(capability_id, fn):
+    STATE_PROVIDERS[capability_id] = fn
+
+
+def live_state(capability_id):
+    fn = STATE_PROVIDERS.get(capability_id)
+    if fn is None:
+        return {"state": "unknown", "detail": "No live status provider"}
+    try:
+        result = fn()
+        if result.get("state") not in STATE_TAXONOMY:
+            return {"state": "unknown", "detail": "Provider returned an invalid state"}
+        return result
+    except Exception as exc:  # a broken probe is a failure, not health
+        return {"state": "failed", "detail": f"Status probe error: {type(exc).__name__}"}
+
+
 def get_capability_inventory(interaction=None, runtime=None, sentinel=None, x_manager=None):
     attached = {
         "conversation": interaction is not None,
@@ -63,6 +89,7 @@ def get_capability_inventory(interaction=None, runtime=None, sentinel=None, x_ma
             "status": status, "description": description,
             "section": section, "source_present": source_present,
             "action": "OPEN_SECTION" if section != "tab-systems" else "DETAILS_ONLY",
+            "live": live_state(key),
         })
     return {"release": "NOVA 2.5 preproduction candidate", "basis": "Local code and service attachment; not a live functionality test",
             "items": entries, "counts": {status: sum(c["status"] == status for c in entries)

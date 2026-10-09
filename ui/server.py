@@ -26,6 +26,7 @@ from services.sentinel.sentinel_service import SecuritySentinelService
 from services.x_control.x_session_manager import XSessionManager, XOperationalState
 from services.agents.engine import MissionConflict as AgentMissionConflict, MissionBudgetExceeded
 from packages.security import EmergencyStopActive
+from ui import routes as feature_routes
 
 AGENT_MISSION_ID = re.compile(r"agm_[0-9a-f]{32}")
 MAX_BACKGROUND_RUNS = 4
@@ -300,6 +301,8 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
                 return
             if not self._csrf_ok(curr_session):
                 self._send_json({"error": "CSRF token missing or invalid"}, status=403)
+                return
+            if self._dispatch_feature_route("POST", curr_session, payload):
                 return
 
             client_ip = self.client_address[0] if hasattr(self, "client_address") else "127.0.0.1"
@@ -673,6 +676,8 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             if not curr_session:
                 self._send_json({"error": "Authentication required"}, status=401)
                 return
+            if self._dispatch_feature_route("GET", curr_session, {}):
+                return
             permission = UserPermission.VIEW_TELEMETRY
             if self.path.startswith("/api/admin/"):
                 permission = UserPermission.GLOBAL_USER_ADMIN
@@ -961,6 +966,61 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
         else:
             super().do_GET()
 
+    # ------------------------------------------------------------------ feature routes (ui/routes.py)
+    def _dispatch_feature_route(self, method, session, payload) -> bool:
+        from urllib.parse import parse_qs
+        parts = urlsplit(self.path)
+        route_def, match = feature_routes.find(method, parts.path)
+        if route_def is None:
+            return False
+        try:
+            permission = UserPermission(route_def.permission)
+        except ValueError:
+            self._send_json({"error": "Route misconfigured"}, status=500)
+            return True
+        if not self._require_permission(session, permission):
+            return True
+        ctx = feature_routes.RequestContext(session=session, payload=payload, match=match,
+                                            query=parse_qs(parts.query), services=feature_routes.SERVICES)
+        try:
+            result = route_def.handler(ctx)
+        except KeyError:
+            self._send_json({"error": "Not found"}, status=404)
+            return True
+        except EmergencyStopActive as exc:
+            self._send_json({"error": str(exc)}, status=423)
+            return True
+        except PermissionError as exc:
+            self._send_json({"error": str(exc) or "Forbidden"}, status=403)
+            return True
+        except feature_routes.RouteConflict as exc:
+            self._send_json({"error": str(exc)}, status=409)
+            return True
+        except feature_routes.ServiceUnavailable as exc:
+            self._send_json({"error": str(exc)}, status=503)
+            return True
+        except (ValueError, TypeError) as exc:
+            self._send_json({"error": str(exc)[:500]}, status=400)
+            return True
+        if isinstance(result, feature_routes.Raw):
+            self.send_response(result.status)
+            self.send_header("Content-Type", result.content_type)
+            if result.filename:
+                safe = re.sub(r'[^A-Za-z0-9._-]', '_', result.filename)[:120]
+                self.send_header("Content-Disposition", f'attachment; filename="{safe}"')
+            for key, value in result.headers.items():
+                self.send_header(key, value)
+            self.send_header("Content-Length", str(len(result.body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(result.body)
+            return True
+        if isinstance(result, tuple) and len(result) == 2 and isinstance(result[0], int):
+            self._send_json(result[1], status=result[0])
+        else:
+            self._send_json(result)
+        return True
+
     # ------------------------------------------------------------------ agent engine API
     def _agent_engine_or_503(self):
         if self.agent_engine is None:
@@ -1247,6 +1307,7 @@ class JarvisServer:
         import os as _os
         JarvisUIHandler.allowed_hosts = {h.strip().lower() for h in
                                          _os.environ.get("HOOD_ALLOWED_HOSTS", "").split(",") if h.strip()}
+        feature_routes.load_modules()
         JarvisUIHandler.interaction_service = interaction_service
         JarvisUIHandler.emergency_stop = emergency_stop
         JarvisUIHandler.runtime = runtime
