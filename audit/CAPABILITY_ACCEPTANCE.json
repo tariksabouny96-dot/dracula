@@ -66,11 +66,10 @@
       "execution_environment": "local (scripted model) + live provider + staging",
       "test_command": "python scripts/preproduction_gate.py",
       "blockers": [
-        "No live LLM run: no approved provider key, pricing file or spend cap supplied",
-        "No staging environment"
+        "No staging environment: staging-level (VERIFIED_STAGING) evidence not yet produced"
       ],
       "independent_reviewer": null,
-      "decision_reason": "Full engine path verified with a scripted model only; live-LLM capability unproven (G2)."
+      "decision_reason": "Full engine path verified offline with a scripted model AND end-to-end with a live provider: a golden-journey mission on free-tier Gemini via the environment proxy COMPLETED with verifier verdict PASS, valid HMAC receipts and $0 spend (release/evidence/live/agm_71c4a72d00744241a59b65dc23e23976.json; repeatable via tests/integration/test_real_gemini.py with HOOD_RUN_LIVE_PROVIDER=1). local_evidence_level stays TESTED_WITH_STUB because the gate's offline test_ids use a scripted model; VERIFIED_STAGING acceptance still requires a staging run (G6)."
     },
     {
       "id": "governance",

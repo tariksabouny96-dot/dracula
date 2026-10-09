@@ -14,3 +14,18 @@
 Breaking changes: session tokens are now stored as digests (all existing sessions are invalidated);
 cookie-authenticated POSTs require `X-CSRF-Token`; `reset_stop()` requires `is_root_owner=True`;
 approvals expire (default 15 min); paid model calls require a pricing file.
+
+## Follow-up — branch `claude/eager-dirac-xxzqst` (continues from `claude/hello-mecuky`)
+
+| Area | Summary |
+|------|---------|
+| Tests | Restored the offline suite to green (two stale UI tests followed the classic console to `/classic`). |
+| F25 (P0) | Principal-scoped memory (new `principal` dimension, isolated queries) and an enforced trust-promotion ladder (evidence required, forward-only, owner-only ESTABLISHED). |
+| F26 (P1) | `query_semantic` renamed `query_lexical` (honest); `PostgreSQLBackend` refuses to pose as a live DB. |
+| F09 (P0) | Legacy domain leads emit only explicitly UNVERIFIED model reasoning — no hardcoded PASSED/VALIDATED/OPTIMAL verdicts, no fabricated evidence, mock output labelled. |
+| F12 (P0) | Executive X state is durably persisted and restored; an expired session fails closed on restart; consumed approval ids survive (no cross-restart replay). |
+| F16 (P1) | X activation reports the duration actually granted and tells the user when a request was clamped. |
+| F27 (P0) | Node migration bundles carry an HMAC sender signature (fail closed without a valid one) and import transactionally. |
+| G2 | Live-provider golden journey run end-to-end on free-tier Gemini via the environment proxy — COMPLETED, verifier PASS, receipts valid, $0. Evidence under `release/evidence/live/`. |
+
+Offline suite after this work: 390 passed, 0 failed, 6 live-only deselected.

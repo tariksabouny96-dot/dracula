@@ -1,0 +1,168 @@
+{
+  "kind": "LIVE_PROVIDER_GOLDEN_JOURNEY",
+  "commit": "252f5665b83a42066d350a03f238073e466f3912",
+  "generated_at": "2026-10-09T22:08:20.752189+00:00",
+  "duration_s": 25.2,
+  "mission_id": "agm_71c4a72d00744241a59b65dc23e23976",
+  "state": "COMPLETED",
+  "objective_verified": true,
+  "provider_mode": "LIVE",
+  "error": null,
+  "repairs": 0,
+  "plan": {
+    "summary": "Build an in-memory notes web app with a JSON HTTP API and a responsive mobile-friendly HTML frontend using Python standard library http.server.",
+    "deliverable": "A complete Python web application under app/ with server and static assets, unit tests under tests/, and acceptance tests under qa_tests/.",
+    "interface_contract": "app.server.make_server(port=0) returns an http.server.HTTPServer instance. HTTP endpoints: GET / returns HTML index page, GET /notes returns JSON list of notes, POST /notes accepts JSON body {\"title\": str, \"content\": str} and returns 201 Created with JSON note, GET /notes/<id> returns 207/200 JSON note or 404, PUT /notes/<id> updates note, DELETE /notes/<id> deletes note. Title must be 1-200 chars.",
+    "tasks": [
+      {
+        "id": "write_qa_tests",
+        "role": "qa",
+        "title": "Write acceptance tests",
+        "instructions": "Write independent pytest acceptance tests in qa_tests/ test_notes.py covering API endpoints, validation rules for title length (1-200 chars), and HTML interface existence based on the objective.",
+        "depends_on": []
+      },
+      {
+        "id": "implement_app",
+        "role": "engineer",
+        "title": "Implement notes web application",
+        "instructions": "Implement the in-memory notes store, validation logic, http.server handlers in app/server.py, and the HTML frontend in app/static/index.html or embedded. Also write unit tests under tests/test_app.py.",
+        "depends_on": []
+      },
+      {
+        "id": "review_code",
+        "role": "reviewer",
+        "title": "Review codebase and tests",
+        "instructions": "Review all files under app/, tests/, and qa_tests/ for correctness, standard library compliance, and edge cases, reporting any defects.",
+        "depends_on": [
+          "write_qa_tests",
+          "implement_app"
+        ]
+      }
+    ],
+    "clarifications_needed": []
+  },
+  "tasks": [
+    {
+      "task_id": "write_qa_tests",
+      "role": "qa",
+      "state": "COMPLETED",
+      "attempts": 2,
+      "error": "qa output rejected: File blocks are not terminated with '=== END FILE ===' [5420 chars; excerpt: '=== FILE: qa_tests/__init__.py\\n=== END FILE ===\\n=== FILE: qa_tests/test_notes.py\\nimport json\\nimport threading\\nimport urllib.request\\nimport urllib.error\\nimport pytest\\nfrom app import server\\n\\n@pytest.fixture(scope=\"function\")\\ndef http_server():\\n    httpd = server.make_server(port=0)\\n    port = httpd.s \u2026 t=0), GET /, CRUD endpoints for /notes and /notes/<id>, and title validation boundaries (0, 1, 200, 201 chars).\\n=== UNCERTAINTY ===\\nThe contract lists GET /notes/<id> returning 207/200 JSON note, and PUT/DELETE responses could be 200 or 204. Handled both status code alternatives gracefully in tests.']"
+    },
+    {
+      "task_id": "implement_app",
+      "role": "engineer",
+      "state": "COMPLETED",
+      "attempts": 1,
+      "error": null
+    },
+    {
+      "task_id": "review_code",
+      "role": "reviewer",
+      "state": "COMPLETED",
+      "attempts": 1,
+      "error": null
+    }
+  ],
+  "verifications": [
+    {
+      "state": "COMPLETED",
+      "verdict": "PASS",
+      "error": null
+    }
+  ],
+  "last_verification": {
+    "actor": "worker-6d982e6d",
+    "at": "2026-10-09T22:08:20.739262+00:00",
+    "checks": [
+      {
+        "exit_code": 0,
+        "name": "compile",
+        "passed": true,
+        "suite_invalid": false,
+        "tests_collected": null
+      },
+      {
+        "exit_code": 0,
+        "name": "engineer_unit_tests",
+        "passed": true,
+        "suite_invalid": false,
+        "tests_collected": 2
+      },
+      {
+        "exit_code": 0,
+        "name": "independent_acceptance_tests",
+        "passed": true,
+        "suite_invalid": false,
+        "tests_collected": 8
+      }
+    ],
+    "kind": "VERIFICATION",
+    "mission_id": "agm_71c4a72d00744241a59b65dc23e23976",
+    "network_isolated": true,
+    "receipt_id": "rcp_a19211e7955047cf9e03f784df596063",
+    "schema_version": 1,
+    "task_id": null,
+    "verdict": "PASS",
+    "verifier": "deterministic-process-checks",
+    "workspace_sha256": "97ecd3afba761a21077f82d829cd9a50ff75d57ef6b343eaf734a779220be98b"
+  },
+  "artifact": {
+    "name": "hood-agm_71c4a72d00744241a59b65dc23e23976.zip",
+    "sha256": "db11bd28c38cd3af1088cd5ac389097a1a0ab2b793817551fa177568286c4dcb",
+    "bytes": 21245,
+    "mime": "application/zip",
+    "created": "2026-10-09T22:08:20.744934+00:00"
+  },
+  "model_calls": [
+    {
+      "task_id": null,
+      "provider": "gemini",
+      "model": "gemini-3.5-flash-lite",
+      "simulated": 0,
+      "reserved_usd": 0.0,
+      "actual_usd": 0.0,
+      "measured": 1
+    },
+    {
+      "task_id": "write_qa_tests",
+      "provider": "gemini",
+      "model": "gemini-3.5-flash-lite",
+      "simulated": 0,
+      "reserved_usd": 0.0,
+      "actual_usd": 0.0,
+      "measured": 1
+    },
+    {
+      "task_id": "write_qa_tests",
+      "provider": "gemini",
+      "model": "gemini-3.5-flash-lite",
+      "simulated": 0,
+      "reserved_usd": 0.0,
+      "actual_usd": 0.0,
+      "measured": 1
+    },
+    {
+      "task_id": "implement_app",
+      "provider": "gemini",
+      "model": "gemini-3.5-flash-lite",
+      "simulated": 0,
+      "reserved_usd": 0.0,
+      "actual_usd": 0.0,
+      "measured": 1
+    },
+    {
+      "task_id": "review_code",
+      "provider": "gemini",
+      "model": "gemini-3.5-flash-lite",
+      "simulated": 0,
+      "reserved_usd": 0.0,
+      "actual_usd": 0.0,
+      "measured": 1
+    }
+  ],
+  "spend_usd": 0.0,
+  "receipts_valid": true,
+  "artifact_file": "release/evidence/live/hood-agm_71c4a72d00744241a59b65dc23e23976.zip",
+  "artifact_sha256_recomputed": "db11bd28c38cd3af1088cd5ac389097a1a0ab2b793817551fa177568286c4dcb"
+}

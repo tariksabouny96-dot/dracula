@@ -30,7 +30,9 @@ def test_gemini_adapter_live_call():
     resp = adapter.invoke(req)
 
     assert resp.provider == ProviderName.GEMINI
-    assert resp.model_name in ("gemini-3.1-flash-lite", "gemini-3.1-flash-lite-preview", "gemini-flash-latest")
+    # Accept the current small Gemini flash model without pinning an exact
+    # version that drifts (e.g. gemini-3.5-flash-lite).
+    assert resp.model_name.startswith("gemini-") and "flash" in resp.model_name
     assert resp.text is not None and len(resp.text.strip()) > 0
     assert resp.latency_ms > 0
     assert resp.usage.total_tokens > 0
@@ -57,5 +59,9 @@ def test_model_router_with_cost_ledger():
     last_call = cost_controller.call_history[-1]
     assert last_call["task_id"] == "integration-test-01"
     assert last_call["provider"] == "gemini"
-    assert last_call["is_free_tier"] is True
+    # Honest cost handling: a $0 estimate is NOT proof of free-tier billing, so
+    # the ledger never asserts free tier from price alone (is_free_tier stays
+    # False until a real invoice confirms it). The estimate itself is recorded.
+    assert last_call["is_free_tier"] is False
+    assert last_call["cost_usd"] == 0.0
     assert last_call["cost_usd"] == 0.0

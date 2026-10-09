@@ -1,5 +1,28 @@
 # Hood & X — preproduction GO / NO-GO
 
+> **Progress update — branch `claude/eager-dirac-xxzqst` (2026-10-09, after the gated snapshot below)**
+>
+> Work continued from the `claude/hello-mecuky` checkpoint. Decision remains **NO_GO** (staging G6 and
+> independent review G7 are external gates, and Windows items F07/F23 need the owner's machine), but several
+> blockers moved:
+> - **Live-provider golden journey now PROVEN.** A full multi-agent mission ran end-to-end on **free-tier
+>   Gemini via the environment proxy** and **COMPLETED** with verifier verdict **PASS**, valid HMAC receipts,
+>   a hashed artifact and **$0** spend. Evidence: `release/evidence/live/agm_71c4a72d00744241a59b65dc23e23976.json`;
+>   repeatable via `tests/integration/test_real_gemini.py` (`HOOD_RUN_LIVE_PROVIDER=1`). This retires the gated
+>   snapshot's "SIMULATED only / no live LLM call" statement below. G2 still FAILs only because the orchestrator
+>   capability requires `VERIFIED_STAGING` and there is no staging host yet.
+> - **P0 findings closed (`FIXED_VERIFIED_LOCAL`):** F09 (legacy leads no longer fabricate verdicts), F25
+>   (principal-scoped memory + enforced trust promotion), F27 (authenticated + transactional node migration).
+> - **P0 strengthened:** F12 (X session state is now durably persisted and fails closed on restart; replay
+>   ids survive) — kept `MITIGATED_LOCAL` because the three X objects are not yet unified.
+> - **P1 closed:** F16 (X duration clamp is surfaced, not silent), F26 (lexical search honestly named; the
+>   simulated PostgreSQL backend refuses to pose as a live DB).
+> - **Remaining open P0s:** F03, F05, F07, F10, F12, F23, F29 (Windows-blocked, owner-decision, or larger
+>   architectural lifts — see the per-finding ledger `audit/FINDINGS_F01_F36.csv`).
+> - Offline suite now **390 passed, 0 failed** (6 live-only deselected).
+>
+> The gated snapshot below is preserved unchanged as the record for commit `0a9dd17`.
+
 ## Decision: **NO_GO**
 
 | Item | Value |
