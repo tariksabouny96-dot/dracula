@@ -24,3 +24,10 @@ def pytest_collection_modifyitems(config, items):
                 item.add_marker(pytest.mark.skip(reason="BLOCKED_EXTERNAL: " + reason))
         if item.get_closest_marker("windows_only") and sys.platform != "win32":
             item.add_marker(pytest.mark.skip(reason="BLOCKED_TARGET: requires the owner's Windows machine"))
+
+
+@pytest.fixture(autouse=True)
+def _isolated_hood_data_dir(tmp_path_factory, monkeypatch):
+    """No test may write into the real ~/.hood: every test gets its own data dir."""
+    if "HOOD_DATA_DIR" not in os.environ or os.environ.get("HOOD_TEST_KEEP_DATA_DIR") != "1":
+        monkeypatch.setenv("HOOD_DATA_DIR", str(tmp_path_factory.mktemp("hood-data")))

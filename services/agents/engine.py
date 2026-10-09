@@ -716,6 +716,15 @@ class AgentEngine:
                 "SELECT id, state, objective, provider_mode, verdict, created, updated FROM missions "
                 "WHERE owner=? ORDER BY created DESC LIMIT 100", (owner,))]
 
+    def events_since(self, owner: str, cursor: int = 0, limit: int = 200) -> List[Dict[str, Any]]:
+        """Owner-scoped event feed across missions, ordered by a monotonic cursor (seq)."""
+        with self._db() as db:
+            rows = db.execute(
+                "SELECT e.seq, e.mission_id, e.ts, e.actor, e.kind, e.detail FROM events e "
+                "JOIN missions m ON m.id = e.mission_id WHERE m.owner=? AND e.seq>? ORDER BY e.seq LIMIT ?",
+                (owner, int(cursor), max(1, min(int(limit), 500)))).fetchall()
+        return [dict(r) for r in rows]
+
     def events(self, owner: str, mission_id: str) -> List[Dict[str, Any]]:
         self._mission(owner, mission_id)
         with self._db() as db:

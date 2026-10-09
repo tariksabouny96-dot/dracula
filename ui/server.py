@@ -1002,6 +1002,9 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
         except (ValueError, TypeError) as exc:
             self._send_json({"error": str(exc)[:500]}, status=400)
             return True
+        if isinstance(result, feature_routes.Stream):
+            self._send_event_stream(session, result)
+            return True
         if isinstance(result, feature_routes.Raw):
             self.send_response(result.status)
             self.send_header("Content-Type", result.content_type)
@@ -1020,6 +1023,49 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
         else:
             self._send_json(result)
         return True
+
+    _streams_per_user: dict = {}
+    _streams_lock = threading.Lock()
+    MAX_STREAMS_PER_USER = 3
+
+    def _send_event_stream(self, session, stream):
+        """SSE writer: bounded per user and in time; heartbeats keep proxies honest."""
+        import time as _time
+        with self._streams_lock:
+            active = self._streams_per_user.get(session.user_id, 0)
+            if active >= self.MAX_STREAMS_PER_USER:
+                self._send_json({"error": "Too many open event streams"}, status=429)
+                return
+            self._streams_per_user[session.user_id] = active + 1
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+            self.wfile.write(b"retry: 3000\n\n")
+            self.wfile.flush()
+            started, last_beat = _time.monotonic(), _time.monotonic()
+            for item in stream.events:
+                if _time.monotonic() - started > stream.max_seconds:
+                    break
+                if item is None:
+                    if _time.monotonic() - last_beat >= stream.heartbeat_seconds:
+                        self.wfile.write(b": heartbeat\n\n")
+                        self.wfile.flush()
+                        last_beat = _time.monotonic()
+                    continue
+                event_id, event_type, data = item
+                payload = json.dumps(data, default=str).replace("\n", " ")
+                self.wfile.write(f"id: {event_id}\nevent: {event_type}\ndata: {payload}\n\n".encode("utf-8"))
+                self.wfile.flush()
+                last_beat = _time.monotonic()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            with self._streams_lock:
+                self._streams_per_user[session.user_id] = max(0, self._streams_per_user.get(session.user_id, 1) - 1)
+            self.close_connection = True
 
     # ------------------------------------------------------------------ agent engine API
     def _agent_engine_or_503(self):
@@ -1314,6 +1360,16 @@ class JarvisServer:
         JarvisUIHandler.mission_service = MissionService(Path.home() / ".hood" / "nova21")
         engine = agent_engine if agent_engine is not None else getattr(runtime, "agent_engine", None)
         JarvisUIHandler.agent_engine = engine
+        # Shared service instances for feature modules (ui/routes.py). One approval service for
+        # the whole server, so module approvals and the approval centre are the same records.
+        shared_approvals = getattr(interaction_service, "approval_service", None) or getattr(runtime, "approval_service", None)
+        for name, value in (("agents", engine), ("router", getattr(runtime, "model_router", None)),
+                            ("approvals", shared_approvals), ("x", self.x_session_manager),
+                            ("emergency_stop", emergency_stop), ("auth", self.auth_service)):
+            if value is not None:
+                feature_routes.SERVICES[name] = value
+            else:
+                feature_routes.SERVICES.pop(name, None)
         JarvisUIHandler._agent_runs = {}
         if engine is not None:
             engine.recover()  # reconcile work interrupted by a previous crash before serving

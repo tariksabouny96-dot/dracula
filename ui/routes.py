@@ -41,6 +41,16 @@ class Raw:
 
 
 @dataclass
+class Stream:
+    """Server-sent events. ``events`` yields (event_id, event_type, data) tuples; ``None`` means
+    "nothing new" and lets the server send a heartbeat. The server closes the stream after
+    ``max_seconds`` so clients reconnect with their last cursor."""
+    events: Any
+    max_seconds: int = 55
+    heartbeat_seconds: int = 15
+
+
+@dataclass
 class Route:
     method: str
     pattern: re.Pattern
@@ -115,4 +125,5 @@ def load_modules() -> List[str]:
 
 # Feature API modules. Append new modules here (one line each).
 API_MODULES: List[str] = [
+    "services.console.api",
 ]

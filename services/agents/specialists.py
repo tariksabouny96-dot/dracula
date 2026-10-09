@@ -7,6 +7,7 @@ Output must parse into the role's strict schema or the task fails.
 from __future__ import annotations
 
 import json
+import re
 from typing import Callable, Dict, Optional
 
 from pydantic import ValidationError
@@ -25,15 +26,14 @@ _COMMON = (
 SYSTEM_PROMPTS = {
     AgentRole.ENGINEER: (
         "You are Hood's engineer agent. Write the application under app/ (make app/ a package) and pytest unit "
-        "tests under tests/. Implement the interface contract exactly. " + _COMMON + " Return ONLY JSON: {\"files\": [{\"path\": str, \"content\": str}], "
-        "\"notes\": str, \"uncertainty\": str}. Paths must start with app/ or tests/."),
+        "tests under tests/. Implement the interface contract exactly. " + _COMMON + " Paths must start with app/ or "
+        "tests/. " + "{FILE_FORMAT}"),
     AgentRole.QA: (
         "You are Hood's independent QA agent. From the objective alone, write black-box pytest acceptance tests "
         "under qa_tests/ that use ONLY the entry points in the interface contract and check the required "
         "behaviour, "
         "including edge cases. Do not read or trust the engineer's tests. " + _COMMON +
-        " Return ONLY JSON: {\"files\": [{\"path\": str, \"content\": str}], \"notes\": str, \"uncertainty\": str}. "
-        "Paths must start with qa_tests/."),
+        " Paths must start with qa_tests/. " + "{FILE_FORMAT}"),
     AgentRole.REVIEWER: (
         "You are Hood's code reviewer. Report concrete defects only. " + _COMMON +
         " Return ONLY JSON: {\"findings\": [{\"severity\": \"info|low|medium|high|critical\", \"path\": str, "
@@ -41,8 +41,37 @@ SYSTEM_PROMPTS = {
 }
 
 
+FILE_FORMAT = (
+    "Output format (plain text, no JSON, no Markdown fences): for every file write a line "
+    "'=== FILE: <relative path> ===', then the complete raw file content, then a line '=== END FILE ==='. "
+    "After the files write '=== NOTES ===' followed by short notes, then '=== UNCERTAINTY ===' followed by "
+    "anything you are unsure about (or 'none'). Write nothing else.")
+for _role in (AgentRole.ENGINEER, AgentRole.QA):
+    SYSTEM_PROMPTS[_role] = SYSTEM_PROMPTS[_role].replace("{FILE_FORMAT}", FILE_FORMAT)
+
+_FILE_BLOCK = re.compile(r"^=== FILE: (?P<path>[^\n]{1,200}?) ===\n(?P<body>.*?)\n=== END FILE ===[ \t]*$",
+                         re.S | re.M)
+
+
 class AgentOutputRejected(ValueError):
     pass
+
+
+def parse_file_blocks(text: str) -> AgentWorkProduct:
+    """Parse the delimited file format. Code inside JSON strings proved unreliable with
+    small models (0/3 valid files vs 3/3 in this format, measured 2026-10-09)."""
+    if not isinstance(text, str) or "=== FILE:" not in text:
+        raise ValueError("No '=== FILE:' blocks in agent output")
+    files = [{"path": m.group("path").strip(), "content": m.group("body") + "\n"} for m in _FILE_BLOCK.finditer(text)]
+    if not files:
+        raise ValueError("File blocks are not terminated with '=== END FILE ==='")
+    if len(files) != text.count("=== FILE:"):
+        raise ValueError("Some file blocks are malformed or unterminated")
+    notes = re.search(r"^=== NOTES ===\n(.*?)(?=^=== UNCERTAINTY ===|\Z)", text, re.S | re.M)
+    unsure = re.search(r"^=== UNCERTAINTY ===\n(.*)\Z", text, re.S | re.M)
+    return AgentWorkProduct.model_validate({"files": files,
+                                            "notes": (notes.group(1).strip() if notes else "")[:4000],
+                                            "uncertainty": (unsure.group(1).strip() if unsure else "")[:2000]})
 
 
 def check_python_syntax(work: AgentWorkProduct) -> None:
@@ -81,12 +110,15 @@ def run_specialist(task: PlannedTask, objective: str, files: Dict[str, str],
     request = ModelRequest(
         model_class=ModelClass.STANDARD, agent=task.role.value, task_id=mission_id, temperature=0.1,
         max_tokens=8000 if task.role == AgentRole.REVIEWER else 32000, system_prompt=SYSTEM_PROMPTS[task.role],
-        response_schema=REVIEW_JSON_SCHEMA if task.role == AgentRole.REVIEWER else WORK_JSON_SCHEMA,
+        response_schema=REVIEW_JSON_SCHEMA if task.role == AgentRole.REVIEWER else None,
         prompt=_context(task, objective, visible, failure, interface_contract))
     response = invoke(request)
     schema = ReviewReport if task.role == AgentRole.REVIEWER else AgentWorkProduct
     try:
-        parsed = schema.model_validate(extract_json(response.text))
+        if schema is AgentWorkProduct and not (response.text or "").lstrip().startswith("{"):
+            parsed = parse_file_blocks(response.text)
+        else:
+            parsed = schema.model_validate(extract_json(response.text))
         if isinstance(parsed, AgentWorkProduct):
             check_python_syntax(parsed)
         return parsed, response
