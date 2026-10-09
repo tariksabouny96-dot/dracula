@@ -95,6 +95,8 @@ class InteractionService:
         self.x_session_manager = x_session_manager
 
         self.sessions: Dict[str, InteractionSession] = {}
+        # Optional durable history (ConversationStore); attached by the runtime.
+        self.conversation_store: Optional[Any] = None
         self.active_session_id = "default_session"
         self._get_or_create_session(self.active_session_id)
 
@@ -114,12 +116,29 @@ class InteractionService:
 
     def _get_or_create_session(self, session_id: str) -> InteractionSession:
         if session_id not in self.sessions:
-            self.sessions[session_id] = InteractionSession(
+            session = InteractionSession(
                 session_id=session_id,
                 started_at=time.time(),
                 last_activity=time.time()
             )
+            if self.conversation_store is not None:
+                # Resume this principal's durable history after a restart.
+                for row in self.conversation_store.load(session_id):
+                    session.messages.append(ConversationMessage(
+                        id=row["id"], sender=row["sender"], modality=row["modality"], text=row["text"],
+                        timestamp=row["ts"], speaker_id=row["speaker_id"], approval_ref=row["approval_ref"]))
+            self.sessions[session_id] = session
         return self.sessions[session_id]
+
+    def _append(self, session: InteractionSession, message: ConversationMessage) -> None:
+        session.messages.append(message)
+        if self.conversation_store is not None:
+            self.conversation_store.append(session.session_id, message)
+
+    def clear_history(self, session_id: str) -> int:
+        """Erase a principal's conversation (memory and durable store)."""
+        self.sessions.pop(session_id, None)
+        return self.conversation_store.delete(session_id) if self.conversation_store is not None else 0
 
     def get_ui_state(self, session_id: Optional[str] = None) -> UIState:
         session = self._get_or_create_session(session_id or self.active_session_id)
@@ -144,7 +163,7 @@ class InteractionService:
             self.trigger_barge_in_interruption(sid)
 
         user_msg = ConversationMessage(sender="Zak", modality="text", text=text, speaker_id="zak")
-        session.messages.append(user_msg)
+        self._append(session, user_msg)
 
         # Transition to Thinking / Executing
         session.ui_state = UIState.THINKING
@@ -158,7 +177,7 @@ class InteractionService:
             speaker_id=speaker_id,
             approval_ref=approval_ref
         )
-        session.messages.append(reply_msg)
+        self._append(session, reply_msg)
         if session.ui_state != UIState.EMERGENCY_STOP:
             # If X is active, preserve X_ACTIVE ui_state
             if self.x_session_manager and self.x_session_manager.get_status().get("is_active"):
@@ -190,7 +209,7 @@ class InteractionService:
             raise
 
         user_msg = ConversationMessage(sender="Zak", modality="voice", text=stt_res.transcript, speaker_id="zak")
-        session.messages.append(user_msg)
+        self._append(session, user_msg)
 
         session.ui_state = UIState.THINKING
         response_text, speaker_id, approval_ref = self._synthesize_response_with_speaker(stt_res.transcript, session)
@@ -204,7 +223,7 @@ class InteractionService:
             speaker_id=speaker_id,
             approval_ref=approval_ref
         )
-        session.messages.append(reply_msg)
+        self._append(session, reply_msg)
         session.current_speaking_message_id = reply_msg.id
 
         # Spoken audio generation

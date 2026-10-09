@@ -174,6 +174,8 @@ class HoodSystemRuntime:
             voice_router=self.voice_router,
             config=self.config
         )
+        from services.interaction.conversation_store import ConversationStore
+        self.interaction_service.conversation_store = ConversationStore(self.data_dir / "conversations.sqlite3")
         self.x_controller = XExecutiveController(self.memory_service, self.audit_service)
         self.x_session_manager = XSessionManager(
             approval_service=self.approval_service,

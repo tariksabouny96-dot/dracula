@@ -82,6 +82,17 @@ setInterval(() => {
 }, 120);
 
 // Append message to conversation stream
+// Restore this principal's durable conversation after login or restart.
+async function loadChatHistory() {
+  try {
+    const res = await fetch('/api/chat/history', {credentials: 'same-origin', cache: 'no-store'});
+    if (!res.ok) return;
+    const data = await res.json();
+    (data.messages || []).forEach(m => appendMessage(m.sender, m.text, m.speaker_id === 'zak',
+      m.speaker_id === 'system', m.speaker_id === 'x'));
+  } catch (err) { /* history is optional; chat still works */ }
+}
+
 function appendMessage(sender, text, isUser = false, isSystem = false, isX = false) {
   const msgDiv = document.createElement('div');
   const checkX = isX || sender === 'X' || sender.startsWith('X (');
@@ -862,6 +873,10 @@ async function checkAuthStatus() {
     }
 
     setCsrfToken(data.authenticated ? data.csrf_token : null);
+    if (data.authenticated && !window.__hoodHistoryLoaded) {
+      window.__hoodHistoryLoaded = true;
+      loadChatHistory();
+    }
     if (data.authenticated) {
       if (authModal) authModal.style.display = 'none';
       currentAuthUser = { username: data.username, role: data.role };

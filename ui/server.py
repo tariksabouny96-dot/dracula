@@ -526,6 +526,16 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             self._agent_post(curr_session, payload)
             return
 
+        if self.path == "/api/chat/clear":
+            if not self._require_permission(curr_session, UserPermission.CHAT_INTERACTION):
+                return
+            if payload.get("confirm") is not True:
+                self._send_json({"error": "Explicit confirmation required to erase conversation history"}, status=400)
+                return
+            removed = self.interaction_service.clear_history("user:" + curr_session.user_id) if self.interaction_service else 0
+            self._send_json({"status": "ERASED", "messages_removed": removed})
+            return
+
         # Chat / interrupt / approval endpoints
         if self.path == "/api/chat":
             if not self._require_permission(curr_session, UserPermission.X_ACTIVATION):
@@ -672,7 +682,7 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
                 permission = UserPermission.X_ACTIVATION  # owner scope
             elif self.path.startswith("/api/agents/"):
                 permission = UserPermission.EXECUTE_OBJECTIVE  # missions are owner-scoped in the engine
-            elif self.path == "/api/state":
+            elif self.path in ("/api/state", "/api/chat/history"):
                 permission = UserPermission.CHAT_INTERACTION
             elif self.path in ("/api/economic/summary", "/api/impossible_list", "/api/intelligence/summary", "/api/capabilities"):
                 permission = UserPermission.VIEW_PROJECT_DATA
@@ -849,6 +859,15 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
                 "tasks": [t.model_dump() for t in session.active_tasks],
                 "messages_count": len(session.messages)
             })
+        elif self.path == "/api/chat/history":
+            # Only the caller's own server-derived session id is ever loaded.
+            if not self.interaction_service:
+                self._send_json({"messages": [], "durable": False})
+                return
+            session = self.interaction_service._get_or_create_session("user:" + curr_session.user_id)
+            self._send_json({"durable": self.interaction_service.conversation_store is not None,
+                             "messages": [m.model_dump(include={"id", "sender", "modality", "text", "timestamp",
+                                                                "speaker_id"}) for m in session.messages[-200:]]})
         elif self.path == "/api/telemetry":
             self._send_json(self._get_live_telemetry())
         elif self.path == "/api/x/status":
