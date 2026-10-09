@@ -7,9 +7,13 @@ Governed by Master System Specification Section 5 & Build Instructions Section 1
 """
 
 from __future__ import annotations
+import os
+import json
 import uuid
 import time
+import tempfile
 from enum import Enum
+from pathlib import Path
 from typing import Dict, Any, List, Optional, Set
 from datetime import datetime, timezone, timedelta
 
@@ -39,17 +43,30 @@ class XOperationalState(str, Enum):
 class XSessionManager:
     """Authoritative state machine and session controller for Executive X."""
 
+    # Authorized activation-duration bounds (minutes). A request outside this
+    # range is clamped, and the clamp is reported to the requester, never silent.
+    MIN_DURATION_MINUTES = 1
+    MAX_DURATION_MINUTES = 60
+
     def __init__(
         self,
         approval_service: ApprovalService,
         audit_service: Optional[AuditService] = None,
         x_controller: Optional[Any] = None,
-        sentinel_service: Optional[Any] = None
+        sentinel_service: Optional[Any] = None,
+        state_path: Optional[Path] = None
     ):
         self.approval_service = approval_service
         self.audit_service = audit_service
         self.x_controller = x_controller
         self.sentinel_service = sentinel_service
+        # Durable state so a restart never silently forgets that X was active
+        # and never lets a consumed approval be replayed (F12).
+        if state_path is not None:
+            self.state_path = Path(state_path)
+        else:
+            base = Path(os.environ.get("HOOD_DATA_DIR") or (Path.home() / ".hood"))
+            self.state_path = base / "x_state.json"
 
         # When an identity provider is attached, X authority comes from the
         # authenticated ROOT_OWNER role, never from a username string.
@@ -72,6 +89,108 @@ class XSessionManager:
             "NO_EXTERNAL_TRAFFIC",
             "NO_EXPLOIT_PAYLOADS"
         ]
+
+        self._restore()
+
+    # --- Durable state (F12) ---------------------------------------------
+
+    def _persist(self) -> None:
+        """Write the authoritative X state atomically. Best-effort: a failure
+        here must never crash a governance transition."""
+        try:
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            data = {
+                "state": self.state.value,
+                "session_id": self.session_id,
+                "mode": self.mode,
+                "scope": self.scope,
+                "duration_seconds": self.duration_seconds,
+                "activated_at": self.activated_at.isoformat() if self.activated_at else None,
+                "expires_at": self.expires_at.isoformat() if self.expires_at else None,
+                "authorized_by": self.authorized_by,
+                "pending_approval_id": self.pending_approval_id,
+                "consumed_approval_ids": sorted(self.consumed_approval_ids),
+            }
+            fd, tmp = tempfile.mkstemp(dir=str(self.state_path.parent), suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(data, f)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp, self.state_path)
+            finally:
+                if os.path.exists(tmp):
+                    os.unlink(tmp)
+        except Exception:
+            pass
+
+    def _restore(self) -> None:
+        """Reload persisted X state. Fails closed: an ACTIVE session whose TTL
+        has already elapsed is NOT resurrected; it is recorded as expired and
+        returned to DORMANT. Consumed approval ids always survive so an
+        approval can never be replayed across a restart."""
+        try:
+            if not self.state_path.is_file():
+                return
+            data = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+
+        self.consumed_approval_ids = set(data.get("consumed_approval_ids") or [])
+        self.pending_approval_id = data.get("pending_approval_id")
+
+        def _parse(ts):
+            return datetime.fromisoformat(ts) if ts else None
+
+        restored = data.get("state")
+        self.mode = data.get("mode")
+        self.scope = data.get("scope")
+        self.duration_seconds = data.get("duration_seconds", 600)
+        self.activated_at = _parse(data.get("activated_at"))
+        self.expires_at = _parse(data.get("expires_at"))
+        self.authorized_by = data.get("authorized_by")
+        self.session_id = data.get("session_id")
+
+        if restored == XOperationalState.ACTIVE_READ_ONLY.value:
+            now = datetime.now(timezone.utc)
+            if self.expires_at and now < self.expires_at:
+                # Still within the approved window: honour the remaining TTL.
+                self.state = XOperationalState.ACTIVE_READ_ONLY
+                if self.audit_service:
+                    self.audit_service.record_event(AuditEvent(
+                        actor="system",
+                        action="X_STATE_RECOVERED",
+                        target="X_EXECUTIVE",
+                        policy_decision="ALLOW",
+                        result=f"Recovered ACTIVE X session {self.session_id} after restart; "
+                               f"expires {self.expires_at.isoformat()}.",
+                        verification="PASSED"
+                    ))
+            else:
+                # Expired while down: fail closed.
+                self._clear_session_fields()
+                self.state = XOperationalState.DORMANT
+                if self.audit_service:
+                    self.audit_service.record_event(AuditEvent(
+                        actor="system",
+                        action="X_STATE_EXPIRED_ON_RECOVERY",
+                        target="X_EXECUTIVE",
+                        policy_decision="ALLOW",
+                        result="A persisted ACTIVE X session had already expired on restart; forced DORMANT.",
+                        verification="PASSED"
+                    ))
+        elif restored == XOperationalState.PENDING_APPROVAL.value:
+            self.state = XOperationalState.PENDING_APPROVAL
+        else:
+            self.state = XOperationalState.DORMANT
+
+    def _clear_session_fields(self) -> None:
+        self.session_id = None
+        self.mode = None
+        self.scope = None
+        self.activated_at = None
+        self.expires_at = None
+        self.pending_approval_id = None
 
     def _require_root(self, username: Optional[str], action: str) -> None:
         name = (username or "").strip().lower()
@@ -113,7 +232,7 @@ class XSessionManager:
         effective_mode = "READ_ONLY_DIAGNOSTIC"
 
         # 4. Scope and duration validation
-        clamped_minutes = max(1, min(duration_minutes, 60))
+        clamped_minutes = max(self.MIN_DURATION_MINUTES, min(duration_minutes, self.MAX_DURATION_MINUTES))
         duration_sec = clamped_minutes * 60
         effective_scope = scope.strip() if scope else "LOCAL_SANDBOX_ENV"
 
@@ -151,6 +270,7 @@ class XSessionManager:
                 verification="PASSED"
             ))
 
+        self._persist()
         return req
 
     def activate(self, approval_id: str, approver_username: str) -> Dict[str, Any]:
@@ -221,6 +341,7 @@ class XSessionManager:
                 verification="PASSED"
             ))
 
+        self._persist()
         return self.get_status()
 
     def stand_down(self, reason: str = "MANUAL_STAND_DOWN", actor: str = "Zak") -> Dict[str, Any]:
@@ -265,6 +386,7 @@ class XSessionManager:
                 verification="PASSED"
             ))
 
+        self._persist()
         return {
             "status": "X_DORMANT",
             "state": "DORMANT",

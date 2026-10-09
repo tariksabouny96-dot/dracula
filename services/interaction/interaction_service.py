@@ -319,6 +319,17 @@ class InteractionService:
                         duration_minutes=dur_min,
                         scope=scope
                     )
+                    # Report the duration actually granted, and tell the user when
+                    # their request was clamped to the authorized range (F16).
+                    lo = self.x_session_manager.MIN_DURATION_MINUTES
+                    hi = self.x_session_manager.MAX_DURATION_MINUTES
+                    granted_min = max(lo, min(dur_min, hi))
+                    duration_line = f"• Duration: {granted_min} minutes (Strict Auto-Expiry)\n"
+                    if granted_min != dur_min:
+                        duration_line += (
+                            f"  (Note: you requested {dur_min} minutes; X activation is limited to "
+                            f"{lo}-{hi} minutes, so it was adjusted to {granted_min}.)\n"
+                        )
                     session.ui_state = UIState.WAITING_FOR_APPROVAL
                     return (
                         f"Root Owner authentication verified. Project Sentinel integrity baseline confirmed.\n\n"
@@ -327,7 +338,7 @@ class InteractionService:
                         f"• Action: {req.action_type}\n"
                         f"• Target: {req.target}\n"
                         f"• Risk Level: {req.risk_level.value}\n"
-                        f"• Duration: {dur_min} minutes (Strict Auto-Expiry)\n"
+                        f"{duration_line}"
                         f"• Scope Boundary: {scope} (Zero External Traffic, Zero Spend)\n\n"
                         f"Status: PENDING APPROVAL. Please review and confirm via the Approval Center or say 'approve {req.approval_id}'."
                     )
