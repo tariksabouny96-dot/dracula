@@ -131,6 +131,7 @@ class ModelRouter:
         candidate_order = self.select_provider_order(request)
         last_error = None
         attempt_count = 0
+        possibly_sent = False  # True once any request may have reached a provider
 
         for provider_name in candidate_order:
             provider = self.providers.get(provider_name)
@@ -168,6 +169,7 @@ class ModelRouter:
                 last_error = e
                 continue
             except ProviderError as e:
+                possibly_sent = True
                 # Request may have been processed and billed: charge the reservation.
                 from packages.contracts import ModelUsage
                 self.cost_controller.settle(reservation, ModelUsage(), cost_measured=False,
@@ -175,6 +177,7 @@ class ModelRouter:
                 last_error = e
                 continue
 
+            possibly_sent = True
             if resp.is_mock and not self._mock_authorized(request):
                 self.cost_controller.release(reservation)
                 last_error = ProviderError("Simulated output is not permitted for this request")
@@ -198,7 +201,9 @@ class ModelRouter:
                 price_source=(f"{price.source} ({price.as_of})" if price else "non-billing provider"))
             return resp
 
-        # If all providers failed
+        # If all providers failed. When nothing could have been sent, say so precisely so
+        # callers do not charge budgets for a request that never left the machine.
         if last_error:
-            raise ProviderError(f"All model providers failed. Last error: {str(last_error)}")
-        raise ProviderError("No eligible model providers available for request.")
+            cls = ProviderError if possibly_sent else ProviderNotConfiguredError
+            raise cls(f"All model providers failed. Last error: {str(last_error)}")
+        raise ProviderNotConfiguredError("No eligible model providers available for request.")

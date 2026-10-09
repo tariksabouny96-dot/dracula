@@ -407,7 +407,12 @@ def main():
     elif args.command == "ui":
         print(f"Launching HOOD Interactive Surface on http://127.0.0.1:{args.port} ...")
         from services.auth.auth_service import AuthenticationService
-        auth_svc = getattr(runtime, "auth_service", None) or AuthenticationService()
+        # Identity lives in HOOD_DATA_DIR; an existing legacy artifacts/auth.db keeps being used
+        # so an upgrade never silently drops the Root Owner.
+        legacy_auth = Path("artifacts/auth.db")
+        auth_db = legacy_auth if legacy_auth.exists() and not (runtime.data_dir / "auth.db").exists() \
+            else runtime.data_dir / "auth.db"
+        auth_svc = getattr(runtime, "auth_service", None) or AuthenticationService(db_path=auth_db)
         server = JarvisServer(
             interaction_service=runtime.interaction_service,
             emergency_stop=runtime.emergency_stop,

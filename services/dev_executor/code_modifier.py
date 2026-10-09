@@ -39,11 +39,11 @@ class CodeModifier:
         self.git_bin = "C:\\Program Files\\Git\\cmd\\git.exe" if os.path.exists("C:\\Program Files\\Git\\cmd\\git.exe") else "git"
 
     def _validate_path(self, target_rel_path: str) -> Path:
-        resolved = (self.workspace_root / target_rel_path).resolve()
+        from packages.security import confine_path, PathConfinementError
         try:
-            resolved.relative_to(self.workspace_root)
-        except ValueError:
-            raise PermissionError(f"Path traversal blocked: '{target_rel_path}' is outside approved workspace root.")
+            resolved = confine_path(self.workspace_root, target_rel_path, label="target")
+        except PathConfinementError:
+            raise PermissionError(f"Path traversal blocked: '{target_rel_path}' is outside approved workspace root.") from None
 
         filename_lower = resolved.name.lower()
         if any(b in filename_lower for b in self.BLOCKED_PATTERNS):

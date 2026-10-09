@@ -1238,6 +1238,10 @@ class JarvisServer:
         if interaction_service and self.x_session_manager:
             interaction_service.x_session_manager = self.x_session_manager
 
+        # Extra Host names (e.g. a TLS reverse proxy's name) must be listed explicitly.
+        import os as _os
+        JarvisUIHandler.allowed_hosts = {h.strip().lower() for h in
+                                         _os.environ.get("HOOD_ALLOWED_HOSTS", "").split(",") if h.strip()}
         JarvisUIHandler.interaction_service = interaction_service
         JarvisUIHandler.emergency_stop = emergency_stop
         JarvisUIHandler.runtime = runtime

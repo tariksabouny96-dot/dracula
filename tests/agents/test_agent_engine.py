@@ -431,3 +431,18 @@ def test_tampered_receipt_or_artifact_withholds_download(tmp_path):
     assert engine.verify_receipts(OWNER, mid)["valid"] is False
     with pytest.raises(MissionConflict, match="integrity"):
         engine.artifact(OWNER, mid)
+
+
+def test_refused_before_sending_is_not_charged(tmp_path):
+    from services.model_gateway.base import ProviderNotConfiguredError
+    router, stub = _router({"gemini": {"priced-model": ModelPrice(0.1, 0.2, "2026-10-01", "fixture")}})
+
+    def refuse(request):  # e.g. API key missing: refused locally, nothing sent
+        raise ProviderNotConfiguredError("API key not configured")
+    stub.invoke = refuse
+    engine = AgentEngine(tmp_path / "engine", router=router)
+    status = engine.create_mission(OWNER, OBJECTIVE, budget_usd=5)
+    assert status["state"] == "BLOCKED"
+    call = engine.spend(OWNER, status["mission_id"])["calls"][0]
+    assert call["reserved_usd"] > 0 and call["actual_usd"] == 0
+    assert engine.spend(OWNER, status["mission_id"])["total_usd"] == 0

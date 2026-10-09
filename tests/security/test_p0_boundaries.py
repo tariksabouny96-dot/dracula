@@ -41,7 +41,10 @@ def test_confine_path_rejects_escapes(tmp_path, bad):
 def test_confine_path_rejects_symlink_escape_and_allows_inside(tmp_path):
     outside = tmp_path.parent / (tmp_path.name + "_outside")
     outside.mkdir()
-    (tmp_path / "link").symlink_to(outside)
+    try:
+        (tmp_path / "link").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("BLOCKED_TARGET: symlink creation needs privileges on this host")
     with pytest.raises(PathConfinementError):
         confine_path(tmp_path, "link/secret.txt")
     assert confine_path(tmp_path, "sub/file.txt") == (tmp_path / "sub/file.txt").resolve()
@@ -347,6 +350,7 @@ def test_spend_cap_blocks_new_paid_calls():
 
 
 # ---------------------------------------------------------------- vault
+@pytest.mark.skipif(os.name != "posix", reason="BLOCKED_TARGET: POSIX permission bits; Windows ACL check not implemented")
 def test_vault_refuses_world_readable_key_and_rotates(tmp_path, monkeypatch):
     from packages.auth.vault import SecretVault
     monkeypatch.delenv("HOOD_VAULT_KEY", raising=False)
@@ -367,3 +371,12 @@ def test_vault_key_from_environment_is_not_written_to_disk(tmp_path, monkeypatch
     monkeypatch.setenv("HOOD_VAULT_KEY", Fernet.generate_key().decode())
     SecretVault(vault_path=tmp_path / "vault.enc").set_secret("openai", "api_key", "k")
     assert not (tmp_path / ".vault_key").exists()
+
+
+def test_code_modifier_uses_canonical_confinement(tmp_path):
+    from services.dev_executor.code_modifier import CodeModifier
+    mod = CodeModifier(tmp_path)
+    for bad in ("C:\\Windows\\win.ini", "../x.py", "a\x00b"):
+        with pytest.raises(PermissionError):
+            mod._validate_path(bad)
+    assert mod._validate_path("pkg/mod.py") == (tmp_path / "pkg/mod.py").resolve()

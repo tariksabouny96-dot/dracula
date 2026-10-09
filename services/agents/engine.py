@@ -45,6 +45,7 @@ from .sandbox import SandboxUnavailable, SandboxViolation, Workspace
 from .specialists import AgentOutputRejected, run_specialist
 from .verifier import verify
 from services.model_gateway.cost_controller import BudgetExceededError
+from services.model_gateway.base import ProviderNotConfiguredError
 
 LEASE_SECONDS = 600
 MAX_REPAIRS = 2
@@ -230,6 +231,10 @@ class AgentEngine:
             db.execute("COMMIT")
         try:
             response = self._invoke(request)
+        except (ProviderNotConfiguredError, BudgetExceededError):
+            with self._db() as db:  # refused before sending: nothing was spent
+                db.execute("UPDATE spend SET actual_usd=0, measured=1, settled=? WHERE call_id=?", (_now(), call_id))
+            raise
         except Exception:
             with self._db() as db:  # a failed call may still have been billed: keep the reservation
                 db.execute("UPDATE spend SET settled=?, measured=0 WHERE call_id=?", (_now(), call_id))

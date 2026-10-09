@@ -1,0 +1,89 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install pinned dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Compile and syntax checks
+        run: |
+          python -m compileall -q services packages ui scripts hood_cli.py
+          node --check ui/static/app.js
+      # Windows runners have no network namespaces: sandbox tests are skipped there with an
+      # explicit reason and the agent sandbox refuses to execute (it never runs unisolated).
+      - name: Test suite (live provider / network tests are skipped as BLOCKED_EXTERNAL)
+        run: python -m pytest -q -rs --junitxml=junit-${{ matrix.os }}.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-${{ matrix.os }}
+          path: junit-${{ matrix.os }}.xml
+
+  supply-chain:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Dependency vulnerability audit
+        run: |
+          python -m pip install pip-audit==2.9.0
+          pip-audit -r requirements.txt
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: SBOM
+        run: |
+          python -m pip install -r requirements.txt
+          python scripts/generate_sbom.py --out SBOM.cdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: SBOM.cdx.json
+
+  release-gate:
+    # Manual: produces commit-bound evidence. Expected to report NO_GO until G0-G7 are satisfied.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: |
+          python -m pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Preproduction gate
+        run: python scripts/preproduction_gate.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate-evidence
+          path: release/evidence/

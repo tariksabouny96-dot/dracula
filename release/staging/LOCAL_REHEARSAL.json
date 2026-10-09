@@ -1,0 +1,32 @@
+{
+  "kind": "LOCAL_REHEARSAL_NOT_STAGING",
+  "commit": "6cdf0c8733f6a1cef1f3e0613df5c0988e809957",
+  "generated_at": "2026-10-09T15:01:10.894244+00:00",
+  "host": "linux",
+  "checks": {
+    "clean_export": "PASS",
+    "boot": "PASS",
+    "static_index": "PASS",
+    "rebinding_refused": "PASS",
+    "unauthenticated_api_refused": "PASS",
+    "owner_setup": "PASS",
+    "login": "PASS",
+    "csrf_enforced": "PASS",
+    "chat": "PASS",
+    "agent_mission_fails_closed_without_provider": "PASS",
+    "emergency_stop": "PASS",
+    "stop_blocks_new_work": "PASS",
+    "stop_reset": "PASS",
+    "backup_verify_restore": "PASS",
+    "restored_instance_login": "PASS",
+    "restored_chat_history": "PASS"
+  },
+  "overall": "PASS",
+  "not_covered": [
+    "isolated staging host",
+    "TLS/reverse proxy",
+    "Windows target",
+    "rollback to a previous release",
+    "live provider credentials"
+  ]
+}
