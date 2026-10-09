@@ -23,7 +23,9 @@ Verifies all 33 required dimensions:
 - X_SEALED memory isolation
 """
 
+import hashlib
 import os
+import struct
 import sys
 import pytest
 from pathlib import Path
@@ -42,6 +44,7 @@ from services.tool_gateway.gateway import ToolGateway, PermissionDeniedError
 from services.core.emergency_stop import EmergencyStopController
 
 from services.desktop import (
+    DesktopUnavailable,
     DesktopControlMethod,
     UIElementRole,
     UIElementInfo,
@@ -135,13 +138,22 @@ def test_accessibility_element_targeting(desktop_system):
 def test_screen_observation_and_secret_redaction(desktop_system, tmp_path):
     """Verifies screen capture, SHA256 integrity hash, and credential scrubbing."""
     desktop = desktop_system["desktop"]
-    obs = desktop.observe_screen(capture_image=True)
-
-    assert obs.screen_width > 0
-    assert obs.screen_height > 0
-    assert obs.screenshot_path is not None
-    assert Path(obs.screenshot_path).exists()
-    assert len(obs.image_hash_sha256) == 64
+    if desktop.backend.get_screen_dimensions() == (0, 0):
+        # No real desktop here: the observer must refuse, not invent a screenshot.
+        before = set(desktop.observer.artifact_dir.glob("*.bmp"))
+        with pytest.raises(DesktopUnavailable):
+            desktop.observe_screen(capture_image=True)
+        assert set(desktop.observer.artifact_dir.glob("*.bmp")) == before
+    else:
+        obs = desktop.observe_screen(capture_image=True)
+        assert obs.screen_width > 0
+        assert obs.screen_height > 0
+        assert obs.screenshot_path is not None
+        data = Path(obs.screenshot_path).read_bytes()
+        assert len(obs.image_hash_sha256) == 64
+        assert hashlib.sha256(data).hexdigest() == obs.image_hash_sha256
+        # Real capture: header matches the reported display, rows stored top-down.
+        assert struct.unpack_from("<ii", data, 18) == (obs.screen_width, -obs.screen_height)
 
     # Verify secret scrubbing on text with mock secret
     mock_el = UIElementInfo(
@@ -226,6 +238,11 @@ def test_tool_gateway_capability_enforcement_for_desktop(desktop_system):
         target_scope="workspace",
         granted_to="test_runner"
     )
+    if desktop_system["backend"].get_screen_dimensions() == (0, 0):
+        # Grant accepted, but there is no real desktop here: an honest error, no fake result.
+        with pytest.raises(DesktopUnavailable):
+            desktop_tool.execute({"action": "observe", "grant_id": grant.grant_id})
+        return
     res = desktop_tool.execute({"action": "observe", "grant_id": grant.grant_id})
     assert "screen_width" in res
     assert res["screen_width"] > 0

@@ -627,7 +627,7 @@ def main():
         print(" HOOD GOVERNED DESKTOP CONTROL STATUS")
         print("========================================")
         print(f"Status:            {'EMERGENCY_STOP' if runtime.desktop_service.is_emergency_stopped else 'ONLINE'}")
-        print(f"Display Geometry:  {w} x {h}")
+        print(f"Display Geometry:  {f'{w} x {h}' if w and h else 'unknown (no Windows desktop on this host)'}")
         print(f"Active Window:     {active_w.title if active_w else 'None'}")
         print(f"Active Process:    {active_w.process_name if active_w else 'None'} (PID: {active_w.process_id if active_w else 0})")
         print(f"Control Hierarchy: API -> HTTP -> CLI -> Playwright -> UI Automation -> Vision -> Mouse")

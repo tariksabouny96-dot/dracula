@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 from packages.logging.redactor import redact_string
 from services.desktop.contracts import ScreenObservation, WindowInfo, UIElementInfo
-from services.desktop.windows_backend import WindowsNativeBackend
+from services.desktop.windows_backend import DesktopUnavailable, WindowsNativeBackend
 from services.desktop.accessibility import AccessibilityEngine
 
 
@@ -32,8 +32,13 @@ class ScreenObserver:
         self.artifact_dir.mkdir(parents=True, exist_ok=True)
 
     def observe(self, capture_image: bool = True) -> ScreenObservation:
-        """Captures full screen observation, active window, and semantic elements."""
+        """Captures full screen observation, active window, and semantic elements.
+
+        Raises ``DesktopUnavailable`` when there is no real desktop to observe; nothing is
+        written and no stand-in observation is produced."""
         w, h = self.backend.get_screen_dimensions()
+        if w <= 0 or h <= 0:
+            raise DesktopUnavailable("No Windows desktop is available on this host to observe")
         active_window = self.backend.get_foreground_window()
 
         elements: List[UIElementInfo] = []

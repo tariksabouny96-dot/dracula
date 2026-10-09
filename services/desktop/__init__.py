@@ -23,7 +23,7 @@ from services.desktop.contracts import (
     MorningReport,
 )
 
-from services.desktop.windows_backend import WindowsNativeBackend
+from services.desktop.windows_backend import DesktopUnavailable, WindowsNativeBackend
 from services.desktop.accessibility import AccessibilityEngine
 from services.desktop.input_controller import GovernedInputController
 from services.desktop.screen_observer import ScreenObserver
@@ -53,6 +53,7 @@ __all__ = [
     "UnattendedBranchState",
     "MorningReport",
     "WindowsNativeBackend",
+    "DesktopUnavailable",
     "AccessibilityEngine",
     "GovernedInputController",
     "ScreenObserver",

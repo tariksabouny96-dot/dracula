@@ -1,7 +1,11 @@
 """
 HOOD Windows Backend - Native Win32 / Desktop API Integration
 Provides real ctypes-based window management, screen capture, clipboard control,
-and desktop switching for Windows environments, with graceful fallbacks.
+and desktop switching for Windows environments.
+
+When there is no usable Windows desktop (another OS, missing win32 handles, a failed
+capture) the backend says so: screen capture raises ``DesktopUnavailable`` and screen
+size is reported as ``(0, 0)``. It never invents a picture or a display size.
 """
 
 from __future__ import annotations
@@ -16,6 +20,22 @@ from typing import List, Optional, Tuple, Dict, Any
 from pathlib import Path
 
 from services.desktop.contracts import WindowInfo, WindowState
+
+
+class DesktopUnavailable(RuntimeError):
+    """No real Windows desktop could be read on this host."""
+
+
+def encode_top_down_bmp(width: int, height: int, pixels: bytes) -> bytes:
+    """Wrap 24-bit top-down rows (as GetDIBits returns them with a negative height) in a BMP file.
+
+    The header height is negative too, so viewers draw row 0 at the top."""
+    stride = ((width * 3 + 3) // 4) * 4
+    if len(pixels) != stride * height:
+        raise ValueError("pixel buffer does not match width/height")
+    bmp_header = struct.pack('<2sIHHI', b'BM', 54 + len(pixels), 0, 0, 54)
+    dib_header = struct.pack('<IiiHHIIiiII', 40, width, -height, 1, 24, 0, len(pixels), 2835, 2835, 0, 0)
+    return bmp_header + dib_header + pixels
 
 
 class WindowsNativeBackend:
@@ -233,19 +253,24 @@ class WindowsNativeBackend:
             return False
 
     def get_screen_dimensions(self) -> Tuple[int, int]:
+        """Real display size, or (0, 0) when it cannot be read (never a guessed size)."""
         if not self._user32:
-            return (1920, 1080)
+            return (0, 0)
         w = self._user32.GetSystemMetrics(0)  # SM_CXSCREEN
         h = self._user32.GetSystemMetrics(1)  # SM_CYSCREEN
-        return (w if w > 0 else 1920, h if h > 0 else 1080)
+        return (w, h) if w > 0 and h > 0 else (0, 0)
 
     def capture_screen_bmp(self) -> bytes:
-        """Captures the current screen into an uncompressed 24-bit BMP byte stream."""
+        """Captures the current screen into an uncompressed 24-bit BMP byte stream.
+
+        Raises ``DesktopUnavailable`` when no real capture is possible."""
         if not self.is_windows or not self._user32 or not self._gdi32:
-            return self._generate_fallback_bmp(1536, 864)
+            raise DesktopUnavailable("Screen capture needs a Windows desktop session; none is available here")
 
         self._ensure_default_desktop()
         w, h = self.get_screen_dimensions()
+        if not w or not h:
+            raise DesktopUnavailable("Windows did not report a display size; screen not captured")
 
         hdc_screen = self._user32.GetDC(0)
         hdc_mem = self._gdi32.CreateCompatibleDC(hdc_screen)
@@ -289,28 +314,9 @@ class WindowsNativeBackend:
         self._gdi32.DeleteDC(hdc_mem)
         self._user32.ReleaseDC(0, hdc_screen)
 
-        if lines > 0:
-            # Prepend standard BMP header
-            file_size = 54 + image_size
-            bmp_header = struct.pack('<2sIHHI', b'BM', file_size, 0, 0, 54)
-            dib_header = struct.pack('<IIIHHIIIIII', 40, w, h, 1, 24, 0, image_size, 2835, 2835, 0, 0)
-            return bmp_header + dib_header + pixel_buf.raw
-        else:
-            return self._generate_fallback_bmp(w, h)
-
-    def _generate_fallback_bmp(self, width: int, height: int) -> bytes:
-        row_bytes = width * 3
-        padding = (4 - (row_bytes % 4)) % 4
-        stride = row_bytes + padding
-        image_size = stride * height
-        file_size = 54 + image_size
-        bmp_header = struct.pack('<2sIHHI', b'BM', file_size, 0, 0, 54)
-        dib_header = struct.pack('<IIIHHIIIIII', 40, width, height, 1, 24, 0, image_size, 2835, 2835, 0, 0)
-        row = bytearray([120, 120, 120] * width + [0] * padding)
-        buf = bytearray()
-        for _ in range(height):
-            buf.extend(row)
-        return bmp_header + dib_header + bytes(buf)
+        if lines <= 0:
+            raise DesktopUnavailable("Windows returned no pixels for the screen capture (GetDIBits failed)")
+        return encode_top_down_bmp(w, h, pixel_buf.raw)
 
     # --- Clipboard Management ---
 
