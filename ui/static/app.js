@@ -1,3 +1,20 @@
+// CSRF: every state-changing same-origin request carries the per-session token.
+// The token comes from the login response or /api/auth/status (same-origin only).
+let hoodCsrfToken = null;
+function setCsrfToken(token) { hoodCsrfToken = typeof token === 'string' ? token : null; }
+const nativeFetch = window.fetch.bind(window);
+window.fetch = function(resource, init = {}) {
+  const method = String((init && init.method) || 'GET').toUpperCase();
+  const url = typeof resource === 'string' ? resource : (resource && resource.url) || '';
+  const sameOrigin = url.startsWith('/') || url.startsWith(window.location.origin);
+  if (method !== 'GET' && method !== 'HEAD' && sameOrigin && hoodCsrfToken) {
+    const headers = new Headers((init && init.headers) || {});
+    headers.set('X-CSRF-Token', hoodCsrfToken);
+    init = Object.assign({}, init, { headers, credentials: 'same-origin' });
+  }
+  return nativeFetch(resource, init);
+};
+
 // Escape untrusted API content before inserting into template HTML.
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, ch => ({
@@ -631,11 +648,11 @@ async function loadTelemetry() {
     const deskPanel = document.getElementById('desktop-telemetry');
     if (deskPanel && data.desktop) {
       deskPanel.innerHTML = `
-        <div>Current App: ${data.desktop.current_app}</div>
-        <div>Control Method: ${data.desktop.control_method}</div>
-        <div>Human Verification: ${data.desktop.verification_state}</div>
-        <div>Financial Spend: ${data.desktop.financial_spend}</div>
-        <div>Unattended Tasks: ${data.desktop.unattended_tasks}</div>
+        <div>Current App: ${escapeHtml(data.desktop.current_app)}</div>
+        <div>Control Method: ${escapeHtml(data.desktop.control_method)}</div>
+        <div>Human Verification: ${escapeHtml(data.desktop.verification_state)}</div>
+        <div>Financial Spend: ${escapeHtml(data.desktop.financial_spend)}</div>
+        <div>Unattended Tasks: ${escapeHtml(data.desktop.unattended_tasks)}</div>
       `;
     }
 
@@ -648,10 +665,10 @@ async function loadTelemetry() {
     const evoPanel = document.getElementById('evolution-telemetry');
     if (evoPanel && data.evolution) {
       evoPanel.innerHTML = `
-        <div>Level 1 (Ext): ${data.evolution.level_1}</div>
-        <div>Level 2 (Self): ${data.evolution.level_2}</div>
-        <div>Level 3 (HOOD): ${data.evolution.level_3}</div>
-        <div>GPU Topology: ${data.evolution.gpu_topology}</div>
+        <div>Level 1 (Ext): ${escapeHtml(data.evolution.level_1)}</div>
+        <div>Level 2 (Self): ${escapeHtml(data.evolution.level_2)}</div>
+        <div>Level 3 (HOOD): ${escapeHtml(data.evolution.level_3)}</div>
+        <div>GPU Topology: ${escapeHtml(data.evolution.gpu_topology)}</div>
       `;
     }
 
@@ -659,8 +676,8 @@ async function loadTelemetry() {
     const voicePanel = document.getElementById('voice-telemetry');
     if (voicePanel && data.voice) {
       voicePanel.innerHTML = `
-        <div>Daily Voice Spend: ${data.voice.daily_spend}</div>
-        <div>Active Sessions: ${data.voice.active_sessions}</div>
+        <div>Daily Voice Spend: ${escapeHtml(data.voice.daily_spend)}</div>
+        <div>Active Sessions: ${escapeHtml(data.voice.active_sessions)}</div>
         <div>Microphone Privacy: SAFE (No Ambient Cloud Recording)</div>
       `;
     }
@@ -842,6 +859,7 @@ async function checkAuthStatus() {
       return;
     }
 
+    setCsrfToken(data.authenticated ? data.csrf_token : null);
     if (data.authenticated) {
       if (authModal) authModal.style.display = 'none';
       currentAuthUser = { username: data.username, role: data.role };
@@ -929,6 +947,7 @@ if (loginForm) {
       });
       const data = await res.json();
       if (res.ok && data.status === 'AUTHENTICATED') {
+        setCsrfToken(data.csrf_token);
         checkAuthStatus();
       } else {
         errEl.textContent = data.error || 'Authentication failed';
@@ -1093,15 +1112,17 @@ async function loadUserRegistry() {
     users.forEach(u => {
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td><strong>${u.username}</strong></td>
-        <td>${u.display_name}</td>
-        <td><span class="user-role-badge">${u.role}</span></td>
+        <td><strong>${escapeHtml(u.username)}</strong></td>
+        <td>${escapeHtml(u.display_name)}</td>
+        <td><span class="user-role-badge">${escapeHtml(u.role)}</span></td>
         <td><span class="status-indicator ${u.is_active ? 'active' : 'suspended'}">${u.is_active ? 'ACTIVE' : 'SUSPENDED'}</span></td>
-        <td>${u.allowed_projects ? u.allowed_projects.join(', ') : 'GLOBAL'}</td>
+        <td>${escapeHtml(Array.isArray(u.assigned_projects) ? u.assigned_projects.join(', ') : 'GLOBAL')}</td>
         <td>
-          ${u.role !== 'ROOT_OWNER' ? `<button class="btn-status-toggle" onclick="toggleUserStatus('${u.user_id}', ${!u.is_active})">${u.is_active ? 'SUSPEND' : 'ACTIVATE'}</button>` : '<em style="color:#64748b;">IMMUTABLE</em>'}
+          ${u.role !== 'ROOT_OWNER' ? `<button class="btn-status-toggle" type="button">${u.is_active ? 'SUSPEND' : 'ACTIVATE'}</button>` : '<em style="color:#64748b;">IMMUTABLE</em>'}
         </td>
       `;
+      const toggle = tr.querySelector('button.btn-status-toggle');
+      if (toggle) toggle.addEventListener('click', () => window.toggleUserStatus(u.user_id, !u.is_active));
       userTableBody.appendChild(tr);
     });
   } catch (err) {}
@@ -1206,26 +1227,27 @@ async function loadActiveSessions() {
     sessions.forEach(s => {
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td><code>${s.session_token.substring(0, 16)}...</code></td>
-        <td>${s.ip_address}</td>
-        <td><small>${s.user_agent ? s.user_agent.substring(0, 30) : 'CLI / Surface'}</small></td>
-        <td>${new Date(s.created_at).toLocaleTimeString()}</td>
-        <td>${new Date(s.expires_at).toLocaleTimeString()}</td>
+        <td><code>${escapeHtml(String(s.session_id || '').substring(0, 12))}…</code></td>
+        <td>${escapeHtml(s.ip_address)}</td>
+        <td><small>${escapeHtml(s.user_agent ? s.user_agent.substring(0, 30) : 'CLI / Surface')}</small></td>
+        <td>${escapeHtml(new Date(s.created_at).toLocaleTimeString())}</td>
+        <td>${escapeHtml(new Date(s.expires_at).toLocaleTimeString())}</td>
         <td>
-          <button class="btn-status-toggle" onclick="revokeSession('${s.session_token}')">REVOKE</button>
+          <button class="btn-status-toggle" type="button">REVOKE</button>
         </td>
       `;
+      tr.querySelector('button').addEventListener('click', () => window.revokeSession(s.session_id));
       sessionsTableBody.appendChild(tr);
     });
   } catch (err) {}
 }
 
-window.revokeSession = async function(token) {
+window.revokeSession = async function(sessionId) {
   try {
     const res = await fetch('/api/auth/sessions/revoke', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_token: token })
+      body: JSON.stringify({ session_id: sessionId })
     });
     if (res.ok) loadActiveSessions();
   } catch (err) {}
@@ -1300,18 +1322,18 @@ async function loadSentinelData() {
 
       if (sentinelFirewallDetails) {
         sentinelFirewallDetails.innerHTML = `
-          <div>Windows Firewall State: <strong>${summary.firewall.active ? 'ACTIVE' : 'INACTIVE'}</strong> (${summary.firewall.mode})</div>
-          <div>Audited Listening Ports: ${summary.firewall.listening_ports_count} TCP sockets</div>
-          <div>Unexpected Exposed Ports (0.0.0.0): ${summary.firewall.unexpected_ports.length > 0 ? summary.firewall.unexpected_ports.join(', ') : 'None (Compliant)'}</div>
-          <div>Baseline Deviations: ${summary.firewall.baseline_deviations.length}</div>
+          <div>Windows Firewall State: <strong>${escapeHtml(summary.firewall.active ? 'ACTIVE' : 'INACTIVE')}</strong> (${escapeHtml(summary.firewall.mode)})</div>
+          <div>Audited Listening Ports: ${escapeHtml(summary.firewall.listening_ports_count)} TCP sockets</div>
+          <div>Unexpected Exposed Ports (0.0.0.0): ${escapeHtml(summary.firewall.unexpected_ports.length > 0 ? summary.firewall.unexpected_ports.join(', ') : 'None (Compliant)')}</div>
+          <div>Baseline Deviations: ${escapeHtml(summary.firewall.baseline_deviations.length)}</div>
         `;
       }
 
       if (sentinelHealingDetails) {
         const lastAction = summary.self_healing.last_action;
         sentinelHealingDetails.innerHTML = `
-          <div>Recent Autonomous Repairs: ${summary.self_healing.recent_actions_count}</div>
-          <div>Last Self-Healing Action: ${lastAction ? `${lastAction.description} (${lastAction.success ? 'SUCCESS' : 'FAILED'})` : 'None / Standby'}</div>
+          <div>Recent Autonomous Repairs: ${escapeHtml(summary.self_healing.recent_actions_count)}</div>
+          <div>Last Self-Healing Action: ${escapeHtml(lastAction ? `${lastAction.description} (${lastAction.success ? 'SUCCESS' : 'FAILED'})` : 'None / Standby')}</div>
           <div>Immutable Boundaries: ROOT_OWNER, GOVERNANCE, KEYS, FIREWALL (Protected)</div>
         `;
       }
@@ -1327,12 +1349,12 @@ async function loadSentinelData() {
           const row = document.createElement('tr');
           const sevColor = f.severity === 'CRITICAL' ? '#ff0055' : (f.severity === 'HIGH' ? '#ff7b00' : '#f6d365');
           row.innerHTML = `
-            <td><code>${f.finding_id}</code></td>
-            <td><strong style="color: ${sevColor}">${f.severity}</strong></td>
-            <td>${f.category}</td>
-            <td>${f.affected_component}</td>
-            <td>${f.status}</td>
-            <td>${f.title}</td>
+            <td><code>${escapeHtml(f.finding_id)}</code></td>
+            <td><strong style="color: ${sevColor}">${escapeHtml(f.severity)}</strong></td>
+            <td>${escapeHtml(f.category)}</td>
+            <td>${escapeHtml(f.affected_component)}</td>
+            <td>${escapeHtml(f.status)}</td>
+            <td>${escapeHtml(f.title)}</td>
           `;
           sentinelFindingsBody.appendChild(row);
         });

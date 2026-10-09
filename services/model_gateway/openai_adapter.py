@@ -40,6 +40,9 @@ class OpenAIProviderAdapter(BaseModelProvider):
             raise ProviderNotConfiguredError("Invalid OpenAI model configuration")
         return value
 
+    def resolve_model(self, request: ModelRequest) -> str:
+        return self._model(request.model_class)
+
     def invoke(self, request: ModelRequest) -> ModelResponse:
         if not self.enabled:
             raise ProviderNotConfiguredError("OpenAI provider is currently DISABLED; explicit opt-in required")

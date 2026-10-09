@@ -39,88 +39,99 @@ class EmergencyStopController:
         self.system_state: SystemState = SystemState.IDLE
         self.stopped_at: datetime = None
         self.stop_reason: str = ""
+        self.extra_executors: Dict[str, Any] = {}
+        # A controller created over an already-latched gateway (e.g. after restart) starts stopped.
+        if tool_gateway is not None and tool_gateway.stop_latch.engaged:
+            self.system_state = SystemState.EMERGENCY_STOP
+            self.stop_reason = tool_gateway.stop_latch.reason
 
     @property
     def is_active(self) -> bool:
         return self.system_state == SystemState.EMERGENCY_STOP
 
+    def attach(self, name: str, halt_callable) -> None:
+        """Register an additional executor (e.g. the agent engine) to be halted on stop."""
+        self.extra_executors[name] = halt_callable
+
     def trigger_stop(self, reason: str = "Owner emergency stop command ('Hood, stop everything')") -> Dict[str, Any]:
-        """Halts all execution, revokes tool capabilities, and preserves state across all nodes."""
+        """Halt all execution and report, per subsystem, what was actually reached.
+
+        The result never claims a subsystem was stopped unless its halt call
+        returned without error; detached subsystems are reported NOT_ATTACHED.
+        """
         self.system_state = SystemState.EMERGENCY_STOP
         self.stopped_at = datetime.now(timezone.utc)
         self.stop_reason = reason
+        subsystems: Dict[str, Dict[str, Any]] = {}
 
-        # 1. Revoke all active capability grants locally
-        if self.tool_gateway:
-            self.tool_gateway.revoke_all_grants()
-
-        # 1b. Close and halt active browser operations
-        if self.browser_service:
+        def run(name, target, fn):
+            if target is None:
+                subsystems[name] = {"status": "NOT_ATTACHED"}
+                return
             try:
-                self.browser_service.close()
-            except Exception:
-                pass
+                detail = fn()
+                subsystems[name] = {"status": "HALTED", "detail": detail}
+            except Exception as exc:  # report, never hide, a failed halt
+                subsystems[name] = {"status": "ERROR", "error": str(exc)[:300]}
 
-        # 1c. Stop all supervised development processes
-        if self.dev_executor:
-            try:
-                self.dev_executor.stop_all_services()
-            except Exception:
-                pass
+        # 1. Engage the latch and revoke all capability grants (blocks new tool runs).
+        run("tool_gateway", self.tool_gateway,
+            lambda: {"grants_revoked": self.tool_gateway.halt(reason)})
+        run("browser", self.browser_service, lambda: self.browser_service.close())
+        run("dev_executor", self.dev_executor, lambda: self.dev_executor.stop_all_services())
 
-        # 1d. Propagate Emergency Stop across distributed event bus
-        if self.event_bus:
-            try:
-                from services.events.event_bus import DistributedEvent, DistributedEventType
-                src_node = getattr(self.node_manager, "local_identity", None).node_id if self.node_manager and getattr(self.node_manager, "local_identity", None) else "local"
-                self.event_bus.publish(DistributedEvent(
-                    event_type=DistributedEventType.EMERGENCY_STOP,
-                    source_node=src_node,
-                    payload={"reason": reason, "timestamp": self.stopped_at.isoformat()}
-                ))
-            except Exception:
-                pass
+        def publish():
+            from services.events.event_bus import DistributedEvent, DistributedEventType
+            ident = getattr(self.node_manager, "local_identity", None) if self.node_manager else None
+            self.event_bus.publish(DistributedEvent(
+                event_type=DistributedEventType.EMERGENCY_STOP,
+                source_node=ident.node_id if ident else "local",
+                payload={"reason": reason, "timestamp": self.stopped_at.isoformat()}))
+        run("event_bus", self.event_bus, publish)
+        # The evolution engine has no cancellable trial API; never claim it was halted.
+        if self.evolution_engine is not None:
+            subsystems["evolution"] = {"status": "UNSUPPORTED", "detail": "no cancellation API"}
+        else:
+            subsystems["evolution"] = {"status": "NOT_ATTACHED"}
+        run("desktop", self.desktop_service, lambda: self.desktop_service.halt())
+        for name, fn in list(self.extra_executors.items()):
+            run(name, fn, fn)
 
-        # 1e. Halt evolution arena trials and active learning runs safely
-        if self.evolution_engine:
-            try:
-                # Evolution engine preserves existing datasets and halts new trials
-                pass
-            except Exception:
-                pass
+        failed = [n for n, r in subsystems.items() if r["status"] in ("ERROR", "UNSUPPORTED")]
+        latch_engaged = bool(self.tool_gateway and self.tool_gateway.stop_latch.engaged)
 
-        # 1f. Immediately halt desktop controller and drop queued input events
-        if self.desktop_service:
-            try:
-                self.desktop_service.halt()
-            except Exception:
-                pass
-
-        # 2. Record audit trace
         if self.audit_service:
             from packages.contracts import AuditEvent
             self.audit_service.record_event(AuditEvent(
-                actor="Zak",
+                actor="SYSTEM",
                 action="EMERGENCY_STOP",
                 target="SYSTEM",
                 policy_decision="HALT",
-                result=f"System halted: {reason}",
-                verification="PASSED"
+                result=f"Stop requested: {reason}; subsystems={ {k: v['status'] for k, v in subsystems.items()} }",
+                verification="PARTIAL" if failed or not latch_engaged else "LATCH_ENGAGED"
             ))
 
         return {
             "status": "EMERGENCY_STOP_ACTIVE",
             "timestamp": self.stopped_at.isoformat(),
             "reason": reason,
-            "capabilities_revoked": True,
-            "state_preserved": True
+            "capabilities_revoked": subsystems["tool_gateway"]["status"] == "HALTED",
+            "latch_engaged": latch_engaged,
+            "subsystems": subsystems,
+            "incomplete": failed,
         }
 
-    def reset_stop(self, authorized_by: str = "Zak") -> None:
-        """Resets emergency stop only upon explicit owner instruction."""
-        if authorized_by != "Zak":
-            raise PermissionDeniedError("Only owner (Zak) can reset Emergency Stop.")
+    def reset_stop(self, authorized_by: str = "", is_root_owner: bool = False) -> None:
+        """Release the stop only on an authenticated Root Owner decision."""
+        if not is_root_owner:
+            raise PermissionError("Only the authenticated Root Owner can reset the emergency stop.")
+        if self.tool_gateway:
+            self.tool_gateway.stop_latch.release()
+        if self.audit_service:
+            from packages.contracts import AuditEvent
+            self.audit_service.record_event(AuditEvent(
+                actor=authorized_by or "ROOT_OWNER", action="EMERGENCY_STOP_RESET", target="SYSTEM",
+                policy_decision="ALLOW", result="Stop latch released", verification="LATCH_RELEASED"))
         self.system_state = SystemState.IDLE
         self.stopped_at = None
         self.stop_reason = ""
-

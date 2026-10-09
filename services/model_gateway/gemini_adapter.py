@@ -63,6 +63,9 @@ class GeminiProviderAdapter(BaseModelProvider):
             raise ProviderNotConfiguredError('Invalid Gemini model configuration')
         return [model]
 
+    def resolve_model(self, request: ModelRequest) -> str:
+        return self._select_candidate_models(request.model_class)[0]
+
     def invoke(self, request: ModelRequest) -> ModelResponse:
         if not self.enabled:
             raise ProviderNotConfiguredError("Gemini provider is currently disabled.")

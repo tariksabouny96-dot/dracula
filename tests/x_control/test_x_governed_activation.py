@@ -220,6 +220,34 @@ def test_emergency_stop_halts_x_immediately(test_env):
 
     # Emergency stop
     msg = interaction_svc.handle_text_input("Emergency stop! Stop everything!")
-    assert "Emergency Stop triggered" in msg.text
+    # No controller attached in this fixture: the reply must not claim executors were halted.
+    assert "not attached" in msg.text
     assert x_mgr.get_status()["state"] == "DORMANT"
     assert x_mgr.get_status()["is_active"] is False
+
+
+def test_chat_emergency_stop_reaches_attached_controller(test_env, tmp_path):
+    from services.core.emergency_stop import EmergencyStopController
+    from services.tool_gateway.gateway import ToolGateway
+    gw = ToolGateway(audit_service=test_env["audit_svc"], workspace_root=tmp_path)
+    test_env["interaction_svc"].emergency_stop = EmergencyStopController(gw, test_env["audit_svc"])
+    msg = test_env["interaction_svc"].handle_text_input("stop everything")
+    assert "Emergency stop engaged" in msg.text
+    assert gw.stop_latch.engaged
+
+
+def test_x_authority_comes_from_root_role_not_username(test_env, tmp_path):
+    from services.auth.auth_service import AuthenticationService, UserRole
+    auth = AuthenticationService(db_path=tmp_path / "auth.db")
+    root = auth.initialize_root_owner("owner", "Owner", "OwnerPassword123!")
+    # A non-root account deliberately named like the legacy owner alias.
+    auth.create_user(root["user_id"], "zak", "Impostor", "ImpostorPassword123!", UserRole.OPERATOR)
+    x_mgr = test_env["x_mgr"]
+    x_mgr.auth_service = auth
+    with pytest.raises(PermissionError):
+        x_mgr.request_activation(requester_username="zak")
+    req = x_mgr.request_activation(requester_username="owner")
+    test_env["approval_svc"].resolve_request(req.approval_id, True, resolved_by="owner")
+    with pytest.raises(PermissionError):
+        x_mgr.activate(req.approval_id, approver_username="zak")
+    assert x_mgr.activate(req.approval_id, approver_username="owner")["is_active"] is True

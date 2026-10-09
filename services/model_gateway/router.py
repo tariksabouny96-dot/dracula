@@ -17,16 +17,29 @@ from .gemini_adapter import GeminiProviderAdapter
 from .openai_adapter import OpenAIProviderAdapter
 from .local_adapter import LocalProviderAdapter
 from .cost_controller import CostController, BudgetExceededError
+from packages.config.pricing import load_price_table, estimate_tokens, NON_BILLING_PROVIDERS, ModelPrice
 
 
 class ModelRouter:
     """Provider-neutral model router with fallback support and cost enforcement."""
 
-    def __init__(self, config: Optional[SystemConfig] = None, cost_controller: Optional[CostController] = None):
+    def __init__(self, config: Optional[SystemConfig] = None, cost_controller: Optional[CostController] = None,
+                 price_table: Optional[Dict[str, Dict[str, ModelPrice]]] = None):
         self.config = config or SystemConfig()
         self.cost_controller = cost_controller or CostController(self.config.budgets)
+        self.price_table = price_table if price_table is not None else load_price_table()
         self.providers: Dict[ProviderName, BaseModelProvider] = {}
         self._init_providers()
+
+    def _price_for(self, provider_name: ProviderName, provider: BaseModelProvider,
+                   request: ModelRequest):
+        """Return (model, price or None, billing). Unknown model on a paid provider => no price."""
+        resolve = getattr(provider, "resolve_model", None)
+        model = resolve(request) if callable(resolve) else None
+        if provider_name.value in NON_BILLING_PROVIDERS:
+            return model, None, False
+        price = self.price_table.get(provider_name.value, {}).get(model) if model else None
+        return model, price, True
 
     def _init_providers(self):
         # Register standard adapters
@@ -104,28 +117,61 @@ class ModelRouter:
                 continue
 
             try:
+                model, price, billing = self._price_for(provider_name, provider, request)
+            except ProviderError as e:
+                last_error = e
+                continue
+            if billing and price is None:
+                # Unknown cost: never send a paid request we cannot bound.
+                last_error = ProviderNotConfiguredError(
+                    f"No pricing metadata for {provider_name.value}/{model or 'unresolved model'}; "
+                    "refusing paid call with unknown cost (configure HOOD_MODEL_PRICING)")
+                continue
+            estimate = 0.0
+            if price is not None:
+                prompt_tokens = estimate_tokens((request.system_prompt or "") + request.prompt)
+                estimate = (prompt_tokens / 1000.0) * price.input_per_1k_usd + \
+                           (request.max_tokens / 1000.0) * price.output_per_1k_usd
+            reservation = self.cost_controller.reserve(request.task_id, estimate, is_deep_model=is_deep)
+
+            try:
                 attempt_count += 1
                 resp = provider.invoke(request)
-
-                # If this was not the first candidate or differs from preferred provider, mark as fallback
-                if attempt_count > 1 or (request.preferred_provider and provider_name != request.preferred_provider) or candidate_order.index(provider_name) > 0:
-                    resp.is_fallback = True
-
-                # Record usage in CostController
-                self.cost_controller.record_usage(
-                    request.task_id,
-                    resp.usage,
-                    is_deep_model=is_deep,
-                    provider=resp.provider.value,
-                    model=resp.model_name,
-                    latency_ms=resp.latency_ms,
-                    is_fallback=resp.is_fallback
-                )
-                return resp
-            except (ProviderNotConfiguredError, ProviderRateLimitError, ProviderError) as e:
+            except (ProviderNotConfiguredError, ProviderRateLimitError) as e:
+                # Refused before generation: no spend is attributable.
+                self.cost_controller.release(reservation)
                 last_error = e
-                # Fall through to attempt next eligible provider
                 continue
+            except ProviderError as e:
+                # Request may have been processed and billed: charge the reservation.
+                from packages.contracts import ModelUsage
+                self.cost_controller.settle(reservation, ModelUsage(), cost_measured=False,
+                                            provider=provider_name.value, model=model or "unknown")
+                last_error = e
+                continue
+
+            if resp.is_mock and not self._mock_authorized(request):
+                self.cost_controller.release(reservation)
+                last_error = ProviderError("Simulated output is not permitted for this request")
+                continue
+
+            # If this was not the first candidate or differs from preferred provider, mark as fallback
+            if attempt_count > 1 or (request.preferred_provider and provider_name != request.preferred_provider) or candidate_order.index(provider_name) > 0:
+                resp.is_fallback = True
+
+            measured = True
+            if price is not None:
+                if resp.usage.total_tokens > 0:
+                    resp.usage.estimated_cost_usd = (
+                        resp.usage.prompt_tokens / 1000.0 * price.input_per_1k_usd +
+                        resp.usage.completion_tokens / 1000.0 * price.output_per_1k_usd)
+                else:
+                    measured = False  # provider omitted usage: charge the full reservation
+            self.cost_controller.settle(
+                reservation, resp.usage, cost_measured=measured, provider=resp.provider.value,
+                model=resp.model_name, latency_ms=resp.latency_ms, is_fallback=resp.is_fallback,
+                price_source=(f"{price.source} ({price.as_of})" if price else "non-billing provider"))
+            return resp
 
         # If all providers failed
         if last_error:

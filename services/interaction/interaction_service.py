@@ -98,6 +98,20 @@ class InteractionService:
         self.active_session_id = "default_session"
         self._get_or_create_session(self.active_session_id)
 
+    def _principal_username(self, session_id: Optional[str]) -> str:
+        """Resolve the authenticated username behind a 'user:<id>' chat session.
+
+        Without an identity provider (offline dev/test mode) the legacy owner alias
+        is returned; the X manager then applies its own unauthenticated-mode rule.
+        """
+        if session_id and session_id.startswith("user:") and self.auth_service \
+                and hasattr(self.auth_service, "get_user_by_id"):
+            user = self.auth_service.get_user_by_id(session_id[5:])
+            if user:
+                return user["username"]
+            return "unknown-principal"
+        return "Zak"
+
     def _get_or_create_session(self, session_id: str) -> InteractionSession:
         if session_id not in self.sessions:
             self.sessions[session_id] = InteractionSession(
@@ -228,9 +242,17 @@ class InteractionService:
         # 1. Emergency Stop Check
         if "stop everything" in prompt_lower or "emergency stop" in prompt_lower:
             session.ui_state = UIState.EMERGENCY_STOP
+            actor = self._principal_username(session.session_id)
             if self.x_session_manager:
-                self.x_session_manager.stand_down(reason="EMERGENCY_STOP", actor="Zak")
-            return "Emergency Stop triggered: Halting all active executions, revoking capabilities, and preserving state."
+                self.x_session_manager.stand_down(reason="EMERGENCY_STOP", actor=actor)
+            controller = getattr(self, "emergency_stop", None)
+            if controller is None:
+                return ("Emergency stop controller is not attached to this chat process. X was stood down, "
+                        "but no other executor was reached. Use the STOP control.")
+            report = controller.trigger_stop(f"Chat emergency stop by {actor}")
+            incomplete = report.get("incomplete") or []
+            return ("Emergency stop engaged: new tool runs and grants are blocked."
+                    + (f" Not confirmed halted: {', '.join(incomplete)}." if incomplete else ""))
 
         # 2. Check if X is currently ACTIVE
         x_status = self.x_session_manager.get_status() if self.x_session_manager else {"is_active": False}
@@ -268,7 +290,7 @@ class InteractionService:
                     scope = "LOCAL_SANDBOX_ENV"
 
                     req = self.x_session_manager.request_activation(
-                        requester_username="Zak",
+                        requester_username=self._principal_username(session.session_id),
                         mode=mode,
                         duration_minutes=dur_min,
                         scope=scope
@@ -289,8 +311,7 @@ class InteractionService:
                     session.ui_state = UIState.IDLE
                     return f"X activation request rejected: {str(ex)}"
             else:
-                session.ui_state = UIState.X_ACTIVE
-                return "X authorization acknowledged. X remains governed under identical strict boundaries and zero-cost constraints."
+                return "X activation is unavailable: no X session manager is attached. X remains dormant."
 
         # 4. Check for direct approval command via chat: "approve <id>" or "reject <id>"
         appr_chat_match = re.match(r"^\s*(approve|authorize|confirm|reject|deny)\s+([a-zA-Z0-9_\-]+)\s*$", prompt_lower)

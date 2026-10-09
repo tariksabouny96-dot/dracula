@@ -146,7 +146,8 @@ def test_sentinel_and_x_red_team_flow(cinematic_server):
     from urllib.error import HTTPError
     req = urllib.request.Request(
         f"{base}/api/sentinel/x/activate", data=json.dumps({"target": "ISOLATED_HOOD_SANDBOX"}).encode(),
-        headers={"Content-Type": "application/json", "Cookie": f"hood_session={token}"})
+        headers={"Content-Type": "application/json", "Cookie": f"hood_session={token}",
+                 "X-CSRF-Token": cinematic_server["session"].csrf_token})
     with pytest.raises(HTTPError) as error:
         urllib.request.urlopen(req)
     assert error.value.code == 409

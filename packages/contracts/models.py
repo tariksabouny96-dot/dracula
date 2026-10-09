@@ -147,6 +147,10 @@ class ApprovalRequest(BaseModel):
     resolved_at: Optional[datetime] = None
     resolved_by: Optional[str] = None
     rejection_reason: Optional[str] = None
+    # Who the approval authorizes (agent/actor id); None = legacy unbound request.
+    principal: Optional[str] = None
+    # Approvals are never open-ended; an unresolved or unused approval expires.
+    expires_at: Optional[datetime] = None
 
 
 class AgentResponseContract(BaseModel):

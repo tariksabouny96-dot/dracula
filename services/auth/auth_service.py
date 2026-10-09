@@ -33,6 +33,7 @@ import re
 import json
 import sqlite3
 import secrets
+import threading
 import time
 from enum import Enum
 from pathlib import Path
@@ -70,15 +71,17 @@ class RateLimiter:
         self.max_attempts = max_attempts
         self.window_seconds = window_seconds
         self.attempts: Dict[str, List[float]] = {}
+        self._lock = threading.Lock()
 
     def is_rate_limited(self, key: str) -> Tuple[bool, int]:
         """
         Returns (is_limited, seconds_remaining).
         """
         now = time.time()
-        record = self.attempts.get(key, [])
-        valid_attempts = [t for t in record if now - t < self.window_seconds]
-        self.attempts[key] = valid_attempts
+        with self._lock:
+            record = self.attempts.get(key, [])
+            valid_attempts = [t for t in record if now - t < self.window_seconds]
+            self.attempts[key] = valid_attempts
 
         if len(valid_attempts) >= self.max_attempts:
             oldest_relevant = valid_attempts[0]
@@ -88,12 +91,12 @@ class RateLimiter:
 
     def record_failure(self, key: str):
         now = time.time()
-        if key not in self.attempts:
-            self.attempts[key] = []
-        self.attempts[key].append(now)
+        with self._lock:
+            self.attempts.setdefault(key, []).append(now)
 
     def reset(self, key: str):
-        self.attempts.pop(key, None)
+        with self._lock:
+            self.attempts.pop(key, None)
 
 
 class UserRole(str, Enum):
@@ -188,8 +191,17 @@ class UserSession(BaseModel):
     user_agent: Optional[str] = "HOOD Desktop Client"
 
 
+def _token_digest(token: str) -> str:
+    """Session tokens are stored only as SHA-256 digests; a leaked DB row is not a live session."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 class AuthenticationService:
     """Manages Root Owner initialization, credential verification, RBAC, and sessions."""
+
+    # Fixed dummy credential so unknown-user logins cost the same scrypt work as real ones.
+    _DUMMY_SALT_HEX = "00" * 16
+    _DUMMY_HASH = hashlib.scrypt(b"hood-dummy-password", salt=bytes(16), n=16384, r=8, p=1).hex()
 
     def __init__(self, db_path: Optional[Path] = None, session_ttl_hours: int = 12):
         self.db_path = db_path or Path("artifacts/auth.db")
@@ -371,6 +383,7 @@ class AuthenticationService:
             row = conn.execute("SELECT * FROM users WHERE username = ?", (uname,)).fetchone()
         
         if not row:
+            self.verify_password(password, self._DUMMY_HASH, self._DUMMY_SALT_HEX)
             self.rate_limiter.record_failure(rate_key)
             self._log_access(None, uname, "LOGIN_FAILED", success=False, details="User not found", ip_address=ip)
             return None
@@ -399,7 +412,7 @@ class AuthenticationService:
             conn.execute("""
             INSERT INTO sessions (session_token, csrf_token, user_id, username, role, created_at, expires_at, is_revoked, ip_address, user_agent)
             VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
-            """, (session_token, csrf_token, row["user_id"], row["username"], row["role"], now.isoformat(), expires.isoformat(), ip, user_agent or "HOOD Client"))
+            """, (_token_digest(session_token), csrf_token, row["user_id"], row["username"], row["role"], now.isoformat(), expires.isoformat(), ip, user_agent or "HOOD Client"))
             conn.execute("UPDATE users SET last_login = ? WHERE user_id = ?", (now.isoformat(), row["user_id"]))
 
         self._log_access(row["user_id"], uname, "LOGIN_SUCCESS", success=True, ip_address=ip)
@@ -424,10 +437,10 @@ class AuthenticationService:
 
         with self._get_connection() as conn:
             row = conn.execute("""
-            SELECT s.*, u.is_active FROM sessions s
+            SELECT s.*, u.is_active, u.role AS current_role FROM sessions s
             JOIN users u ON s.user_id = u.user_id
             WHERE s.session_token = ? AND s.is_revoked = 0
-            """, (session_token,)).fetchone()
+            """, (_token_digest(session_token),)).fetchone()
 
             if not row or not row["is_active"]:
                 return None
@@ -438,11 +451,11 @@ class AuthenticationService:
                 return None
 
             return UserSession(
-                session_token=row["session_token"],
+                session_token=session_token,
                 csrf_token=row["csrf_token"],
                 user_id=row["user_id"],
                 username=row["username"],
-                role=UserRole(row["role"]),
+                role=UserRole(row["current_role"]),
                 created_at=row["created_at"],
                 expires_at=row["expires_at"],
                 is_revoked=bool(row["is_revoked"]),
@@ -452,7 +465,20 @@ class AuthenticationService:
 
     def revoke_session(self, session_token: str) -> bool:
         with self._get_connection() as conn:
-            cursor = conn.execute("UPDATE sessions SET is_revoked = 1 WHERE session_token = ?", (session_token,))
+            cursor = conn.execute("UPDATE sessions SET is_revoked = 1 WHERE session_token = ?", (_token_digest(session_token or ""),))
+            return cursor.rowcount > 0
+
+    def revoke_session_id(self, requester_user_id: str, session_id: str) -> bool:
+        """Revoke a session by its public id (token digest); owners revoke their own, root any."""
+        if not isinstance(session_id, str) or not re.fullmatch(r"[0-9a-f]{64}", session_id):
+            return False
+        is_root = self.has_permission(requester_user_id, UserPermission.GLOBAL_USER_ADMIN)
+        with self._get_connection() as conn:
+            if is_root:
+                cursor = conn.execute("UPDATE sessions SET is_revoked = 1 WHERE session_token = ?", (session_id,))
+            else:
+                cursor = conn.execute("UPDATE sessions SET is_revoked = 1 WHERE session_token = ? AND user_id = ?",
+                                      (session_id, requester_user_id))
             return cursor.rowcount > 0
 
     def revoke_all_user_sessions(self, user_id: str) -> int:
@@ -725,7 +751,7 @@ class AuthenticationService:
 
             return [
                 {
-                    "session_token_prefix": r["session_token"][:8] + "...",
+                    "session_id": r["session_token"],
                     "created_at": r["created_at"],
                     "expires_at": r["expires_at"],
                     "ip_address": r["ip_address"] or "127.0.0.1",
@@ -741,7 +767,7 @@ class AuthenticationService:
             UPDATE sessions
             SET is_revoked = 1
             WHERE user_id = ? AND session_token != ? AND is_revoked = 0
-            """, (user_id, current_session_token))
+            """, (user_id, _token_digest(current_session_token or "")))
             count = cursor.rowcount
 
         self._log_access(user_id, None, "SESSIONS_REVOKED_OTHERS", success=True, details=f"Revoked {count} other active sessions")
@@ -767,6 +793,15 @@ class AuthenticationService:
                 }
                 for r in rows
             ]
+
+    def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute("SELECT user_id, username, display_name, role, is_active FROM users WHERE user_id = ?",
+                               (user_id,)).fetchone()
+        if not row:
+            return None
+        return {"user_id": row["user_id"], "username": row["username"], "display_name": row["display_name"],
+                "role": row["role"], "is_active": bool(row["is_active"])}
 
     def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
         """Look up user metadata by username."""

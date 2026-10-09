@@ -237,6 +237,7 @@ def test_server_http_auth_and_emergency_stop_lifecycle(temp_auth_db):
             data = json.loads(resp.read().decode())
             assert data["status"] == "AUTHENTICATED"
             assert data["user"]["role"] == "ROOT_OWNER"
+            csrf = data["csrf_token"]
 
         session_cookie = cookie.split(";")[0]
 
@@ -256,7 +257,12 @@ def test_server_http_auth_and_emergency_stop_lifecycle(temp_auth_db):
             "password": "OperatorPassword123!",
             "role": "OPERATOR"
         }).encode()
+        # Cookie-authenticated state change without the CSRF token is refused.
         req = urllib.request.Request(f"{base_url}/api/admin/users/create", data=create_payload, headers={"Content-Type": "application/json", "Cookie": session_cookie})
+        with pytest.raises(urllib.error.HTTPError) as no_csrf:
+            urllib.request.urlopen(req)
+        assert no_csrf.value.code == 403
+        req = urllib.request.Request(f"{base_url}/api/admin/users/create", data=create_payload, headers={"Content-Type": "application/json", "Cookie": session_cookie, "X-CSRF-Token": csrf})
         with urllib.request.urlopen(req) as resp:
             assert resp.status == 200
             data = json.loads(resp.read().decode())
@@ -290,7 +296,7 @@ def test_server_http_auth_and_emergency_stop_lifecycle(temp_auth_db):
         assert exc_info.value.code == 403
 
         # 12. Root Owner logs out
-        req = urllib.request.Request(f"{base_url}/api/auth/logout", data=b"{}", headers={"Content-Type": "application/json", "Cookie": session_cookie})
+        req = urllib.request.Request(f"{base_url}/api/auth/logout", data=b"{}", headers={"Content-Type": "application/json", "Cookie": session_cookie, "X-CSRF-Token": csrf})
         with urllib.request.urlopen(req) as resp:
             assert resp.status == 200
             data = json.loads(resp.read().decode())
@@ -450,13 +456,14 @@ def test_server_security_endpoints_http(temp_auth_db):
         req = urllib.request.Request(f"{base_url}/api/auth/login", data=login_payload, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req) as resp:
             cookie = resp.headers.get("Set-Cookie").split(";")[0]
+            csrf = json.loads(resp.read().decode())["csrf_token"]
 
         # 1. Change password via API
         cp_payload = json.dumps({
             "current_password": "MasterOwnerPassword123!",
             "new_password": "UpdatedMasterPassword456!"
         }).encode()
-        req = urllib.request.Request(f"{base_url}/api/auth/change_password", data=cp_payload, headers={"Content-Type": "application/json", "Cookie": cookie})
+        req = urllib.request.Request(f"{base_url}/api/auth/change_password", data=cp_payload, headers={"Content-Type": "application/json", "Cookie": cookie, "X-CSRF-Token": csrf})
         with urllib.request.urlopen(req) as resp:
             assert resp.status == 200
             data = json.loads(resp.read().decode())
@@ -471,12 +478,13 @@ def test_server_security_endpoints_http(temp_auth_db):
         relogin_req = urllib.request.Request(f"{base_url}/api/auth/login", data=relogin_payload, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(relogin_req) as resp:
             cookie = resp.headers.get("Set-Cookie").split(";")[0]
+            csrf = json.loads(resp.read().decode())["csrf_token"]
 
         # 2. Rotate recovery key via API
         rk_payload = json.dumps({
             "current_password": "UpdatedMasterPassword456!"
         }).encode()
-        req = urllib.request.Request(f"{base_url}/api/auth/rotate_recovery_key", data=rk_payload, headers={"Content-Type": "application/json", "Cookie": cookie})
+        req = urllib.request.Request(f"{base_url}/api/auth/rotate_recovery_key", data=rk_payload, headers={"Content-Type": "application/json", "Cookie": cookie, "X-CSRF-Token": csrf})
         with urllib.request.urlopen(req) as resp:
             assert resp.status == 200
             data = json.loads(resp.read().decode())
@@ -493,7 +501,7 @@ def test_server_security_endpoints_http(temp_auth_db):
             assert len(sessions) >= 1
 
         # 4. Revoke other sessions via API
-        req = urllib.request.Request(f"{base_url}/api/auth/sessions/revoke_others", data=b"{}", headers={"Content-Type": "application/json", "Cookie": cookie})
+        req = urllib.request.Request(f"{base_url}/api/auth/sessions/revoke_others", data=b"{}", headers={"Content-Type": "application/json", "Cookie": cookie, "X-CSRF-Token": csrf})
         with urllib.request.urlopen(req) as resp:
             assert resp.status == 200
             data = json.loads(resp.read().decode())

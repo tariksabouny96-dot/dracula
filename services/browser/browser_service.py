@@ -38,6 +38,17 @@ class BrowserNavigationError(Exception):
     pass
 
 
+def _preinstalled_chromium() -> Optional[str]:
+    """Find a browser in PLAYWRIGHT_BROWSERS_PATH when its build differs from the pip package."""
+    root = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if not root or not Path(root).is_dir():
+        return None
+    for path in sorted(Path(root).glob("chromium-*/chrome-linux*/chrome"), reverse=True):
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+    return None
+
+
 class BrowserService:
     """
     Provider-neutral browser control layer implementing deterministic,
@@ -80,7 +91,8 @@ class BrowserService:
         self._playwright = sync_playwright().start()
         # Use an explicitly configured or detected system Chromium when the
         # Playwright-managed browser is not installed (e.g. offline Linux CI).
-        candidate = os.environ.get("HOOD_CHROMIUM_EXECUTABLE") or shutil.which("chromium") or shutil.which("chromium-browser")
+        candidate = (os.environ.get("HOOD_CHROMIUM_EXECUTABLE") or shutil.which("chromium")
+                     or shutil.which("chromium-browser") or _preinstalled_chromium())
         launch_args = {"headless": headless, "downloads_path": str(self.downloads_dir)}
         if candidate and Path(candidate).is_file():
             launch_args["executable_path"] = candidate
@@ -264,14 +276,14 @@ class BrowserService:
         Uploads a file to an input[type='file'] element, strictly enforcing
         that the file resides within the approved workspace root and is not sensitive.
         """
-        # 1. Path sandboxing check
-        resolved_path = (self.workspace_root / relative_file_path).resolve()
+        # 1. Path sandboxing check (shared canonical confinement)
+        from packages.security import confine_path, PathConfinementError
         try:
-            resolved_path.relative_to(self.workspace_root)
-        except ValueError:
+            resolved_path = confine_path(self.workspace_root, relative_file_path, label="upload file")
+        except PathConfinementError:
             raise BrowserSecurityViolation(
                 f"Upload blocked: target file '{relative_file_path}' is outside approved workspace root."
-            )
+            ) from None
 
         if not resolved_path.is_file():
             raise FileNotFoundError(f"Upload file not found: {resolved_path}")

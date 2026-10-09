@@ -51,6 +51,9 @@ class XSessionManager:
         self.x_controller = x_controller
         self.sentinel_service = sentinel_service
 
+        # When an identity provider is attached, X authority comes from the
+        # authenticated ROOT_OWNER role, never from a username string.
+        self.auth_service: Optional[Any] = None
         self.state: XOperationalState = XOperationalState.DORMANT
         self.session_id: Optional[str] = None
         self.mode: Optional[str] = None
@@ -70,6 +73,17 @@ class XSessionManager:
             "NO_EXPLOIT_PAYLOADS"
         ]
 
+    def _require_root(self, username: Optional[str], action: str) -> None:
+        name = (username or "").strip().lower()
+        if self.auth_service is not None:
+            user = self.auth_service.get_user_by_username(name)
+            if not user or not user.get("is_active") or user.get("role") != "ROOT_OWNER":
+                raise PermissionError(f"Only the authenticated Root Owner can {action}.")
+            return
+        # Unauthenticated offline mode (no identity provider attached): legacy owner alias only.
+        if name not in ("zack", "zak"):
+            raise PermissionError(f"Only ZACK (Root Owner) can {action}.")
+
     def request_activation(
         self,
         requester_username: str,
@@ -82,9 +96,7 @@ class XSessionManager:
         Creates a real ApprovalRequest in ApprovalService.
         """
         # 1. Requester authority check
-        norm_user = (requester_username or "").strip().lower()
-        if norm_user not in ("zack", "zak"):
-            raise PermissionError("Only ZACK (Root Owner) can request X activation.")
+        self._require_root(requester_username, "request X activation")
 
         # 2. Existing active check
         self.check_expiration()
@@ -145,9 +157,7 @@ class XSessionManager:
         """
         Activates X upon verified approval. Revalidates scope and parameters.
         """
-        norm_user = (approver_username or "").strip().lower()
-        if norm_user not in ("zack", "zak"):
-            raise PermissionError("Only ZACK (Root Owner) can authorize X activation.")
+        self._require_root(approver_username, "authorize X activation")
 
         if approval_id in self.consumed_approval_ids:
             raise PermissionError(f"Approval {approval_id} has already been consumed (replay prevention).")

@@ -23,10 +23,21 @@ from services.tool_gateway.tools import FSWriteFileTool, ShellExecTool
 from ui.server import JarvisServer, JarvisUIHandler
 
 
-def request(base, route, cookie=None, data=None, origin=None):
+def csrf_token(base, cookie):
+    """Read the per-session CSRF token exactly as the browser UI does."""
+    req = urllib.request.Request(base + '/api/auth/status', headers={'Cookie': cookie})
+    with urllib.request.urlopen(req, timeout=5) as response:
+        return json.loads(response.read()).get('csrf_token')
+
+
+def request(base, route, cookie=None, data=None, origin=None, csrf=True):
     headers = {}
     if cookie:
         headers['Cookie'] = cookie
+        if data is not None and csrf:
+            token = csrf_token(base, cookie)
+            if token:
+                headers['X-CSRF-Token'] = token
     if data is not None:
         headers['Content-Type'] = 'application/json'
     if origin:

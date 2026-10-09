@@ -55,6 +55,30 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             return str(self.ui_dir / "__blocked_static_path__")
         return str(resolved)
 
+    allowed_hosts: Optional[set] = None
+
+    def _host_allowed(self):
+        """Block DNS-rebinding: only loopback host names (plus explicit config) may reach the API."""
+        host = (self.headers.get("Host") or "").strip().lower()
+        port = self.server.server_address[1] if getattr(self, "server", None) else None
+        allowed = set(self.allowed_hosts or ())
+        if port is not None:
+            allowed |= {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
+        return host in allowed
+
+    def _csrf_ok(self, session):
+        """Cookie-authenticated state changes must echo the per-session CSRF token.
+
+        Bearer-token clients carry no ambient credential, so they are exempt.
+        """
+        if not session:
+            return True
+        cookie = self.headers.get("Cookie", "")
+        if "hood_session=" not in cookie:
+            return True
+        supplied = self.headers.get("X-CSRF-Token", "")
+        return bool(supplied) and hmac.compare_digest(supplied, session.csrf_token)
+
     def _authorized(self, session, permission):
         return bool(session and self.auth_service and
                     self.auth_service.has_permission(session.user_id, permission))
@@ -96,6 +120,9 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
         return self.auth_service.validate_session(token)
 
     def do_POST(self):
+        if not self._host_allowed():
+            self._send_json({"error": "Host not allowed"}, status=421)
+            return
         if not self._request_origin_allowed():
             self._send_json({"error": "Cross-origin request blocked"}, status=403)
             return
@@ -121,7 +148,8 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
                 "initialized": is_init,
                 "authenticated": curr_session is not None,
                 "username": curr_session.username if curr_session else None,
-                "role": curr_session.role.value if curr_session else None
+                "role": curr_session.role.value if curr_session else None,
+                "csrf_token": curr_session.csrf_token if curr_session else None
             })
             return
 
@@ -200,6 +228,9 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
 
         elif self.path == "/api/auth/logout":
             sess = self._get_authenticated_session()
+            if sess and not self._csrf_ok(sess):
+                self._send_json({"error": "CSRF token missing or invalid"}, status=403)
+                return
             if sess and self.auth_service:
                 self.auth_service.revoke_session(sess.session_token)
             self.send_response(200)
@@ -232,10 +263,15 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
 
         # Emergency Stop safety path is ALWAYS reachable without session blockage
         elif self.path == "/api/emergency_stop":
+            # Deliberately reachable without a session (safety direction only: it can stop,
+            # never start, work). Host, Origin and JSON checks above still apply.
             if self.emergency_stop:
                 if self.x_session_manager:
                     self.x_session_manager.stand_down(reason="EMERGENCY_STOP", actor="SYSTEM")
-                res = self.emergency_stop.trigger_stop("Emergency Stop from HOOD Interactive Surface")
+                stopper = self._get_authenticated_session()
+                res = self.emergency_stop.trigger_stop(
+                    "Emergency Stop from HOOD Interactive Surface by "
+                    + (stopper.username if stopper else "unauthenticated loopback client"))
                 if self.interaction_service:
                     self.interaction_service.set_ui_state(UIState.EMERGENCY_STOP)
                 self._send_json(res)
@@ -254,8 +290,27 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             if not curr_session:
                 self._send_json({"error": "Authentication required"}, status=401)
                 return
+            if not self._csrf_ok(curr_session):
+                self._send_json({"error": "CSRF token missing or invalid"}, status=403)
+                return
 
             client_ip = self.client_address[0] if hasattr(self, "client_address") else "127.0.0.1"
+
+            if self.path == "/api/emergency_stop/reset":
+                if curr_session.role != UserRole.ROOT_OWNER:
+                    self._send_json({"error": "Forbidden: only the Root Owner can release the emergency stop"}, status=403)
+                    return
+                if not self.emergency_stop:
+                    self._send_json({"error": "Emergency stop controller unavailable"}, status=503)
+                    return
+                if payload.get("confirm") is not True:
+                    self._send_json({"error": "Explicit confirmation required"}, status=400)
+                    return
+                self.emergency_stop.reset_stop(authorized_by=curr_session.username, is_root_owner=True)
+                if self.interaction_service:
+                    self.interaction_service.set_ui_state(UIState.IDLE)
+                self._send_json({"status": "STOP_RELEASED"})
+                return
 
             # Root Owner Security operations
             if self.path == "/api/auth/change_password":
@@ -297,6 +352,14 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
                 return
 
             elif self.path == "/api/auth/sessions/revoke":
+                session_id = payload.get("session_id")
+                if session_id:
+                    success = self.auth_service.revoke_session_id(curr_session.user_id, session_id)
+                    if not success:
+                        self._send_json({"error": "Session not found or not owned by requester"}, status=403)
+                        return
+                    self._send_json({"status": "SUCCESS", "revoked": True})
+                    return
                 target_token = payload.get("session_token", "")
                 target = self.auth_service.validate_session(target_token)
                 if not target or (target.user_id != curr_session.user_id and curr_session.role != UserRole.ROOT_OWNER):
@@ -558,17 +621,24 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             self.end_headers()
 
     def do_GET(self):
+        if not self._host_allowed():
+            self._send_json({"error": "Host not allowed"}, status=421)
+            return
         # Unauthenticated auth check
         if self.path == "/api/auth/status":
             auth_enabled = self.auth_service is not None
-            is_init = self.auth_service.is_initialized() if auth_enabled else True
+            is_init = self.auth_service.is_initialized() if auth_enabled else False
             curr_session = self._get_authenticated_session() if auth_enabled else None
             self._send_json({
                 "enabled": auth_enabled,
                 "initialized": is_init,
-                "authenticated": curr_session is not None if auth_enabled else True,
-                "username": curr_session.username if curr_session else ("root" if not auth_enabled else None),
-                "role": curr_session.role.value if curr_session else ("ROOT_OWNER" if not auth_enabled else None)
+                # Without an identity provider nobody is authenticated; operational APIs return 503.
+                "authenticated": curr_session is not None,
+                "username": curr_session.username if curr_session else None,
+                "role": curr_session.role.value if curr_session else None,
+                "csrf_token": curr_session.csrf_token if curr_session else None,
+                "emergency_stop": self.emergency_stop.tool_gateway.stop_latch.snapshot()
+                    if self.emergency_stop and self.emergency_stop.tool_gateway else None
             })
             return
 
@@ -644,7 +714,6 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', 'application/octet-stream')
             self.send_header('Content-Disposition', 'attachment; filename="hood-local-preview.html"')
-            self.send_header('X-Content-Type-Options', 'nosniff')
             self.send_header('Content-Length', str(len(data)))
             self.end_headers()
             self.wfile.write(data)
@@ -667,7 +736,6 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.send_header('Content-Disposition', 'attachment; filename="hood-llm-review.json"')
-            self.send_header('X-Content-Type-Options', 'nosniff')
             self.send_header('Content-Length', str(len(data)))
             self.end_headers()
             self.wfile.write(data)
@@ -690,7 +758,6 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.send_header('Content-Disposition', 'attachment; filename="hood-specialist-review.json"')
-            self.send_header('X-Content-Type-Options', 'nosniff')
             self.send_header('Content-Length', str(len(data)))
             self.end_headers()
             self.wfile.write(data)
@@ -713,7 +780,6 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.send_header('Content-Disposition', 'attachment; filename="hood-local-execution.json"')
-            self.send_header('X-Content-Type-Options', 'nosniff')
             self.send_header('Content-Length', str(len(data)))
             self.end_headers()
             self.wfile.write(data)
@@ -736,7 +802,6 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/markdown; charset=utf-8")
             self.send_header("Content-Disposition", 'attachment; filename="hood-local-plan.md"')
-            self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
@@ -957,12 +1022,21 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             }
         }
 
+    def end_headers(self):
+        # Defense in depth for every response, including static files.
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Content-Security-Policy",
+                         "default-src 'self'; img-src 'self' data:; "
+                         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
+                         "script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+        super().end_headers()
+
     def _send_json(self, data, status: int = 200):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("X-Frame-Options", "DENY")
         self.end_headers()
         self.wfile.write(json.dumps(data).encode("utf-8"))
 
@@ -1019,6 +1093,10 @@ class JarvisServer:
         JarvisUIHandler.x_session_manager = self.x_session_manager
         if interaction_service and self.auth_service:
             interaction_service.auth_service = self.auth_service
+        if interaction_service is not None and emergency_stop is not None:
+            interaction_service.emergency_stop = emergency_stop
+        if self.x_session_manager is not None and self.auth_service is not None:
+            self.x_session_manager.auth_service = self.auth_service
         self.httpd = ThreadingHTTPServer(("127.0.0.1", port), JarvisUIHandler)
         self.thread: Optional[threading.Thread] = None
 

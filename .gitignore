@@ -46,3 +46,9 @@ Thumbs.db
 !artifacts/bootstrap/bootstrap.log
 tmp/
 cache/
+
+# Runtime evidence written by tests and local runs (never commit host data)
+artifacts/bootstrap/
+artifacts/browser_evidence/
+artifacts/desktop_evidence/
+artifacts/browser_downloads/

@@ -345,6 +345,6 @@ def test_emergency_stop_halts_desktop_automation(desktop_system):
     assert "EMERGENCY_STOP" in res.target_description
 
     # Reset
-    emergency.reset_stop("Zak")
+    emergency.reset_stop("Zak", is_root_owner=True)
     desktop.reset_halt()
     assert desktop.is_emergency_stopped is False
