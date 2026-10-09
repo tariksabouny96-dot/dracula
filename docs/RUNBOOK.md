@@ -21,6 +21,35 @@ On Windows the agent sandbox has no network namespace, so agent execution **refu
 
 First run: open the UI, create the Root Owner, store the one-time recovery key offline.
 
+## Container deployment (Docker)
+
+A production image and reverse-proxy topology ship in the repo (`Dockerfile`,
+`docker-compose.yml`, `deploy/Caddyfile`). HOOD still binds `127.0.0.1` inside
+its container; Caddy shares that network namespace (`network_mode: service:hood`)
+and terminates TLS for the public hostname, so the loopback-only security model
+and the loopback-only first-run setup are preserved.
+
+```bash
+export HOOD_PUBLIC_HOST=hood.example.com      # the TLS hostname Caddy serves
+export HOOD_GEMINI_CREDENTIAL=proxy           # or inject provider keys/pricing
+docker compose up -d --build                  # builds hood:latest, starts hood + caddy
+# First-run owner setup must come from loopback (do it inside the container):
+docker compose exec hood curl -fsS -X POST -H "Host: 127.0.0.1:8990" \
+    http://127.0.0.1:8990/api/auth/init \
+    -d '{"username":"zak","display_name":"Zak","password":"<chosen-password>"}'
+```
+
+Notes:
+- The image healthcheck polls `/api/auth/status` over loopback; `docker ps` shows
+  `healthy` once the surface is up. CI builds this image and smoke-tests the
+  container on every push (the `docker-build` job).
+- Agent missions need unprivileged user+network namespaces (`unshare -rn`).
+  Docker's default policy may block them, in which case the sandbox fails closed
+  (missions end UNVERIFIED) and everything else runs; enable it by uncommenting
+  the `security_opt` block in `docker-compose.yml` on a host you trust.
+- Persisted state lives in the `hood-data` volume (`HOOD_DATA_DIR=/data`); back it
+  up with `scripts/hood_backup.py` as below.
+
 ## Release rehearsal and gate
 ```bash
 python scripts/local_release_rehearsal.py      # clean export, boot, smoke, stop, backup/restore, reboot

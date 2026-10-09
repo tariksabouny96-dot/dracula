@@ -1,0 +1,21 @@
+# TLS reverse proxy for HOOD. Caddy shares HOOD's network namespace, so it
+# reaches the loopback-bound app and terminates TLS for the public hostname.
+# Caddy obtains and renews a certificate automatically for {$HOOD_PUBLIC_HOST}.
+{$HOOD_PUBLIC_HOST} {
+	encode zstd gzip
+
+	# Security headers are also set by HOOD; these are defense in depth.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# HOOD listens on loopback inside the shared namespace. Preserve the public
+	# Host header so HOOD's allowlist and CSRF origin checks line up.
+	reverse_proxy 127.0.0.1:8990 {
+		header_up Host {host}
+	}
+}
