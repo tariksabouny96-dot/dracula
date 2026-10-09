@@ -468,11 +468,14 @@ def test_node_migration_bundle_export_import(tmp_cluster_dir):
     export_tar = tmp_cluster_dir["tmp_path"] / "artifacts" / "test_backup.tar.gz"
     import_db = tmp_cluster_dir["tmp_path"] / "imported_memory.db"
 
-    # Export
+    migration_key = "shared-migration-secret-123"
+
+    # Export (signed by an authorised sender)
     export_res = bundle_tool.export_node(
         output_tar_path=export_tar,
         node_id="node-test-export",
-        sqlite_db_path=tmp_cluster_dir["sqlite_db"]
+        sqlite_db_path=tmp_cluster_dir["sqlite_db"],
+        signing_key=migration_key,
     )
     assert export_res["success"] is True
     assert export_tar.exists()
@@ -481,15 +484,57 @@ def test_node_migration_bundle_export_import(tmp_cluster_dir):
     manifest = bundle_tool.inspect_bundle(export_tar)
     assert manifest["node_id"] == "node-test-export"
     assert manifest["secrets_included"] is False
+    assert manifest["signed"] is True
 
-    # Import
+    # Import with the matching key
     import_res = bundle_tool.import_node(
         tar_path=export_tar,
-        target_sqlite_path=import_db
+        target_sqlite_path=import_db,
+        signing_key=migration_key,
     )
     assert import_res["success"] is True
     assert import_res["node_id"] == "node-test-export"
     assert import_res["integrity_verified"] is True
+    assert import_res["authenticated"] is True
+
+
+def test_migration_import_refuses_unauthenticated_and_forged_senders(tmp_cluster_dir):
+    """F27: an unsigned bundle, a missing key, and a wrong key are all refused."""
+    import pytest
+    bundle_tool = NodeMigrationBundle(workspace_root=tmp_cluster_dir["tmp_path"])
+    export_tar = tmp_cluster_dir["tmp_path"] / "artifacts" / "signed.tar.gz"
+    import_db = tmp_cluster_dir["tmp_path"] / "imported.db"
+
+    # Unsigned export -> import (which requires auth) is refused.
+    bundle_tool.export_node(
+        output_tar_path=export_tar,
+        node_id="n1",
+        sqlite_db_path=tmp_cluster_dir["sqlite_db"],
+    )
+    with pytest.raises(PermissionError):
+        bundle_tool.import_node(export_tar, import_db, signing_key="any-key")
+    assert not import_db.exists()
+
+    # Signed export, but the receiver has no key -> refused.
+    signed_tar = tmp_cluster_dir["tmp_path"] / "artifacts" / "signed2.tar.gz"
+    bundle_tool.export_node(
+        output_tar_path=signed_tar,
+        node_id="n1",
+        sqlite_db_path=tmp_cluster_dir["sqlite_db"],
+        signing_key="correct-key",
+    )
+    with pytest.raises(PermissionError):
+        bundle_tool.import_node(signed_tar, import_db, signing_key=None, require_authentication=True)
+    assert not import_db.exists()
+
+    # Signed export, receiver has the WRONG key -> refused.
+    with pytest.raises(PermissionError):
+        bundle_tool.import_node(signed_tar, import_db, signing_key="wrong-key")
+    assert not import_db.exists()
+
+    # Correct key -> accepted.
+    res = bundle_tool.import_node(signed_tar, import_db, signing_key="correct-key")
+    assert res["success"] is True
 
 
 def test_postgresql_backend_refuses_to_fake_a_live_connection():
@@ -498,3 +543,20 @@ def test_postgresql_backend_refuses_to_fake_a_live_connection():
     assert PostgreSQLBackend.is_simulated is True
     with pytest.raises(NotImplementedError):
         PostgreSQLBackend(connection_str="postgresql://user:pass@prod-db:5432/hood")
+
+
+def test_import_records_is_transactional_on_failure(tmp_path):
+    """F27: a failure mid-import rolls back; the target is never half-populated."""
+    import pytest
+    db = tmp_path / "txn.db"
+    backend = SQLiteBackend(db_path=db)
+    good = {
+        "memory_id": "ok-1", "type": "PROJECT", "content": "c", "project": "p",
+        "source": "s", "source_agent": "a", "created_at": "2026-01-01T00:00:00+00:00",
+        "valid_from": "2026-01-01T00:00:00+00:00",
+    }
+    bad = {"memory_id": "bad-1"}  # missing required keys -> raises mid-loop
+    with pytest.raises(Exception):
+        backend.import_records([good, bad])
+    # Rolled back: not even the good record landed.
+    assert backend.query_by_project("p") == []
