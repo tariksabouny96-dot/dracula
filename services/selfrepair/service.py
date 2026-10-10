@@ -150,11 +150,18 @@ class SelfRepairService:
                 diagnosis TEXT, proposal TEXT, proposal_sha TEXT, diff TEXT, checks TEXT, applied TEXT,
                 error TEXT, log TEXT NOT NULL DEFAULT '[]')""")
 
+    _COLUMNS = frozenset({"state", "screenshot_note", "diagnosis", "proposal", "proposal_sha", "diff", "checks",
+                          "applied", "error"})
+
     def _set(self, rid: str, **fields) -> None:
+        unknown = set(fields) - self._COLUMNS            # column names are code, never request data
+        if unknown:
+            raise ValueError(f"unknown report fields: {sorted(unknown)}")
         enc = {k: (json.dumps(v) if isinstance(v, (dict, list)) else v) for k, v in fields.items()}
         cols = ", ".join(f"{k}=?" for k in enc)
         with self._db() as db:
-            db.execute(f"UPDATE reports SET {cols}, updated=? WHERE id=?", (*enc.values(), _now(), rid))
+            db.execute(f"UPDATE reports SET {cols}, updated=? WHERE id=?",  # nosec B608 - allowlisted columns
+                       (*enc.values(), _now(), rid))
 
     def _log(self, rid: str, line: str) -> None:
         with self._db() as db:
