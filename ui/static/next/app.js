@@ -382,15 +382,23 @@
       // HOOD never starts work from chat: it offers a plan the owner approves.
       const objective = r.data.suggested_mission;
       logEl.append(h('div', { class: 'form-actions' }, h('button', { class: 'btn small primary', type: 'button',
-        onclick: () => planMissionDialog(objective) }, 'Plan this as a mission')));
+        onclick: async (ev) => {
+          const btn = ev.currentTarget;
+          btn.disabled = true; btn.textContent = 'Writing the brief from our conversation…';
+          const d = await api.post('/api/chat/mission_draft', { fallback: objective });
+          btn.disabled = false; btn.textContent = 'Plan this as a mission';
+          if (d.ok && d.data.note) toast(d.data.note);
+          planMissionDialog(d.ok ? d.data.objective : objective);
+        } }, 'Plan this as a mission')));
     }
     if (voice.autoSpeak) voice.speak(String(r.data.text).replace(/[*`#_]/g, ''), r.data.speaker_id);
   }
   function planMissionDialog(objective) {
-    const obj = h('textarea', { class: 'big', 'aria-label': 'Objective', maxlength: '8000' });
+    const obj = h('textarea', { class: 'big', 'aria-label': 'Objective', maxlength: '8000', rows: '12' });
     obj.value = objective || '';
     const budget = h('input', { type: 'number', min: '0', max: '100', step: '0.01', value: '1.00', 'aria-label': 'Spend cap in USD' });
     confirmDialog('Plan an agent mission', [
+      'Review and edit the brief below: the agents only see this text, not our conversation.',
       'Hood sends this objective to the configured AI provider to draft a task plan.',
       'Nothing runs until you approve that exact plan and its spending cap.'],
     'Plan mission', async () => {

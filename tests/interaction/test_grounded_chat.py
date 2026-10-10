@@ -90,3 +90,29 @@ def test_cli_plan_report_states_only_what_happened():
     for canned in ("verified successfully", "All completed with verified evidence",
                    "Factual consensus", "unit economics verified", "Actions Requiring Approval: None"):
         assert canned not in text
+
+
+def test_mission_brief_is_drafted_from_the_whole_conversation():
+    """Owner's run: the plan dialog was filled with "Yeah, sure... can we proceed?" instead of the spec."""
+    router = Router(text="Sounds good.")
+    svc = _chat(router)
+    sid = "user:owner"
+    svc.handle_text_input("A client wants a website for his coffee shop with the menu and products.", session_id=sid)
+    svc.handle_text_input("Customers scan a QR code to order from their table.", session_id=sid)
+    svc.handle_text_input("Yeah, sure. Can we proceed and create the website?", session_id=sid)
+    router.text = "Build a local coffee-shop website. Features: menu, products, QR ordering."
+    out = svc.draft_mission_objective(sid)
+    assert out["drafted"] and out["objective"].startswith("Build a local coffee-shop website")
+    prompt = router.requests[-1].prompt
+    for said in ("menu and products", "QR code to order", "Use only what the owner said"):
+        assert said in prompt
+
+
+def test_mission_brief_falls_back_to_the_owners_own_words():
+    svc = _chat(Router(text="ok"))
+    sid = "user:owner"
+    svc.handle_text_input("Build a menu page for the cafe.", session_id=sid)
+    svc.commander.model_router = Router(exc=RuntimeError("quota exhausted"))
+    out = svc.draft_mission_objective(sid)
+    assert not out["drafted"] and "Build a menu page for the cafe." in out["objective"]
+    assert "quota exhausted" in out["note"]

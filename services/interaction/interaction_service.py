@@ -639,6 +639,39 @@ class InteractionService:
             rows.append(f"{who}: {m.text[:self.HISTORY_CHARS]}")
         return "\n".join(rows)
 
+    def draft_mission_objective(self, session_id: str, fallback: str = "") -> Dict[str, Any]:
+        """Write an agent-mission objective from the whole conversation (the owner edits it).
+
+        Never invents requirements: the model is told to use only what the owner said and to list
+        open questions as assumptions. On model failure, return the owner's own recent messages.
+        """
+        session = self._get_or_create_session(session_id)
+        owner = self._owner_name(session)
+        transcript = "\n".join(
+            f"{owner if m.speaker_id == 'zak' else 'HOOD'}: {m.text[:self.HISTORY_CHARS]}"
+            for m in session.messages[-20:] if m.speaker_id in ("zak", "hood"))
+        prompt = (
+            "Write the objective for a team of software agents that will build what the owner asked for "
+            "in the conversation below. Requirements:\n"
+            "- Self-contained: the agents will not see the conversation.\n"
+            "- Use only what the owner said or agreed to. Do not invent features, brands or data.\n"
+            "- Structure: one-sentence goal; 'Features:' bullet list; 'Constraints:' (runs locally on the "
+            "owner's computer, no deployment, no real payments or personal data); 'Assumptions:' for anything "
+            "unclear, chosen conservatively; 'Done when:' 3-5 checkable acceptance criteria.\n"
+            "- Under 1500 characters, plain text, in English.\n\n"
+            f"Conversation:\n{transcript}\n\nObjective:")
+        try:
+            resp = self.commander.model_router.invoke(ModelRequest(
+                prompt=prompt, model_class=self.CHAT_CLASS, max_tokens=2048, temperature=0.2,
+                task_id=f"draft_{uuid.uuid4().hex[:8]}"))
+            if getattr(resp, "is_mock", False) or not resp.text.strip():
+                raise RuntimeError("no live model")
+            return {"objective": resp.text.strip()[:8000], "drafted": True}
+        except Exception as exc:
+            own = [m.text for m in session.messages if m.speaker_id == "zak"][-6:]
+            return {"objective": ("\n".join(own) or fallback)[:8000], "drafted": False,
+                    "note": f"Couldn't draft with the AI model ({str(exc)[:160]}); your own messages are used instead."}
+
     def _handle_conversational_response(self, prompt: str, session: InteractionSession) -> str:
         """A real model answer, grounded in live facts, owner-declared memory and this conversation.
 

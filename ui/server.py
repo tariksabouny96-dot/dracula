@@ -543,6 +543,14 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             self._send_json({"status": "ERASED", "messages_removed": removed})
             return
 
+        if self.path == "/api/chat/mission_draft":
+            if not self._require_permission(curr_session, UserPermission.CHAT_INTERACTION):
+                return
+            fallback = payload.get("fallback") if isinstance(payload.get("fallback"), str) else ""
+            self._send_json(self.interaction_service.draft_mission_objective(
+                "user:" + curr_session.user_id, fallback=fallback[:8000]))
+            return
+
         # Chat / interrupt / approval endpoints
         if self.path == "/api/chat":
             if not self._require_permission(curr_session, UserPermission.X_ACTIVATION):
