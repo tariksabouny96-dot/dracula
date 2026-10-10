@@ -115,9 +115,16 @@ class HoodSystemRuntime:
         # ladder. HOOD reinforces lessons automatically but only the Root Owner
         # can promote one to ESTABLISHED (settled truth).
         from services.learning.service import LearningService
+        # Semantic recall is opt-in (HOOD_LEARNING_EMBEDDINGS=1): real Gemini
+        # embeddings, firewall-gated and billable, so it stays off (lexical) by
+        # default with no surprise cost.
+        _embedder = None
+        if os.environ.get("HOOD_LEARNING_EMBEDDINGS") == "1":
+            from services.learning.embeddings import GeminiEmbeddingProvider
+            _embedder = GeminiEmbeddingProvider(firewall=self.firewall)
         self.learning = LearningService(
             self.memory_service, approval_service=self.approval_service,
-            stop_latch=self.stop_latch, data_dir=self.data_dir / "learning")
+            stop_latch=self.stop_latch, data_dir=self.data_dir / "learning", embedder=_embedder)
         self.tool_gateway = ToolGateway(self.config, self.approval_service, self.audit_service,
                                         stop_latch=self.stop_latch)
 
@@ -191,7 +198,7 @@ class HoodSystemRuntime:
         # independent verification. Simulated output is refused here.
         from services.agents import AgentEngine
         self.agent_engine = AgentEngine(self.data_dir / "agents", router=self.model_router,
-                                        stop_latch=self.stop_latch)
+                                        stop_latch=self.stop_latch, on_outcome=self._on_mission_outcome)
         self.emergency_stop.attach("agent_engine", self.agent_engine.halt_all)
         self.commander = HoodCommander(
             self.config,
@@ -216,6 +223,23 @@ class HoodSystemRuntime:
             x_controller=self.x_controller
         )
         self.interaction_service.x_session_manager = self.x_session_manager
+
+    def _on_mission_outcome(self, owner: str, mission_id: str, objective: str, outcome: str, detail: str) -> None:
+        """Self-learning hook: record a lesson from each finished mission.
+
+        Best-effort and owner-gated downstream — the lesson enters at OBSERVATION
+        and only the owner can ever establish it as settled truth.
+        """
+        obj = (objective or "").strip()
+        if outcome == "success":
+            category, lesson = "mission:success", f"Objective completed and verified: {obj[:200]}"
+        else:
+            category = "mission:failure"
+            lesson = f"Objective ended {outcome}: {obj[:160]}" + (f" | {detail[:160]}" if detail else "")
+        try:
+            self.learning.record_outcome(owner, category, lesson, evidence=f"mission {mission_id}")
+        except Exception:
+            pass
 
     def _register_tools(self):
         self.tool_gateway.register_tool(FSReadFileTool(self.tool_gateway))

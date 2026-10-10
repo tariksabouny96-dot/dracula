@@ -31,3 +31,23 @@ OBSERVATION -> CANDIDATE -> PROVISIONAL -> ESTABLISHED
 The agent engine can call `record_outcome` automatically at mission completion
 so HOOD learns from every mission without being asked; the service is ready for
 that hook.
+
+## Combined: auto-learning (B) + semantic recall (A)
+- **Auto-learning (B):** the agent engine fires an `on_outcome` hook at every
+  terminal mission state (success / failure / unverified). The runtime records a
+  lesson from it (`HoodSystemRuntime._on_mission_outcome`), so HOOD learns from
+  every mission unprompted. The hook is best-effort and can never affect a
+  mission; lessons still enter at OBSERVATION and only the owner can ESTABLISH.
+- **Semantic recall (A):** `recall()` takes an optional embedding provider. With
+  one, lessons are ranked by cosine similarity of meaning and marked
+  `ranking="semantic"`; without one it is lexical and marked `ranking="lexical"`
+  — a lexical match is never reported as semantic. The real provider is
+  `GeminiEmbeddingProvider` (model `gemini-embedding-001`, override with
+  `HOOD_GEMINI_EMBED_MODEL`), reached only through the egress firewall
+  (default deny) with the owner's credential.
+- **Enable it:** set `HOOD_LEARNING_EMBEDDINGS=1` and allow
+  `generativelanguage.googleapis.com` in the firewall. Off by default, so there
+  is no surprise embedding cost; lexical recall works offline with no provider.
+- Verified live: the firewall blocks embeddings by default; once the owner
+  allows the host, real 3072-d embeddings rank networking lessons above an
+  unrelated dates lesson for a keyword-disjoint query (true semantic match).

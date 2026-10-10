@@ -16,6 +16,7 @@ needs evidence, and ESTABLISHED is owner-gated at the memory layer too.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import sqlite3
 import threading
@@ -38,10 +39,14 @@ def _signature(category: str, lesson: str) -> str:
 
 class LearningService:
     def __init__(self, memory_service, approval_service=None, stop_latch: Optional[StopLatch] = None,
-                 data_dir: Optional[Path] = None):
+                 data_dir: Optional[Path] = None, embedder=None):
         self.memory = memory_service
         self.approval_service = approval_service
         self.stop_latch = stop_latch or StopLatch()
+        # Optional embedding provider for semantic recall. None -> lexical recall
+        # (honestly labelled), so behaviour and cost are unchanged until an owner
+        # configures embeddings.
+        self.embedder = embedder
         base = Path(data_dir) if data_dir else Path(
             os.environ.get("HOOD_DATA_DIR") or (Path.home() / ".hood")) / "learning"
         base.mkdir(parents=True, exist_ok=True)
@@ -55,8 +60,21 @@ class LearningService:
                 lesson_id TEXT PRIMARY KEY, principal TEXT NOT NULL, memory_id TEXT NOT NULL,
                 category TEXT NOT NULL, content TEXT NOT NULL, observations INTEGER NOT NULL,
                 status TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL)""")
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(lessons)").fetchall()}
+            if "embedding" not in cols:
+                conn.execute("ALTER TABLE lessons ADD COLUMN embedding TEXT")  # JSON vector, nullable
             conn.execute("CREATE INDEX IF NOT EXISTS idx_lessons_principal ON lessons(principal)")
             conn.commit()
+
+    def _embed_one(self, text: str):
+        """Best-effort single embedding; returns a vector or None on any failure."""
+        if self.embedder is None:
+            return None
+        try:
+            vecs = self.embedder.embed([text])
+            return vecs[0] if vecs else None
+        except Exception:
+            return None
 
     def _conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path))
@@ -88,9 +106,11 @@ class LearningService:
                     source_agent="Hood", confidence=max(0.0, min(confidence, 1.0)),
                     evidence=[evidence] if evidence else [], learning_status=LearningStatus.OBSERVATION)
                 self.memory.write_memory(mem, caller_agent="Hood")
-                conn.execute("INSERT INTO lessons VALUES (?,?,?,?,?,?,?,?,?)",
+                vec = self._embed_one(lesson)
+                conn.execute("INSERT INTO lessons VALUES (?,?,?,?,?,?,?,?,?,?)",
                              (lesson_id, principal, mem_id, category, lesson, 1,
-                              LearningStatus.OBSERVATION.value, now, now))
+                              LearningStatus.OBSERVATION.value, now, now,
+                              json.dumps(vec) if vec is not None else None))
                 conn.commit()
                 observations, status = 1, LearningStatus.OBSERVATION
             else:
@@ -137,14 +157,51 @@ class LearningService:
     # ------------------------------------------------------------- recall
     def recall(self, principal: str, query: Optional[str] = None,
                min_status: LearningStatus = LearningStatus.CANDIDATE) -> List[Dict[str, Any]]:
-        """Return trusted lessons for this principal, most-trusted first."""
+        """Return trusted lessons for this principal, most-trusted first.
+
+        With an embedding provider and a query, lessons are ranked by semantic
+        similarity (cosine over embeddings) and each result is marked
+        ``ranking="semantic"``. Otherwise ranking is lexical and marked
+        ``ranking="lexical"`` — a lexical match is never reported as semantic.
+        """
         floor = _rank(min_status)
         with self._conn() as conn:
             rows = conn.execute("SELECT * FROM lessons WHERE principal=?", (principal,)).fetchall()
-        out = [self._view(r) for r in rows if _rank(LearningStatus(r["status"])) >= floor]
+        rows = [r for r in rows if _rank(LearningStatus(r["status"])) >= floor]
+
+        qvec = self._embed_one(query) if (query and self.embedder is not None) else None
+        if qvec is not None:
+            from .embeddings import cosine
+            scored = []
+            for r in rows:
+                vec = None
+                if r["embedding"]:
+                    try:
+                        vec = json.loads(r["embedding"])
+                    except Exception:
+                        vec = None
+                if vec is None:  # embed on demand and cache
+                    vec = self._embed_one(r["content"])
+                    if vec is not None:
+                        with self._lock, self._conn() as conn:
+                            conn.execute("UPDATE lessons SET embedding=? WHERE lesson_id=?",
+                                         (json.dumps(vec), r["lesson_id"]))
+                            conn.commit()
+                score = cosine(qvec, vec) if vec is not None else 0.0
+                v = self._view(r)
+                v["ranking"] = "semantic"
+                v["score"] = round(score, 4)
+                scored.append(v)
+            scored.sort(key=lambda v: (v["score"], _rank(LearningStatus(v["status"]))), reverse=True)
+            return scored
+
+        # Lexical fallback (honest label).
+        out = [self._view(r) for r in rows]
         if query:
             q = query.lower()
             out = [v for v in out if q in v["content"].lower() or q in v["category"].lower()]
+        for v in out:
+            v["ranking"] = "lexical"
         out.sort(key=lambda v: (_rank(LearningStatus(v["status"])), v["observations"]), reverse=True)
         return out
 

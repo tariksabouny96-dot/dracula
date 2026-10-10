@@ -72,7 +72,8 @@ class AgentEngine:
     def __init__(self, root: Path, *, router: Any = None,
                  invoke: Optional[Callable[[ModelRequest], ModelResponse]] = None,
                  stop_latch: Optional[StopLatch] = None, allow_simulated: bool = False,
-                 require_network_isolation: bool = True, worker_id: Optional[str] = None):
+                 require_network_isolation: bool = True, worker_id: Optional[str] = None,
+                 on_outcome: Optional[Callable[[str, str, str, str, str], None]] = None):
         """``router`` is a ModelRouter (live providers, budgets, pricing).
 
         ``invoke`` replaces the router for deterministic contract tests; its
@@ -92,10 +93,23 @@ class AgentEngine:
         self.allow_simulated = allow_simulated
         self.require_network_isolation = require_network_isolation
         self.worker_id = worker_id or f"worker-{uuid.uuid4().hex[:8]}"
+        # Optional self-learning hook: called once per mission when it reaches a
+        # terminal state, as (owner, mission_id, objective, outcome, detail).
+        # Best-effort — it can never affect or break a mission.
+        self.on_outcome = on_outcome
         self._workspaces: Dict[str, Workspace] = {}
         self._ws_lock = threading.Lock()
         self._receipt_key = self._load_receipt_key()
         self._init_db()
+
+    def _emit_outcome(self, owner: str, mission_id: str, objective: str, outcome: str, detail: str) -> None:
+        """Fire the self-learning hook, if any. Never raises into the engine."""
+        if self.on_outcome is None:
+            return
+        try:
+            self.on_outcome(owner, mission_id, objective, outcome, detail)
+        except Exception:
+            pass
 
     # ================================================================ storage
     @contextmanager
@@ -580,6 +594,7 @@ class AgentEngine:
 
     def _verify(self, owner: str, mission_id: str) -> Dict[str, Any]:
         ws = self._workspace(mission_id)
+        terminal = None  # set to (state, reason, objective) when the mission ends here
         try:
             decision = verify(ws)
         except SandboxUnavailable as exc:
@@ -631,7 +646,12 @@ class AgentEngine:
                 final = MissionState.FAILED if decision.verdict == VerificationVerdict.FAIL else MissionState.UNVERIFIED
                 self._set_state(db, mission_id, final, "verifier", verdict=decision.verdict.value,
                                 error=decision.reason)
+                terminal = (final.value, decision.reason, mission["objective"])
             db.execute("COMMIT")
+        if terminal is not None:
+            self._emit_outcome(owner, mission_id, terminal[2],
+                               "failure" if terminal[0] == MissionState.FAILED.value else "unverified",
+                               terminal[1] or "")
         return self.status(owner, mission_id)
 
     def _package(self, owner: str, mission_id: str, decision: VerificationDecision) -> Dict[str, Any]:
@@ -671,6 +691,8 @@ class AgentEngine:
                                                              "workspace_sha256": decision.workspace_sha256})
             self._set_state(db, mission_id, MissionState.COMPLETED, "packager", verdict="PASS", error=None)
             db.execute("COMMIT")
+        self._emit_outcome(owner, mission_id, mission["objective"], "success",
+                           "verified PASS; artifact delivered")
         return self.status(owner, mission_id)
 
     def run(self, owner: str, mission_id: str, max_steps: int = 50) -> Dict[str, Any]:
