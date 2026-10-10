@@ -62,6 +62,9 @@ class ConversationMessage(BaseModel):
     # Tools the request needs (toolbox needs(): missing, unapproved, names, problem): the UI offers
     # "Allow & install" for them. HOOD asks instead of saying no.
     needs_tools: Optional[Dict[str, Any]] = None
+    # The owner described a problem with HOOD itself: the UI offers "Investigate & fix" (self-repair).
+    # Only an offer; nothing is sent or changed until the owner confirms in the dialog.
+    offer_self_repair: bool = False
 
 
 class TaskProgressItem(BaseModel):
@@ -204,6 +207,8 @@ class InteractionService:
             reply_msg.scope_notes = scope_notes(session.offer, profile, needs)
             reply_msg.needs_tools = needs if needs and not needs.get("ready") else None
             session.pending_mission = session.offer
+        if speaker_id == "hood" and not approval_ref and not reply_msg.suggested_mission and self.is_hood_problem(text):
+            reply_msg.offer_self_repair = True
         session.offer, session.plan_now = None, False
         self._append(session, reply_msg)
         if session.ui_state != UIState.EMERGENCY_STOP:
@@ -673,6 +678,20 @@ class InteractionService:
         facts.append("Chat itself never runs actions. When the owner asks to plan a build, HOOD opens the mission "
                      "plan for their review; the agents start only after the owner approves that plan.")
         return facts
+
+    # A problem with HOOD itself ("the Run button does nothing", "le bouton ne marche pas"...).
+    _HOOD_PROBLEM_RE = re.compile(
+        r"\b(bug|broken|doesn'?t work|does not work|isn'?t working|not working|stopped working|crash(es|ed)?|"
+        r"freez(es|e)|stuck|error|fails?|failing|wrong|missing|blank|ne marche (pas|plus)|ne fonctionne (pas|plus)|"
+        r"plante|erreur|bloqu[ée]e?|cass[ée]e?|probl[eè]me)\b", re.I)
+    _HOOD_PART_RE = re.compile(
+        r"\b(hood|button|bouton|page|screen|[ée]cran|settings|param[eè]tres|chat|mission|panel|panneau|menu|"
+        r"console|dialog|map|carte|voice|voix|toolbox|sandbox|tab|onglet|ui|interface)\b", re.I)
+
+    def is_hood_problem(self, text: str) -> bool:
+        """The owner is describing a problem with HOOD itself (offer self-repair, never act)."""
+        t = text or ""
+        return len(t) >= 15 and bool(self._HOOD_PROBLEM_RE.search(t)) and bool(self._HOOD_PART_RE.search(t))
 
     def _mission_suggestion(self, text: str, session: InteractionSession) -> Optional[str]:
         """Objective to offer as an agent mission, or None. Never starts anything.

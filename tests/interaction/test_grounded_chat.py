@@ -207,3 +207,17 @@ def test_limits_ignore_things_the_brief_rules_out():
     from services.agents.scope import scope_notes
     assert scope_notes("Constraints:\n- No WordPress, PHP, databases, or npm packages\n- No real payments") == []
     assert scope_notes("Use WordPress with a MySQL database")
+
+
+def test_a_problem_with_hood_itself_offers_self_repair_and_changes_nothing():
+    """Phase 4: the owner reports a HOOD problem in chat; HOOD only offers "Investigate & fix"."""
+    router = Router(text="Sorry about that.")
+    msg = _chat(router).handle_text_input("The send button on the chat page does nothing, it's broken")
+    assert msg.offer_self_repair and len(router.requests) == 1          # one chat reply, nothing else
+    assert _chat(Router()).handle_text_input("le bouton paramètres ne marche plus").offer_self_repair
+    assert _chat(Router()).handle_text_input("HOOD crashed with an error on the Missions page").offer_self_repair
+    for unrelated in ("how are you?", "my car is broken and I need help", "the weather is wrong today again"):
+        assert not _chat(Router()).handle_text_input(unrelated).offer_self_repair, unrelated
+    build = _chat(Router()).handle_text_input(
+        "I want you to create a website for a coffee shop with a menu and QR ordering")
+    assert build.suggested_mission and not build.offer_self_repair      # a build request stays a mission offer
