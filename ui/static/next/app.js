@@ -1546,6 +1546,45 @@
       (x.log || []).length ? h('details', { open: running || null }, h('summary', {}, 'What HOOD did'), h('pre', { class: 'file-view wrap' }, x.log.join('\n'))) : null);
   }
 
+  // Self-development proposals (changes to HOOD's code proposed through the API): the owner sees the
+  // exact change, approves it in Sentinel › Approvals (bound to its hash), then applies it here.
+  const SELFDEV_STATE = { AWAITING_APPROVAL: ['awaiting_approval', 'Waiting for approval'], APPLIED: ['COMPLETED', 'Applied'],
+    ROLLED_BACK: ['FAILED', 'Rolled back (checks failed)'] };
+  function selfDevCard() {
+    const box = h('div', {});
+    const load = () => fill(box, async () => {
+      const r = await api.get('/api/selfdev/proposals');
+      if (!r.ok) return unavailable(r, 'Self-development');
+      const items = r.data.proposals;
+      if (!items.length) return emptyBox('No other proposed changes. Fixes found by self-repair appear above.');
+      return h('div', {}, items.slice(0, 20).map((p) => {
+        const [k, label] = SELFDEV_STATE[p.state] || [p.state, p.state];
+        const diffBox = h('div', {});
+        const det = h('details', { class: 'check-row' }, h('summary', {}, badge(k, label), ' ', h('b', {}, p.target_path),
+          h('small', {}, ' · ' + clip(p.rationale || '', 120) + ' · by ' + p.proposed_by + ' · ' + fmtTime(new Date(p.created_at * 1000).toISOString()))), diffBox);
+        det.addEventListener('toggle', async () => {
+          if (!det.open || diffBox.childNodes.length) return;
+          const d = await api.get('/api/selfdev/proposals/' + p.proposal_id);
+          clear(diffBox).append(!d.ok ? unavailable(d, 'Proposal') : h('div', {},
+            d.data.diff ? diffView(d.data.diff) : emptyBox('No change against the current file.'),
+            d.data.detail ? h('p', { class: 'small-note' }, d.data.detail) : null,
+            p.state === 'AWAITING_APPROVAL' && session.role === 'ROOT_OWNER' ? h('div', { class: 'form-actions' },
+              h('button', { class: 'btn small', type: 'button', onclick: () => app.render('Sentinel') }, 'Approve in Sentinel › Approvals'),
+              h('button', { class: 'btn small primary', type: 'button', onclick: () => confirmDialog('Apply this change?', [
+                'HOOD changes ' + p.target_path + ' exactly as shown. It must be approved first (Sentinel › Approvals); the approval is bound to this exact content.',
+                'A checkpoint is kept; if HOOD’s checks fail, the change is rolled back automatically.'], 'Apply change', async () => {
+                const x = await api.post('/api/selfdev/proposals/' + p.proposal_id + '/apply', { confirm: true });
+                if (x.ok) { toast(x.data.state === 'APPLIED' ? 'Change applied.' : 'Rolled back: ' + (x.data.detail || '')); load(); }
+                return x;
+              }) }, 'Apply change')) : null));
+        });
+        return det;
+      }));
+    }, (x) => x);
+    load();
+    return card('Other proposed changes (self-development)', box);
+  }
+
   function repairView() {
     const list = h('div', { class: 'repair-list' });
     const detail = h('div', {}, loading('reports'));
@@ -1568,7 +1607,8 @@
     load();
     return h('div', {}, head('Self-repair', 'Tell HOOD what is wrong with it. HOOD finds the cause in its own code, proves a fix in its sandbox, and changes nothing until you approve. If it isn’t sure, it says so.',
       session.role === 'ROOT_OWNER' ? h('button', { class: 'btn primary', type: 'button', onclick: () => reportProblemDialog('') }, '✚ Report a problem') : null),
-    h('div', { class: 'repair-layout' }, card('Reports', list), card('Details', detail)));
+    h('div', { class: 'repair-layout' }, card('Reports', list), card('Details', detail)),
+    h('div', { style: { marginTop: '14px' } }, selfDevCard()));
   }
 
   // ------------------------------------------------------------------ Integrations / capabilities

@@ -227,6 +227,17 @@ def test_self_repair_from_report_to_applied_fix_and_undo(stack, tmp_path, monkey
             assert (repo / "services/demo/greeting.py").read_text() == BUGGY
             page.click("#nav [data-page=Intelligence]")
             page.wait_for_selector("text=AI MODELS IN USE")
+            page.click("#nav [data-page=Repair]")
+            page.wait_for_selector("text=No other proposed changes")              # self-development panel
+            from services.evolution.self_development_api import _controller
+            _controller().propose("docs/RUNBOOK.md", "# Runbook\n", "shorter runbook", proposed_by="owner")
+            page.click("#nav [data-page=Intelligence]")
+            page.click("#nav [data-page=Repair]")
+            page.click("summary:has-text('docs/RUNBOOK.md')")
+            page.wait_for_selector("details:has(summary:has-text('docs/RUNBOOK.md')) .diff-view .d-del")   # exact change shown
+            assert page.locator("button:has-text('Apply change')").count() == 1
+            page.click("#nav [data-page=Intelligence]")
+            page.wait_for_selector("text=AI MODELS IN USE")
             if os.environ.get("HOOD_SCREENSHOT_DIR"):
                 page.locator("text=AI MODELS IN USE").scroll_into_view_if_needed()
                 page.screenshot(path=os.path.join(os.environ["HOOD_SCREENSHOT_DIR"], "intelligence-live.png"))

@@ -79,3 +79,16 @@ def test_non_owner_cannot_apply(server):
     # A non-owner (operator) lacks OWNERSHIP_ADMIN -> 403, file unchanged.
     assert request(base, f"/api/selfdev/proposals/{pid}/apply", coder, {"confirm": True})[0] == 403
     assert (ws / "services" / "demo" / "mod.py").read_text() == "VALUE = 1\n"
+
+
+def test_owner_sees_the_exact_change_before_approving(server):
+    """Phase 4 panel: a proposal shows its diff against the file as it is now."""
+    base, owner, coder, controller, ws = server
+    status, body, _ = request(base, "/api/selfdev/propose", owner,
+                              {"target_path": "services/demo/mod.py", "content": "VALUE = 5\n",
+                               "rationale": "bump", "confirm": True})
+    pid = json.loads(body)["proposal_id"]
+    status, body, _ = request(base, f"/api/selfdev/proposals/{pid}", owner)
+    diff = json.loads(body)["diff"]
+    assert status == 200 and "-VALUE = 1" in diff and "+VALUE = 5" in diff
+    assert (ws / "services" / "demo" / "mod.py").read_text() == "VALUE = 1\n"

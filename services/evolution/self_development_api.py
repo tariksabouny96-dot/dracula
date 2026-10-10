@@ -6,6 +6,7 @@ any validation failure. Guardrail files are refused outright.
 """
 from __future__ import annotations
 
+import difflib
 import os
 from pathlib import Path
 
@@ -36,7 +37,18 @@ def list_proposals(ctx):
 
 @route("GET", r"/api/selfdev/proposals/(?P<pid>sd_[0-9a-f]{24})", permission="VIEW_PROJECT_DATA")
 def get_proposal(ctx):
-    return _controller().get(ctx.match["pid"])
+    """The proposal plus the exact change it makes (a unified diff against the file as it is now), so
+    the owner sees what they approve; approving binds that content's hash."""
+    c = _controller()
+    out = c.get(ctx.match["pid"])
+    stored = c.proposals_dir / ctx.match["pid"]
+    target = c.workspace_root / out["target_path"]
+    if stored.is_file():
+        new = stored.read_text(encoding="utf-8")
+        old = target.read_text(encoding="utf-8") if target.is_file() else ""
+        out["diff"] = "".join(difflib.unified_diff(old.splitlines(True), new.splitlines(True),
+                                                   fromfile=f"a/{out['target_path']}", tofile=f"b/{out['target_path']}"))
+    return out
 
 
 @route("POST", r"/api/selfdev/propose", permission="MODIFY_PROJECT_CODE")
