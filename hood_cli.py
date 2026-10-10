@@ -110,6 +110,14 @@ class HoodSystemRuntime:
             workspace_root=Path.cwd(), approval_service=self.approval_service,
             audit_service=self.audit_service, data_dir=self.data_dir / "self_dev",
             stop_latch=self.stop_latch)
+
+        # Self-learning: durable, trust-ranked lessons on the governed memory
+        # ladder. HOOD reinforces lessons automatically but only the Root Owner
+        # can promote one to ESTABLISHED (settled truth).
+        from services.learning.service import LearningService
+        self.learning = LearningService(
+            self.memory_service, approval_service=self.approval_service,
+            stop_latch=self.stop_latch, data_dir=self.data_dir / "learning")
         self.tool_gateway = ToolGateway(self.config, self.approval_service, self.audit_service,
                                         stop_latch=self.stop_latch)
 

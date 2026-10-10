@@ -1373,7 +1373,9 @@ class JarvisServer:
                             ("approvals", shared_approvals), ("x", self.x_session_manager),
                             ("emergency_stop", emergency_stop), ("auth", self.auth_service),
                             ("firewall", getattr(runtime, "firewall", None)),
-                            ("selfdev", getattr(runtime, "self_dev", None))):
+                            ("selfdev", getattr(runtime, "self_dev", None)),
+                            ("memory", getattr(runtime, "memory_service", None)),
+                            ("learning", getattr(runtime, "learning", None))):
             if value is not None:
                 feature_routes.SERVICES[name] = value
             else:
