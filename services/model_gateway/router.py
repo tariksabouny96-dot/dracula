@@ -65,8 +65,11 @@ class ModelRouter:
         names = candidates(request) if callable(candidates) else [model]
         if not names or any(n is None or n not in table for n in names):
             return model, None, True
+        # Reserve with the candidate that would cost the most for THIS request (a fallback with a
+        # higher output price can cost more than a "dearer" primary on a short prompt).
+        prompt_tokens = estimate_tokens((request.system_prompt or "") + request.prompt)
         price = max((table[n] for n in names),
-                    key=lambda p: p.input_per_1k_usd + p.output_per_1k_usd)
+                    key=lambda p: prompt_tokens * p.input_per_1k_usd + request.max_tokens * p.output_per_1k_usd)
         return model, price, True
 
     def _init_providers(self):
@@ -227,8 +230,15 @@ class ModelRouter:
                 attempt_count += 1
                 resp = provider.invoke(request)
             except (ProviderNotConfiguredError, ProviderRateLimitError) as e:
-                # Refused before generation: no spend is attributable.
-                self.cost_controller.release(reservation)
+                if getattr(e, "possibly_billed", False):
+                    # An earlier attempt may have been processed (timeout): charge the reservation.
+                    from packages.contracts import ModelUsage
+                    self.cost_controller.settle(reservation, ModelUsage(), cost_measured=False,
+                                                provider=provider_name.value, model=model or "unknown")
+                    possibly_sent = True
+                else:
+                    # Refused before generation: no spend is attributable.
+                    self.cost_controller.release(reservation)
                 self._observe(provider_name, False, error=e)
                 last_error = e
                 continue
@@ -262,6 +272,9 @@ class ModelRouter:
                 if resp.usage.total_tokens > 0:
                     resp.usage.estimated_cost_usd = billed.cost(resp.usage.prompt_tokens, resp.usage.completion_tokens,
                                                                 getattr(resp, "audio_prompt_tokens", 0))
+                    if getattr(resp, "uncertain_attempts", 0):
+                        # Earlier attempts may have been billed too: never record less than reserved.
+                        resp.usage.estimated_cost_usd = max(resp.usage.estimated_cost_usd, estimate)
                 else:
                     measured = False  # provider omitted usage: charge the full reservation
             self.cost_controller.settle(

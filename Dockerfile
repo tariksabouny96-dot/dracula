@@ -43,7 +43,10 @@ RUN useradd --create-home --uid 10001 hood \
     && chmod -R a+rX,go-w /app \
     && test ! -e /app/scripts/wsl/hood-pkg \
     && ! command -v sudo
-ENV HOOD_ENABLE_PKG_HELPER=0
+# A container never imports "legacy" stores from /app: there are none, and nothing from the build
+# machine may become the server's data.
+ENV HOOD_ENABLE_PKG_HELPER=0 \
+    HOOD_SKIP_LEGACY_MIGRATION=1
 USER hood
 
 EXPOSE 8990

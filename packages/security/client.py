@@ -83,8 +83,21 @@ def classify(peer: str, headers: Any) -> ClientInfo:
         proto = ",".join(_all(headers, "X-Forwarded-Proto")).split(",")[-1].strip().lower()
         return ClientInfo(ip=client or "proxy-unknown", direct_local=False, forwarded=True,
                           secure=proto == "https")
-    # A proxy HOOD wasn't told to trust (or a client faking one): never local, address unknown.
-    return ClientInfo(ip=peer_ip, direct_local=False, forwarded=True, secure=False)
+    # A proxy HOOD wasn't told to trust (or a client faking one): never local, address unknown. Its
+    # own bucket: remote failures must never share the owner's at-the-machine 127.0.0.1 bucket.
+    return ClientInfo(ip="untrusted-proxy", direct_local=False, forwarded=True, secure=False)
+
+
+def rate_bucket(ip: str) -> str:
+    """Rate-limit bucket for an address: IPv6 by /64 (one subscriber usually owns a whole /64, so
+    per-address buckets would give unlimited guesses), IPv4 and labels as they are."""
+    try:
+        addr = ipaddress.ip_address(_ip(ip) or "")
+    except ValueError:
+        return str(ip)
+    if addr.version == 6 and not addr.is_loopback:
+        return str(ipaddress.ip_network(f"{addr}/64", strict=False))
+    return str(addr)
 
 
 def host_matches(host_header: str, allowed: str) -> bool:

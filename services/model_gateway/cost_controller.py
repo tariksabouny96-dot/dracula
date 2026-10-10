@@ -10,7 +10,8 @@ import threading
 import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Any
-from datetime import datetime, timezone
+import sys
+from datetime import datetime, timedelta, timezone
 from packages.config import BudgetSettings
 from packages.contracts import ModelUsage
 
@@ -42,6 +43,7 @@ class CostController:
         # reservation_id -> {task_id, amount, is_deep}
         self._reservations: Dict[str, Dict[str, Any]] = {}
         self.ledger_path = Path(ledger_path) if ledger_path else None
+        self.ledger_error: Optional[str] = None
         if self.ledger_path is not None:
             self._open_ledger()
 
@@ -56,6 +58,13 @@ class CostController:
             db.close()
 
     def _open_ledger(self) -> None:
+        try:
+            self._load_ledger()
+        except (OSError, sqlite3.Error) as exc:
+            sys.stderr.write(f"HOOD spend ledger unavailable ({exc}); spend is tracked in memory only.\n")
+            self.ledger_error = str(exc)
+
+    def _load_ledger(self) -> None:
         self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
         with self._ledger() as db:
             db.execute("""CREATE TABLE IF NOT EXISTS calls (
@@ -70,10 +79,25 @@ class CostController:
             self.monthly_spend_usd = db.execute("SELECT COALESCE(SUM(cost_usd),0) FROM calls WHERE month=?",
                                                 (month,)).fetchone()[0]
             self.total_tokens_consumed = db.execute("SELECT COALESCE(SUM(total_tokens),0) FROM calls").fetchone()[0]
+            # Per-task spend and call counts of recent tasks (a mission resumed after a restart keeps its caps).
+            since = (today - timedelta(days=2)).isoformat()
+            for task_id, spent, calls in db.execute(
+                    "SELECT task_id, SUM(cost_usd), COUNT(*) FROM calls WHERE task_id IS NOT NULL AND day >= ? "
+                    "GROUP BY task_id", (since,)):
+                self.task_spend[task_id] = spent
+                self.task_calls[task_id] = calls
 
     def _persist(self, record: Dict[str, Any]) -> None:
-        if self.ledger_path is None:
+        if self.ledger_path is None or self.ledger_error:
             return
+        try:
+            self._insert(record)
+        except (OSError, sqlite3.Error) as exc:
+            # Never lose a paid answer over a ledger write: keep counting in memory and say so.
+            self.ledger_error = str(exc)
+            sys.stderr.write(f"HOOD spend ledger write failed ({exc}); spend is tracked in memory only.\n")
+
+    def _insert(self, record: Dict[str, Any]) -> None:
         now = datetime.now(timezone.utc)
         with self._ledger() as db:
             db.execute("INSERT INTO calls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -268,4 +292,6 @@ class CostController:
             "total_calls_recorded": len(self.call_history),
             "max_daily_limit_usd": self.budgets.max_daily_spend_usd,
             "max_monthly_limit_usd": self.budgets.max_monthly_spend_usd,
+            "ledger": str(self.ledger_path) if self.ledger_path else None,
+            "ledger_error": self.ledger_error,
         }

@@ -78,6 +78,7 @@ def _pricing_info():
         p = table.get(name)
         models[name] = None if p is None else {"input_per_1k_usd": p.input_per_1k_usd,
                                                "output_per_1k_usd": p.output_per_1k_usd,
+                                               "audio_input_per_1k_usd": p.audio_input_per_1k_usd,
                                                "as_of": p.as_of, "source": p.source}
     return {"source": source, "models": models, "missing": [m for m, v in models.items() if v is None]}
 
@@ -142,6 +143,9 @@ def set_pricing(ctx):
             entries[m] = {"input_per_1k_usd": _price(p.get("input_per_1k_usd"), f"{m} input"),
                           "output_per_1k_usd": _price(p.get("output_per_1k_usd"), f"{m} output"),
                           "as_of": today, "source": "owner-entered in Settings"}
+            if p.get("audio_input_per_1k_usd") not in (None, ""):
+                # Google bills audio input (voice transcription) at its own, higher rate.
+                entries[m]["audio_input_per_1k_usd"] = _price(p.get("audio_input_per_1k_usd"), f"{m} audio input")
     else:
         raise ValueError("mode must be 'free' or 'custom'")
     path = settings_pricing_file()

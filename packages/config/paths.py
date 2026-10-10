@@ -59,13 +59,30 @@ def _is_sqlite(path: Path) -> bool:
         return False
 
 
+def _no_links(folder: str, names: list) -> list:
+    return [n for n in names if os.path.islink(os.path.join(folder, n))]
+
+
+def _trusted_source(path: Path) -> bool:
+    """Never follow a link, and (POSIX) only copy what HOOD's own account owns: a link or someone
+    else's file must not become the owner's data (and then end up in backups)."""
+    if path.is_symlink():
+        return False
+    if os.name == "posix" and hasattr(os, "geteuid"):
+        try:
+            return path.stat().st_uid == os.geteuid()
+        except OSError:
+            return False
+    return True
+
+
 def _copy(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     tmp = dst.with_name(dst.name + ".migrating")
     if src.is_dir():
         if tmp.exists():
             shutil.rmtree(tmp)
-        shutil.copytree(src, tmp, symlinks=False)
+        shutil.copytree(src, tmp, symlinks=True, ignore=_no_links)   # links inside are dropped
     elif _is_sqlite(src):
         if tmp.exists():
             tmp.unlink()
@@ -112,12 +129,15 @@ LEGACY_STORES = (
 def migrate_legacy_data(roots: Optional[Iterable[Path]] = None, home: Optional[Path] = None) -> list:
     """Copy stores found at their pre-batch-1 places into HOOD_DATA_DIR, once (start-up only).
 
-    Looks in the current folder and the HOOD code folder (``roots``) and in ``~/.hood/nova21``.
+    Looks in the HOOD code folder (``roots``) and in ``~/.hood/nova21``; skips links and files owned
+    by another account.
     Never overwrites: a store already in the data folder wins. Old copies are left in place.
     Returns [(old, new), ...]."""
     if roots is None and os.environ.get("HOOD_SKIP_LEGACY_MIGRATION") == "1":
         return []           # the test suite: never copy the machine's real data into a test folder
-    roots = list(roots) if roots is not None else [Path.cwd(), REPO_ROOT]
+    # Only the HOOD code folder: the folder HOOD happens to be started from is not trusted (someone
+    # else's artifacts/auth.db there must never become this HOOD's Root Owner).
+    roots = list(roots) if roots is not None else [REPO_ROOT]
     moves = [(rel, sidecars, [r / rel for r in roots]) for rel, sidecars in LEGACY_STORES]
     moves.append(("nova21", (), [Path(home or Path.home()) / ".hood" / "nova21"]))
     done = []
@@ -132,13 +152,13 @@ def migrate_legacy_data(roots: Optional[Iterable[Path]] = None, home: Optional[P
                     key = old.resolve()
                 except OSError:
                     continue
-                if key in seen or not old.exists() or key == target.resolve():
+                if key in seen or not old.exists() or key == target.resolve() or not _trusted_source(old):
                     continue
                 seen.add(key)
                 _copy(old, target)
                 for name in sidecars:
                     side_old, side_new = old.parent / name, target.parent / name
-                    if side_old.is_file() and not side_new.exists():
+                    if side_old.is_file() and not side_new.exists() and _trusted_source(side_old):
                         _copy(side_old, side_new)
                         if os.name == "posix":
                             side_new.chmod(0o600)

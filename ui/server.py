@@ -235,15 +235,16 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
                 self._send_json({"error": "Auth service unavailable"}, status=503)
                 return
 
-            client_ip = self._client().ip      # behind the proxy: the real client, not the proxy's 127.0.0.1
+            client = self._client()            # behind the proxy: the real client, not the proxy's 127.0.0.1
             user_agent = self.headers.get("User-Agent", "HOOD Web Client")
 
             try:
                 session = self.auth_service.authenticate(
                     username=payload.get("username", ""),
                     password=payload.get("password", ""),
-                    ip_address=client_ip,
-                    user_agent=user_agent
+                    ip_address=client.ip,
+                    user_agent=user_agent,
+                    remote=client.forwarded
                 )
             except ValueError as ve:
                 self._send_json({"error": str(ve)}, status=429)

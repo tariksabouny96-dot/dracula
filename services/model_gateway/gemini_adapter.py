@@ -5,7 +5,9 @@ Upgraded in HOOD v0.1 for live authenticated Google Gemini API execution.
 """
 
 import os
+import http.client
 import json
+import socket
 import time
 import urllib.request
 import urllib.error
@@ -21,6 +23,10 @@ from packages.auth.vault import SecretVault
 from .base import BaseModelProvider, ProviderNotConfiguredError, ProviderRateLimitError, ProviderError
 from .gemini_usage import usage_from_metadata
 
+
+# The request may have been received (and billed) when the connection fails this way.
+_MAYBE_SENT = (TimeoutError, socket.timeout, ConnectionResetError, ConnectionAbortedError,
+               http.client.RemoteDisconnected, http.client.IncompleteRead)
 
 BUILTIN_MODELS = {ModelClass.FAST: "gemini-3.5-flash-lite", ModelClass.STANDARD: "gemini-3.8-flash",
                   ModelClass.DEEP: "gemini-3.8-flash"}
@@ -159,21 +165,29 @@ class GeminiProviderAdapter(BaseModelProvider):
             headers["x-goog-api-key"] = api_key
 
         last_error = None
+        # Attempts that may have reached Google and been billed although no answer came back
+        # (timeouts, dropped connections): the router then charges at least the reservation.
+        uncertain = [0]
         for model_index, model_name in enumerate(models):
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
             # Fewer retries when another model is listed: an overloaded model rarely recovers in seconds.
             has_fallback = model_index < len(models) - 1
             retries = 2 if has_fallback else self.MAX_RETRIES
             data = self._post_with_retries(url, payload_bytes, headers, model_name, retries,
-                                           fail_fast_on_quota=has_fallback)
+                                           fail_fast_on_quota=has_fallback, uncertain=uncertain)
             if isinstance(data, Exception):
                 last_error = data
                 continue  # overloaded / rate-limited: try the next listed model
-            return self._parse(data, request, model_name, start_time=data.pop("_hood_started"),
+            resp = self._parse(data, request, model_name, start_time=data.pop("_hood_started"),
                                is_fallback=model_index > 0)
-        raise last_error or ProviderError("Gemini invocation failed")
+            resp.uncertain_attempts = uncertain[0]
+            return resp
+        err = last_error or ProviderError("Gemini invocation failed")
+        err.possibly_billed = uncertain[0] > 0
+        raise err
 
-    def _post_with_retries(self, url, payload_bytes, headers, model_name, retries, fail_fast_on_quota=False):
+    def _post_with_retries(self, url, payload_bytes, headers, model_name, retries, fail_fast_on_quota=False,
+                           uncertain=None):
         """Return parsed JSON, or a retryable error once retries are exhausted.
 
         A quota error (429) is not waited out when another model can take the request, or when
@@ -208,6 +222,9 @@ class GeminiProviderAdapter(BaseModelProvider):
                     time.sleep(self._retry_delay(err_body, attempt))
             except (urllib.error.URLError, TimeoutError, OSError) as e:
                 last_error = ProviderError(f"Gemini connection failed ({model_name}): {e}")
+                reason = getattr(e, "reason", e)
+                if uncertain is not None and isinstance(reason, _MAYBE_SENT):
+                    uncertain[0] += 1
                 if attempt < retries:
                     time.sleep(self._retry_delay("", attempt))
         return last_error

@@ -221,6 +221,11 @@ class GeminiVoice:
             raise VoiceRefused("Recording too long; keep it under about 3 minutes")
         model = stt_model()
         g, price = self._preflight(model)
+        if price.input_per_1k_usd > 0 and price.audio_input_per_1k_usd is None:
+            # Google bills audio input at its own (higher) rate: without it HOOD can't bound the cost.
+            raise VoiceRefused(f"No audio input price on file for gemini/{model}: add it in Settings > Model "
+                               "provider (Audio input) or as audio_input_per_1k_usd in the pricing file; HOOD "
+                               "refuses calls it can't price. The browser voice works meanwhile.")
         body = {"contents": [{"parts": [
             {"inline_data": {"mime_type": mime, "data": base64.b64encode(audio).decode("ascii")}},
             {"text": "Transcribe this audio verbatim in its original language. "

@@ -115,7 +115,7 @@ jobs:
           docker exec hood-ci sh -c 'test ! -w /app && test -w /data'
           docker exec hood-ci sh -c 'test ! -e /app/scripts/wsl/hood-pkg && ! command -v sudo'
           docker exec hood-ci sh -c 'test -f /data/auth.db && test -f /data/hood_data.db && test -f /data/owner_setup_code.txt'
-          docker exec hood-ci sh -c 'test -z "$(find /app /home/hood -name "*.db" -o -name "*.sqlite3" -o -name vault.enc | head -1)"'
+          docker exec hood-ci sh -c 'test -z "$(find /app /home/hood \( -name "*.db" -o -name "*.sqlite3" -o -name vault.enc -o -name ".*_key" -o -name "*.log" \) | head -1)" && test ! -e /app/artifacts'
           docker logs hood-ci 2>&1 | grep -q "One-time setup code"
           code=$(docker exec hood-ci curl -s -o /dev/null -w '%{http_code}' -X POST -H "Host: 127.0.0.1:8990" \
             -H "Content-Type: application/json" -H "X-Forwarded-For: 203.0.113.9" \

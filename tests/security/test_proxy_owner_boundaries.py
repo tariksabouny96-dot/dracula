@@ -197,7 +197,7 @@ def test_forwarded_requests_are_never_local_and_untrusted_proxies_are_not_believ
     assert direct.direct_local and not direct.forwarded
     assert classify("::ffff:127.0.0.1", {}).direct_local
     spoof = classify("127.0.0.1", {"X-Forwarded-For": "198.51.100.7"})
-    assert not spoof.direct_local and spoof.ip == "127.0.0.1"         # not trusted: address not believed
+    assert not spoof.direct_local and spoof.ip == "untrusted-proxy"   # not believed, and never the local bucket
     for header in ("Forwarded", "X-Real-IP", "Via", "X-Forwarded-Host"):
         assert not classify("127.0.0.1", {header: "x"}).direct_local
     monkeypatch.setenv("HOOD_TRUSTED_PROXY", "1")

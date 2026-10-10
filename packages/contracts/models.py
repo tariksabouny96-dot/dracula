@@ -258,6 +258,8 @@ class ModelResponse(BaseModel):
     # provider's version string. Lets the router bill the model actually used.
     requested_model: Optional[str] = None
     audio_prompt_tokens: int = 0
+    # Earlier attempts in this call that may have been billed without an answer (timeouts).
+    uncertain_attempts: int = 0
 
 
 class TaskNode(BaseModel):

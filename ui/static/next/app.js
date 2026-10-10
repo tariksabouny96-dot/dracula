@@ -1656,12 +1656,14 @@
         Object.entries(pr.models).map(([m, p]) => {
           const i = h('input', { type: 'number', min: '0', max: '10', step: '0.00001', value: p ? p.input_per_1k_usd : '', 'aria-label': m + ' input price' });
           const o = h('input', { type: 'number', min: '0', max: '10', step: '0.00001', value: p ? p.output_per_1k_usd : '', 'aria-label': m + ' output price' });
-          inputs[m] = [i, o];
-          return h('div', {}, h('b', {}, m), h('label', {}, 'Input, USD per 1,000 tokens', i), h('label', {}, 'Output, USD per 1,000 tokens', o));
+          const a = h('input', { type: 'number', min: '0', max: '10', step: '0.00001', value: p && p.audio_input_per_1k_usd !== null && p.audio_input_per_1k_usd !== undefined ? p.audio_input_per_1k_usd : '', 'aria-label': m + ' audio input price' });
+          inputs[m] = [i, o, a];
+          return h('div', {}, h('b', {}, m), h('label', {}, 'Input, USD per 1,000 tokens', i), h('label', {}, 'Output, USD per 1,000 tokens', o),
+            h('label', {}, 'Audio input (voice transcription), USD per 1,000 tokens — needed for paid voice; blank if unused', a));
         }),
         h('div', { class: 'form-actions' }, h('button', { class: 'btn small primary', type: 'button', onclick: async () => {
           const prices = {};
-          for (const [m, [i, o]] of Object.entries(inputs)) prices[m] = { input_per_1k_usd: i.value, output_per_1k_usd: o.value };
+          for (const [m, [i, o, a]] of Object.entries(inputs)) prices[m] = { input_per_1k_usd: i.value, output_per_1k_usd: o.value, audio_input_per_1k_usd: a.value };
           const res = await api.post('/api/settings/model/pricing', { mode: 'custom', prices, confirm: true });
           if (!res.ok) toast('Prices not saved: ' + res.error);
           await done(res, 'Prices saved.');

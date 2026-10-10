@@ -104,6 +104,19 @@ def test_old_stores_are_copied_once_and_never_overwrite(tmp_path, monkeypatch):
         assert (data / ".vault_key").stat().st_mode & 0o077 == 0
     assert (old / "artifacts" / "hood_data.db").exists()      # old copy left for the owner
     assert paths.migrate_legacy_data(roots=[old], home=home) == []      # once
+    # Links are never followed (a link must not turn someone else's file into HOOD's data).
+    secret = tmp_path / "elsewhere.txt"
+    secret.write_text("not HOOD's")
+    (old / "artifacts" / "sentinel_patches").mkdir()
+    (old / "artifacts" / "sentinel_patches" / "p.diff").write_text("ok")
+    try:
+        (old / "artifacts" / "sentinel_patches" / "link").symlink_to(secret)
+        (old / "artifacts" / "economic_engine.db").symlink_to(secret)
+    except OSError:
+        pytest.skip("BLOCKED_TARGET: symlinks need privileges on this host")
+    paths.migrate_legacy_data(roots=[old], home=home)
+    assert (data / "sentinel_patches" / "p.diff").exists()
+    assert not (data / "sentinel_patches" / "link").exists() and not (data / "economic_engine.db").exists()
     monkeypatch.setenv("HOOD_SKIP_LEGACY_MIGRATION", "1")
     assert paths.migrate_legacy_data() == []                  # the test suite never reads real data
 

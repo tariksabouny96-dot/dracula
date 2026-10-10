@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Set, Tuple
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel, Field
+from packages.security.client import rate_bucket
 from packages.config.paths import store_path
 
 
@@ -65,39 +66,52 @@ def validate_password_strength(password: str) -> Tuple[bool, str]:
 class RateLimiter:
     """
     In-memory sliding-window rate limiter for sensitive authentication actions.
-    Default: max 5 failed attempts within 15 minutes (900s).
+    Default: max 5 attempts within 15 minutes (900s).
+
+    ``is_rate_limited`` checks AND counts the attempt in one locked step (security batch 1): before,
+    the check and the count were separate, so parallel requests all passed the check before any
+    failure was recorded. A successful attempt calls ``reset``; ``record_failure`` is kept for
+    callers and is a no-op for a key that was just counted.
     """
 
     def __init__(self, max_attempts: int = 5, window_seconds: int = 900):
         self.max_attempts = max_attempts
         self.window_seconds = window_seconds
         self.attempts: Dict[str, List[float]] = {}
+        self._counted: Dict[str, float] = {}
         self._lock = threading.Lock()
 
+    def _prune(self, now: float) -> None:
+        for key in [k for k, v in self.attempts.items() if not v or now - v[-1] >= self.window_seconds]:
+            self.attempts.pop(key, None)
+            self._counted.pop(key, None)
+
     def is_rate_limited(self, key: str) -> Tuple[bool, int]:
-        """
-        Returns (is_limited, seconds_remaining).
-        """
+        """Returns (is_limited, seconds_remaining); when not limited the attempt is already counted."""
         now = time.time()
         with self._lock:
-            record = self.attempts.get(key, [])
-            valid_attempts = [t for t in record if now - t < self.window_seconds]
-            self.attempts[key] = valid_attempts
-
-        if len(valid_attempts) >= self.max_attempts:
-            oldest_relevant = valid_attempts[0]
-            remaining = int(self.window_seconds - (now - oldest_relevant))
-            return True, max(1, remaining)
-        return False, 0
+            if len(self.attempts) > 10_000:
+                self._prune(now)
+            valid = [t for t in self.attempts.get(key, []) if now - t < self.window_seconds]
+            if len(valid) >= self.max_attempts:
+                self.attempts[key] = valid
+                return True, max(1, int(self.window_seconds - (now - valid[0])))
+            valid.append(now)
+            self.attempts[key] = valid
+            self._counted[key] = now
+            return False, 0
 
     def record_failure(self, key: str):
         now = time.time()
         with self._lock:
+            if self._counted.pop(key, None) is not None:
+                return                      # already counted by is_rate_limited
             self.attempts.setdefault(key, []).append(now)
 
     def reset(self, key: str):
         with self._lock:
             self.attempts.pop(key, None)
+            self._counted.pop(key, None)
 
 
 class UserRole(str, Enum):
@@ -209,6 +223,9 @@ class AuthenticationService:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.session_ttl = timedelta(hours=session_ttl_hours)
         self.rate_limiter = RateLimiter(max_attempts=5, window_seconds=900)
+        # Remote (proxied) attempts per username, across all addresses: caps distributed guessing
+        # without ever locking the owner out at the machine itself.
+        self.remote_user_limiter = RateLimiter(max_attempts=30, window_seconds=900)
         self._init_sqlite()
 
     def _get_connection(self) -> sqlite3.Connection:
@@ -328,7 +345,7 @@ class AuthenticationService:
 
     def check_setup_code(self, supplied: Any, ip_address: Optional[str] = None) -> bool:
         """Rate-limited, constant-time check of the first-run code."""
-        rate_key = f"setup:{ip_address or 'local'}"
+        rate_key = f"setup:{rate_bucket(ip_address or 'local')}"
         is_limited, remaining = self.rate_limiter.is_rate_limited(rate_key)
         if is_limited:
             raise ValueError(f"Too many wrong setup codes. Please wait {remaining} seconds.")
@@ -432,14 +449,20 @@ class AuthenticationService:
         username: str,
         password: str,
         ip_address: Optional[str] = None,
-        user_agent: Optional[str] = None
+        user_agent: Optional[str] = None,
+        remote: bool = False
     ) -> Optional[UserSession]:
-        """Authenticates user credentials and issues a secure session token."""
+        """Authenticates user credentials and issues a secure session token.
+
+        ``remote``: the request came through a proxy; such attempts also count against a per-username
+        budget shared by every address (distributed guessing), which never applies at the machine."""
         uname = username.strip().lower()
         ip = ip_address or "127.0.0.1"
-        rate_key = f"login:{ip}:{uname}"
+        rate_key = f"login:{rate_bucket(ip)}:{uname}"
 
         is_limited, remaining = self.rate_limiter.is_rate_limited(rate_key)
+        if not is_limited and remote:
+            is_limited, remaining = self.remote_user_limiter.is_rate_limited(f"login-remote:{uname}")
         if is_limited:
             self._log_access(None, uname, "RATE_LIMIT_BLOCKED", success=False, details=f"Login rate limited for {remaining}s", ip_address=ip)
             raise ValueError(f"Too many failed login attempts. Please wait {remaining} seconds before trying again.")
@@ -682,7 +705,7 @@ class AuthenticationService:
     ) -> bool:
         """Owner recovery: allows resetting Root Owner password using protected one-time recovery key."""
         ip = ip_address or "127.0.0.1"
-        rate_key = f"recovery:{ip}"
+        rate_key = f"recovery:{rate_bucket(ip)}"
 
         is_limited, remaining = self.rate_limiter.is_rate_limited(rate_key)
         if is_limited:
@@ -726,7 +749,7 @@ class AuthenticationService:
     ) -> bool:
         """Allows authenticated user to change password after verifying current credentials."""
         ip = ip_address or "127.0.0.1"
-        rate_key = f"change_pwd:{ip}:{user_id}"
+        rate_key = f"change_pwd:{rate_bucket(ip)}:{user_id}"
 
         is_limited, remaining = self.rate_limiter.is_rate_limited(rate_key)
         if is_limited:
@@ -768,7 +791,7 @@ class AuthenticationService:
         Invalidates previous key, stores only secure scrypt hash, returns plaintext key once.
         """
         ip = ip_address or "127.0.0.1"
-        rate_key = f"rotate_key:{ip}:{user_id}"
+        rate_key = f"rotate_key:{rate_bucket(ip)}:{user_id}"
 
         is_limited, remaining = self.rate_limiter.is_rate_limited(rate_key)
         if is_limited:
