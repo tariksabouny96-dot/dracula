@@ -1,0 +1,111 @@
+name: platform-validation
+
+# Real-hardware evidence before buying a server (security batch 1): does HOOD's stack run on ARM64
+# (Hetzner CAX-class) and under gVisor? GitHub's arm64 runners are free for public repositories.
+# Not a merge gate: results are written to the run summary for the owner's decision.
+on:
+  workflow_dispatch:
+  push:
+    branches: ["claude/security-remediation-*", "claude/phase4-*"]
+
+permissions:
+  contents: read
+
+jobs:
+  suite-arm64:
+    name: full suite on arm64 (Python, Chromium, Node, PHP)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Architecture
+        run: |
+          echo "## arm64 runner" >> "$GITHUB_STEP_SUMMARY"
+          echo "- uname: $(uname -m), cpu: $(grep -m1 -i 'model name\|CPU part' /proc/cpuinfo || true)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- python $(python -c 'import platform;print(platform.python_version(), platform.machine())'), node $(node -p 'process.version+" "+process.arch')" >> "$GITHUB_STEP_SUMMARY"
+      - name: Install pinned dependencies (every wheel must exist for arm64)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt 2>&1 | tee pip.log
+          python -m playwright install --with-deps chromium
+          echo "- pip built from source: $(grep -c 'Building wheel for' pip.log || true) package(s)" >> "$GITHUB_STEP_SUMMARY"
+      - name: PHP for WordPress missions (Ubuntu's arm64 packages)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends php-cli php-sqlite3 php-xml php-mbstring php-curl php-zip php-gd php-intl
+          php -r 'echo PHP_VERSION, " ", php_uname("m"), PHP_EOL;'
+          for m in pdo_sqlite sqlite3 mbstring xml dom; do php -m | grep -qi "^$m$" || { echo "missing $m"; exit 1; }; done
+          echo "- PHP $(php -r 'echo PHP_VERSION;') with pdo_sqlite, mbstring, xml, dom" >> "$GITHUB_STEP_SUMMARY"
+      - name: Node under HOOD's 2 GiB address-space limit
+        run: |
+          prlimit --as=2147483648 -- node -e "console.log('node ok', process.arch)"
+          if prlimit --as=2147483648 -- node -e "new WebAssembly.Memory({initial:1})" 2>/dev/null; then r=ok; else r=FAILS; fi
+          echo "- WebAssembly under RLIMIT_AS 2 GiB: $r" >> "$GITHUB_STEP_SUMMARY"
+      - name: Full test suite (real headless Chromium included)
+        run: |
+          python -m pytest -q -rs -p no:cacheprovider --junitxml=junit-arm64.xml | tee pytest.log
+          echo "- pytest: $(tail -1 pytest.log)" >> "$GITHUB_STEP_SUMMARY"
+
+  gvisor:
+    name: HOOD container under gVisor (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04-arm, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gVisor (official apt repository) and register the runsc runtime
+        run: |
+          curl -fsSL https://gvisor.dev/archive.key | sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" | sudo tee /etc/apt/sources.list.d/gvisor.list
+          sudo apt-get update -qq && sudo apt-get install -y -qq runsc
+          sudo runsc install
+          sudo systemctl restart docker
+          echo "## gVisor on $(uname -m)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- runsc: $(runsc --version | head -1); KVM device: $(test -e /dev/kvm && echo present || echo absent) (systrap platform)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Runtimes inside gVisor (Python, Node, PHP)
+        run: |
+          docker run --rm --runtime=runsc --network=none python:3.13-slim-bookworm python -c "import platform;print('python', platform.python_version(), platform.machine())" | tee -a out.txt
+          docker run --rm --runtime=runsc --network=none node:22-bookworm-slim node -e "console.log('node', process.version, process.arch)" | tee -a out.txt
+          docker run --rm --runtime=runsc --network=none php:8.3-cli php -r 'echo "php ", PHP_VERSION, " ", php_uname("m"), PHP_EOL;' | tee -a out.txt
+          sed 's/^/- /' out.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Build HOOD and run it under gVisor
+        run: |
+          docker build -q -t hood:val .
+          docker run -d --name hood-val --runtime=runsc hood:val
+          ok=""
+          for i in $(seq 1 60); do
+            s=$(docker inspect -f '{{.State.Health.Status}}' hood-val 2>/dev/null || echo starting)
+            if [ "$s" = "healthy" ]; then ok=1; break; fi
+            if [ "$s" = "unhealthy" ]; then break; fi
+            sleep 3
+          done
+          docker logs hood-val 2>&1 | tail -15
+          test -n "$ok"
+          echo "- HOOD container healthy under runsc" >> "$GITHUB_STEP_SUMMARY"
+      - name: HOOD's own agent sandbox inside gVisor (unshare -rmn) and Chromium
+        run: |
+          if docker exec hood-val sh -c 'unshare -rmn sh -c "mount -t tmpfs t /mnt && echo ok"'; then u=works; else u=FAILS; fi
+          echo "- unshare -rmn (HOOD's sandbox) inside gVisor: $u" >> "$GITHUB_STEP_SUMMARY"
+          if unshare -rn true 2>/dev/null; then h=works; else h="blocked (host AppArmor)"; fi
+          echo "- unshare -rn on the host runner itself: $h" >> "$GITHUB_STEP_SUMMARY"
+          docker exec hood-val python -c "
+          from playwright.sync_api import sync_playwright
+          with sync_playwright() as p:
+              b = p.chromium.launch(headless=True)
+              pg = b.new_page(); pg.set_content('<h1>HOOD</h1>'); print('chromium ok', pg.inner_text('h1')); b.close()
+          " && c=works || c=FAILS
+          echo "- headless Chromium inside gVisor: $c" >> "$GITHUB_STEP_SUMMARY"
+          docker exec -e HOOD_DATA_DIR=/tmp/hood-test hood-val python -m pytest -q -p no:cacheprovider \
+            tests/agents/test_agent_engine.py -k "sandbox or network" 2>&1 | tail -3 | tee sandbox.log || true
+          echo "- HOOD sandbox tests inside gVisor: $(tail -1 sandbox.log)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- memory: $(docker stats --no-stream --format '{{.MemUsage}}' hood-val)" >> "$GITHUB_STEP_SUMMARY"
+          test "$c" = works
