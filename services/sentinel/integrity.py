@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timezone
 
 from services.sentinel.contracts import SentinelFinding, VulnerabilityCategory, FindingSeverity, FindingStatus
+from packages.config.paths import store_path
 
 
 class IntegrityMonitor:
@@ -27,7 +28,7 @@ class IntegrityMonitor:
     ]
 
     def __init__(self, baseline_file: Optional[Path] = None):
-        self.baseline_file = baseline_file or Path("artifacts/sentinel_integrity_baseline.json")
+        self.baseline_file = store_path(baseline_file, "artifacts/sentinel_integrity_baseline.json")
         self.baseline_hashes: Dict[str, str] = {}
         self._load_or_create_baseline()
 

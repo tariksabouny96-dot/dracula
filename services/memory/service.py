@@ -18,6 +18,7 @@ from packages.contracts import (
     MemoryType,
     LearningStatus
 )
+from packages.config.paths import store_path
 
 
 class GovernanceViolationError(Exception):
@@ -38,7 +39,7 @@ def _token_similarity(query_tokens: set[str], doc_tokens: set[str]) -> float:
 
 class MemoryService:
     def __init__(self, db_path: Optional[Path] = None):
-        self.db_path = db_path or Path("artifacts/hood_data.db")
+        self.db_path = store_path(db_path, "artifacts/hood_data.db")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_sqlite()
 

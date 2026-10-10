@@ -12,11 +12,12 @@ from datetime import datetime, timezone
 
 from packages.contracts import AuditEvent
 from packages.logging.redactor import sanitize_object, redact_string
+from packages.config.paths import store_path
 
 
 class AuditService:
     def __init__(self, db_path: Optional[Path] = None):
-        self.db_path = db_path or Path("artifacts/hood_data.db")
+        self.db_path = store_path(db_path, "artifacts/hood_data.db")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_sqlite()
 

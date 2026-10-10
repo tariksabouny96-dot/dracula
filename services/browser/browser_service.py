@@ -24,6 +24,7 @@ from packages.logging.redactor import redact_string
 from services.policy.governance import RiskEvaluator
 from services.policy.approval_service import ApprovalService
 from services.audit.service import AuditService
+from packages.config.paths import store_dir
 
 try:
     from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page, TimeoutError as PlaywrightTimeoutError
@@ -69,8 +70,8 @@ class BrowserService:
     ):
         self.config = config or SystemConfig()
         self.workspace_root = (workspace_root or Path.cwd()).resolve()
-        self.downloads_dir = (downloads_dir or (self.workspace_root / "artifacts" / "downloads")).resolve()
-        self.evidence_dir = (evidence_dir or (self.workspace_root / "artifacts" / "browser_evidence")).resolve()
+        self.downloads_dir = (downloads_dir or store_dir(None, "artifacts/downloads")).resolve()
+        self.evidence_dir = (evidence_dir or store_dir(None, "artifacts/browser_evidence")).resolve()
 
         self.downloads_dir.mkdir(parents=True, exist_ok=True)
         self.evidence_dir.mkdir(parents=True, exist_ok=True)

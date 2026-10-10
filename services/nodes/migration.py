@@ -21,6 +21,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 from services.memory.backends import SQLiteBackend, MemoryMigrationTool
+from packages.config.paths import store_dir
 
 
 class NodeMigrationBundle:
@@ -64,7 +65,7 @@ class NodeMigrationBundle:
         3. config_manifest.json (public configurations, omitting raw API keys/secrets)
         4. manifest.sha256 (bundle integrity verification)
         """
-        export_dir = self.workspace_root / "artifacts" / "migration_temp"
+        export_dir = store_dir(None, "artifacts/migration_temp")
         export_dir.mkdir(parents=True, exist_ok=True)
 
         # 1. Export memory

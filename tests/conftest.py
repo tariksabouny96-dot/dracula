@@ -52,3 +52,5 @@ def _isolated_hood_data_dir(tmp_path_factory, monkeypatch):
     """No test may write into the real ~/.hood: every test gets its own data dir."""
     if "HOOD_DATA_DIR" not in os.environ or os.environ.get("HOOD_TEST_KEEP_DATA_DIR") != "1":
         monkeypatch.setenv("HOOD_DATA_DIR", str(tmp_path_factory.mktemp("hood-data")))
+    # ...and no test copies the machine's real pre-batch-1 stores (artifacts/) into its data dir.
+    monkeypatch.setenv("HOOD_SKIP_LEGACY_MIGRATION", "1")

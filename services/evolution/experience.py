@@ -27,13 +27,14 @@ from services.evolution.contracts import (
     ModelLevel
 )
 from packages.logging.redactor import redact_string
+from packages.config.paths import store_path
 
 
 class ExperienceCollector:
     """Collects and sanitizes task executions into high-confidence ExperienceRecords."""
 
     def __init__(self, storage_dir: Optional[Path] = None):
-        self.storage_dir = storage_dir or Path("artifacts/evolution/experiences")
+        self.storage_dir = store_path(storage_dir, "artifacts/evolution/experiences")
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.records: List[ExperienceRecord] = []
 

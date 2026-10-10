@@ -16,3 +16,7 @@ artifacts/*.json
 .env
 .env.*
 !env.example
+# The passwordless package helper and its sudoers installer never ship in the image
+# (security batch 1); Windows/WSL helper scripts are irrelevant on the server.
+scripts/wsl/
+scripts/windows/

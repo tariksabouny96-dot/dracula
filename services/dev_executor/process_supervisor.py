@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
+from packages.config.paths import store_dir
 
 
 class ManagedProcessInfo(BaseModel):
@@ -38,7 +39,7 @@ class ProcessSupervisor:
     """Safely launches, monitors, checks health, and terminates local development services."""
 
     def __init__(self, log_dir: Optional[Path] = None):
-        self.log_dir = (log_dir or Path("artifacts/dev_logs")).resolve()
+        self.log_dir = (log_dir or store_dir(None, "artifacts/dev_logs")).resolve()
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.processes: Dict[str, subprocess.Popen] = {}
         self.process_info: Dict[str, ManagedProcessInfo] = {}

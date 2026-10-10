@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 
 from services.impossible_list.service import ImpossibleListService
+from packages.config.paths import store_path
 
 
 class TechCategory(str, Enum):
@@ -72,7 +73,7 @@ class TechnologyIntelligenceEngine:
         db_path: Optional[Path] = None,
         impossible_list: Optional[ImpossibleListService] = None
     ):
-        self.db_path = db_path or Path("artifacts/tech_intelligence.db")
+        self.db_path = store_path(db_path, "artifacts/tech_intelligence.db")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.impossible_list = impossible_list or ImpossibleListService()
         self._init_sqlite()

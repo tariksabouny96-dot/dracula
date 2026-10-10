@@ -16,6 +16,7 @@ from services.dev_executor.process_supervisor import ProcessSupervisor, ManagedP
 from services.dev_executor.test_runner import TestRunnerService, TestRunReport
 from services.dev_executor.code_modifier import CodeModifier, CodeEditResult
 from services.browser.browser_service import BrowserService
+from packages.config.paths import store_dir
 
 
 class DevelopmentExecutor:
@@ -30,7 +31,7 @@ class DevelopmentExecutor:
         self.workspace_root = (workspace_root or Path.cwd()).resolve()
         self.config = config or SystemConfig()
         self.browser_service = browser_service
-        self.supervisor = ProcessSupervisor(log_dir=self.workspace_root / "artifacts" / "dev_logs")
+        self.supervisor = ProcessSupervisor(log_dir=store_dir(None, "artifacts/dev_logs"))
         self.test_runner = TestRunnerService(self.workspace_root)
         self.modifier = CodeModifier(self.workspace_root)
 

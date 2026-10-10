@@ -18,13 +18,14 @@ from services.nodes.contracts import (
     RemoteApprovalEvent,
     CryptographicNodeIdentity
 )
+from packages.config.paths import store_path
 
 
 class NodeManager:
     """Coordinates node enrollment, verification, revocation, and capability-based task routing."""
 
     def __init__(self, registry_file: Optional[Path] = None):
-        self.registry_file = registry_file or Path("artifacts/nodes/node_registry.json")
+        self.registry_file = store_path(registry_file, "artifacts/nodes/node_registry.json")
         self.registry_file.parent.mkdir(parents=True, exist_ok=True)
         self.nodes: Dict[str, NodeDescriptor] = {}
         self.nonces_seen: set = set()

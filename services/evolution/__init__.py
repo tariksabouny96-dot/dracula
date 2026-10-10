@@ -27,6 +27,7 @@ from services.evolution.dataset import DatasetBuilder
 from services.evolution.hardware import HardwareResourceManager, GPUBreakEvenCalculator
 from services.evolution.routing import CostAwareEvolutionRouter
 from services.evolution.acceleration import Level3AccelerationEngine
+from packages.config.paths import store_path, store_dir
 
 
 class EvolutionEngine:
@@ -35,17 +36,17 @@ class EvolutionEngine:
     def __init__(self, workspace_root: Optional[Path] = None):
         self.workspace_root = workspace_root or Path.cwd()
         self.registry = ModelLevelRegistry()
-        self.experience_collector = ExperienceCollector(self.workspace_root / "artifacts" / "evolution" / "experiences")
+        self.experience_collector = ExperienceCollector(store_dir(None, "artifacts/evolution/experiences"))
         self.arena = ModelArena()
         self.ranker = CapabilityRanker()
         self.promotion_controller = PromotionController(self.registry, self.ranker)
         self.drift_detector = DriftDetector(self.registry, self.ranker)
         self.calibration = TeacherCalibration()
         self.active_learning = ActiveLearningSelector()
-        self.dataset_builder = DatasetBuilder(self.experience_collector, self.workspace_root / "artifacts" / "evolution" / "datasets")
+        self.dataset_builder = DatasetBuilder(self.experience_collector, store_dir(None, "artifacts/evolution/datasets"))
         self.hardware_mgr = HardwareResourceManager()
         self.router = CostAwareEvolutionRouter(self.registry, self.hardware_mgr)
-        self.acceleration_engine = Level3AccelerationEngine(self.workspace_root / "artifacts" / "acceleration_engine.db")
+        self.acceleration_engine = Level3AccelerationEngine(store_path(None, "artifacts/acceleration_engine.db"))
 
         self._init_default_models_and_hardware()
 

@@ -24,6 +24,7 @@ from services.evolution.contracts import (
     DatasetPrivacyScope
 )
 from services.evolution.experience import ExperienceCollector
+from packages.config.paths import store_path
 
 
 class DatasetBuilder:
@@ -31,7 +32,7 @@ class DatasetBuilder:
 
     def __init__(self, experience_collector: ExperienceCollector, output_dir: Optional[Path] = None):
         self.collector = experience_collector
-        self.output_dir = output_dir or Path("artifacts/evolution/datasets")
+        self.output_dir = store_path(output_dir, "artifacts/evolution/datasets")
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def build_dataset(

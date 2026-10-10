@@ -8,6 +8,8 @@ import os
 import json
 import base64
 from pathlib import Path
+
+from packages.config.paths import store_path
 from typing import Dict, List, Optional, Union
 from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
@@ -20,11 +22,10 @@ class SecretVault:
     """Secure encrypted vault for credential storage using reference-based retrieval."""
 
     def __init__(self, vault_path: Optional[Path] = None, master_key: Optional[bytes] = None):
-        path = Path(vault_path) if vault_path else Path("artifacts/vault.enc")
-        # A relative vault path is anchored at the HOOD folder, not the current
-        # directory, so the same vault (and saved API key) is used wherever HOOD
-        # is started from.
-        self.vault_path = path if path.is_absolute() else Path(__file__).resolve().parents[2] / path
+        # A relative vault path lives in HOOD's data folder (HOOD_DATA_DIR), with the rest of the
+        # owner's data: on the container volume and in backups, never inside the code folder
+        # (an old vault there is copied over at start-up, see packages/config/paths.py).
+        self.vault_path = store_path(vault_path, "artifacts/vault.enc")
         self._key = master_key or self._get_or_create_master_key()
         self._fernet = Fernet(self._key)
         self._secrets: Dict[str, str] = {}

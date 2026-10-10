@@ -15,6 +15,7 @@ from packages.logging.redactor import redact_string
 from services.desktop.contracts import ScreenObservation, WindowInfo, UIElementInfo
 from services.desktop.windows_backend import DesktopUnavailable, WindowsNativeBackend
 from services.desktop.accessibility import AccessibilityEngine
+from packages.config.paths import store_dir
 
 
 class ScreenObserver:
@@ -28,7 +29,7 @@ class ScreenObserver:
     ):
         self.backend = backend or WindowsNativeBackend()
         self.accessibility = accessibility or AccessibilityEngine(self.backend)
-        self.artifact_dir = (artifact_dir or (Path.cwd() / "artifacts" / "desktop_evidence")).resolve()
+        self.artifact_dir = (artifact_dir or store_dir(None, "artifacts/desktop_evidence")).resolve()
         self.artifact_dir.mkdir(parents=True, exist_ok=True)
 
     def observe(self, capture_image: bool = True) -> ScreenObservation:

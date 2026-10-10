@@ -13,6 +13,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 
 from services.sentinel.contracts import SelfHealingAction, FindingSeverity
+from packages.config.paths import store_path, store_dir
 
 
 class SelfHealingEngine:
@@ -32,7 +33,7 @@ class SelfHealingEngine:
     }
 
     def __init__(self, actions_log: Optional[Path] = None):
-        self.actions_log = actions_log or Path("artifacts/sentinel_self_healing.log")
+        self.actions_log = store_path(actions_log, "artifacts/sentinel_self_healing.log")
         self.actions_history: List[SelfHealingAction] = []
 
     def repair_disposable_cache(self, cache_dir: Path) -> SelfHealingAction:
@@ -46,7 +47,7 @@ class SelfHealingEngine:
 
         try:
             cache_dir = cache_dir.resolve()
-            allowed_cache = (Path.cwd() / "artifacts" / "disposable_cache").resolve()
+            allowed_cache = store_dir(None, "artifacts/disposable_cache").resolve()
             if cache_dir != allowed_cache or cache_dir.is_symlink():
                 raise PermissionError("Only HOOD's dedicated disposable cache can be cleared")
             if cache_dir.exists():

@@ -68,8 +68,10 @@ normal PowerShell window, in the HOOD folder:
 powershell -ExecutionPolicy Bypass -File scripts\windows\hood-wsl.ps1
 ```
 It copies HOOD into Ubuntu (`~/hood`), installs its Python packages, starts it and opens Chrome at
-`http://127.0.0.1:8999`. There, HOOD uses Linux's own sandbox, and installs system packages through
-WSL's root access (no password, no setup command). This is a separate HOOD: create the owner account
+`http://127.0.0.1:8999`. There, HOOD uses Linux's own sandbox. Installing system packages (PHP for
+WordPress) on that Linux is **off by default** (security batch 1: HOOD's passwordless package helper stays
+disabled); install them yourself with `sudo apt install`, or set `HOOD_ENABLE_PKG_HELPER=1` in `.env` if you
+want HOOD to do it through WSL's root access. This is a separate HOOD: create the owner account
 and save your model key again in Settings. Troubleshooting for this mode:
 
 | What you see | Fix |
@@ -79,6 +81,5 @@ and save your model key again in Settings. Troubleshooting for this mode:
 | Chrome cannot open `http://127.0.0.1:8999` | create `C:\Users\<you>\.wslconfig` with `[wsl2]` and `networkingMode=mirrored`, run `wsl --shutdown`, start again |
 | Port already used | the Windows HOOD may still be running: stop it, or pass `-Port 8998` |
 
-On a plain Linux server (not WSL, HOOD not running as root) HOOD has no way to install system
-packages by itself; an administrator can allow its package helper once with
-`sudo bash scripts/wsl/enable_installs.sh` (it accepts only the packages on HOOD's list).
+On a server HOOD never installs system packages (the helper isn't in the container image and host
+installs are off). Install what you need in the image instead.

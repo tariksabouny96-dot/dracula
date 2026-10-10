@@ -167,9 +167,17 @@ def test_windows_asks_for_wsl2_instead_of_installing(tmp_path, monkeypatch):
 
 
 def test_system_packages_go_through_the_allowlisted_helper(tmp_path, monkeypatch):
-    """HOOD reaches root by itself (root, or WSL's own root access); the owner never types a command."""
+    """Host package installs are OFF unless the owner sets HOOD_ENABLE_PKG_HELPER=1 (security batch 1);
+    when on, HOOD reaches root by itself (root, or WSL's own root access)."""
     monkeypatch.setattr(Toolbox, "on_windows", lambda self: False)
     monkeypatch.setattr(Toolbox, "platform_problem", lambda self: None)
+    monkeypatch.delenv("HOOD_ENABLE_PKG_HELPER", raising=False)
+    monkeypatch.setattr(svc.os, "geteuid", lambda: 0, raising=False)
+    off = Toolbox(tmp_path / "off")
+    assert off._root_route() is None and "switched off" in off.helper_problem()
+    with pytest.raises(svc.ToolUnavailable):
+        off._apt("install", ["sqlite3"])
+    monkeypatch.setenv("HOOD_ENABLE_PKG_HELPER", "1")
     installed = set()
     exe = {"wsl.exe": "/mnt/c/Windows/System32/wsl.exe"}
     monkeypatch.setattr(svc.shutil, "which",
@@ -208,7 +216,7 @@ def test_system_packages_go_through_the_allowlisted_helper(tmp_path, monkeypatch
     monkeypatch.setenv("HOOD_PKG_HELPER", str(helper))
     assert tb._root_route() == ["sudo", "-n", str(helper)]
     monkeypatch.setenv("HOOD_PKG_HELPER", str(tmp_path / "missing"))
-    assert "plain Linux server" in Toolbox(tmp_path / "x", runner=runner).helper_problem()
+    assert "no way to reach root" in Toolbox(tmp_path / "x", runner=runner).helper_problem()
 
 
 def test_hood_only_removes_what_it_installed(tmp_path, linux):

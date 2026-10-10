@@ -42,6 +42,7 @@ from services.evolution.contracts import CapabilityDomain
 from services.dev_executor.service import DevelopmentExecutor
 from services.policy.approval_service import ApprovalService
 from services.evolution.acceleration import Level3AccelerationEngine
+from packages.config.paths import store_path
 
 
 class SelfDevRiskCategory(str, Enum):
@@ -80,8 +81,8 @@ class SelfEvolutionEngine:
         self.workspace_root = (workspace_root or Path.cwd()).resolve()
         self.dev_executor = dev_executor or DevelopmentExecutor(self.workspace_root)
         self.approval_service = approval_service or ApprovalService()
-        self.acceleration_engine = acceleration_engine or Level3AccelerationEngine(self.workspace_root / "artifacts" / "acceleration_engine.db")
-        self.db_path = db_path or (self.workspace_root / "artifacts" / "self_evolution.db")
+        self.acceleration_engine = acceleration_engine or Level3AccelerationEngine(store_path(None, "artifacts/acceleration_engine.db"))
+        self.db_path = store_path(db_path, "artifacts/self_evolution.db")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_sqlite()
 

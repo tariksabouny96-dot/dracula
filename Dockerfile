@@ -33,10 +33,17 @@ RUN python -m pip install --upgrade pip \
 # Application code.
 COPY . .
 
-# Run as an unprivileged account; it owns only the data dir.
+# Run as an unprivileged account that owns ONLY the data volume: the code in /app stays
+# root-owned and read-only for HOOD (it can't rewrite itself in production), and every
+# persistent store lives under HOOD_DATA_DIR=/data (security batch 1). No sudo exists in
+# this image and the package helper is excluded (.dockerignore), so host installs are off.
 RUN useradd --create-home --uid 10001 hood \
     && mkdir -p /data \
-    && chown -R hood:hood /data /app
+    && chown -R hood:hood /data \
+    && chmod -R a+rX,go-w /app \
+    && test ! -e /app/scripts/wsl/hood-pkg \
+    && ! command -v sudo
+ENV HOOD_ENABLE_PKG_HELPER=0
 USER hood
 
 EXPOSE 8990

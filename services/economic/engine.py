@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
+from packages.config.paths import store_path
 
 
 class FinancialMode(str, Enum):
@@ -100,7 +101,7 @@ class EconomicEngine:
     """Manages revenue discovery, opportunity vetting, business workflows, and rent-vs-own decisions."""
 
     def __init__(self, db_path: Optional[Path] = None):
-        self.db_path = db_path or Path("artifacts/economic_engine.db")
+        self.db_path = store_path(db_path, "artifacts/economic_engine.db")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.current_financial_mode = FinancialMode.NORMAL
         self._init_sqlite()

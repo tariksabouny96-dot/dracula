@@ -42,10 +42,14 @@ MAX_ARCHIVE = 120 * 1024 * 1024
 MAX_FILE = 30 * 1024 * 1024
 # Only on a plain Linux server (not WSL, not root) is there no way for HOOD to install system packages
 # by itself; HOOD on Windows uses its own Linux sandbox and HOOD inside WSL uses WSL's own root access.
-ENABLE_HINT = ("HOOD is running on a plain Linux server where it has no administrator rights, so it can't "
-               "install system packages by itself here. Run HOOD on Windows (it manages its own Linux sandbox) "
-               "or inside WSL2; on this server an administrator can run once: "
-               "sudo bash scripts/wsl/enable_installs.sh")
+ENABLE_HINT = ("Host installs are switched on (HOOD_ENABLE_PKG_HELPER=1) but HOOD has no way to reach root here "
+               "(not root, not WSL, no enabled helper). Install the package yourself, or switch host installs off.")
+
+
+HOST_INSTALLS_OFF = ("Installing system packages on this machine is switched off (HOOD's passwordless package "
+                     "helper is disabled by default and never part of a server deployment). Run HOOD on Windows, "
+                     "where it installs tools inside its own Linux sandbox, or install the package yourself; "
+                     "the owner can switch host installs on with HOOD_ENABLE_PKG_HELPER=1 on a machine they control.")
 
 
 class ToolUnavailable(RuntimeError):
@@ -105,8 +109,17 @@ class Toolbox:
     def helper(self) -> str:
         return os.environ.get("HOOD_PKG_HELPER") or HELPER_DEFAULT
 
+    @staticmethod
+    def host_installs_enabled() -> bool:
+        """System packages on the HOST (not HOOD's own Windows sandbox) are off unless the owner
+        explicitly sets HOOD_ENABLE_PKG_HELPER=1 (security batch 1: the passwordless root helper stays
+        disabled by default and is never shipped in the container image)."""
+        return os.environ.get("HOOD_ENABLE_PKG_HELPER", "").strip() == "1"
+
     def _root_route(self) -> Optional[List[str]]:
         """How to reach root for package installs WITHOUT the owner doing anything (None: no way here)."""
+        if not self.host_installs_enabled():
+            return None
         if hasattr(os, "geteuid") and os.geteuid() == 0:
             return ["bash", str(REPO_HELPER)]
         distro, exe = os.environ.get("WSL_DISTRO_NAME"), shutil.which("wsl.exe")
@@ -123,6 +136,8 @@ class Toolbox:
             return self.platform_problem()
         if self.on_windows():
             return None                         # inside HOOD's own Linux sandbox, as root
+        if not self.host_installs_enabled():
+            return HOST_INSTALLS_OFF
         return None if self._root_route() else ENABLE_HINT
 
     def _apt(self, verb: str, packages: List[str], timeout: int = 1800) -> Tuple[int, str]:

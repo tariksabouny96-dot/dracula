@@ -18,13 +18,14 @@ from services.sentinel.contracts import (
     FindingSeverity
 )
 from services.sentinel.x_red_team import IndependentValidationRunner
+from packages.config.paths import store_path
 
 
 class PatchEngine:
     """Orchestrates candidate patch development, verification layers, and safe deployment."""
 
     def __init__(self, patches_dir: Optional[Path] = None):
-        self.patches_dir = patches_dir or Path("artifacts/sentinel_patches")
+        self.patches_dir = store_path(patches_dir, "artifacts/sentinel_patches")
         self.patches_dir.mkdir(parents=True, exist_ok=True)
         self.candidates: Dict[str, PatchCandidate] = {}
 

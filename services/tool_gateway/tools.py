@@ -14,6 +14,7 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
 
 from .gateway import BaseTool, PermissionDeniedError, ToolGateway
+from packages.config.paths import store_dir
 
 
 class FSReadFileTool(BaseTool):
@@ -156,7 +157,7 @@ class CheckpointTool(BaseTool):
     def __init__(self, gateway: ToolGateway, checkpoint_dir: Optional[Path] = None):
         super().__init__("checkpoint", "checkpoint:manage", "Creates and restores file backups")
         self.gateway = gateway
-        self.checkpoint_dir = checkpoint_dir or (self.gateway.workspace_root / "artifacts" / "checkpoints")
+        self.checkpoint_dir = checkpoint_dir or store_dir(None, "artifacts/checkpoints")
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:

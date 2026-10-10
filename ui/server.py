@@ -28,6 +28,7 @@ from services.x_control.x_session_manager import XSessionManager, XOperationalSt
 from services.agents.engine import MissionConflict as AgentMissionConflict, MissionBudgetExceeded
 from packages.security import EmergencyStopActive
 from packages.security.client import classify as classify_client, host_matches
+from packages.config.paths import store_dir
 from ui import routes as feature_routes
 
 AGENT_MISSION_ID = re.compile(r"agm_[0-9a-f]{32}")
@@ -1476,7 +1477,8 @@ class JarvisServer:
         JarvisUIHandler.interaction_service = interaction_service
         JarvisUIHandler.emergency_stop = emergency_stop
         JarvisUIHandler.runtime = runtime
-        JarvisUIHandler.mission_service = MissionService(Path.home() / ".hood" / "nova21")
+        # Under HOOD_DATA_DIR like every other store (was always ~/.hood: off the container volume).
+        JarvisUIHandler.mission_service = MissionService(store_dir(None, "nova21"))
         engine = agent_engine if agent_engine is not None else getattr(runtime, "agent_engine", None)
         JarvisUIHandler.agent_engine = engine
         # Shared service instances for feature modules (ui/routes.py). One approval service for

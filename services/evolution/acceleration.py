@@ -37,6 +37,7 @@ from services.evolution.arena import ModelArena
 from services.evolution.ranking import CapabilityRanker
 from services.evolution.promotion import PromotionController
 from services.lab.evaluator import IntelligenceMeasurementLab, EvaluationDimension
+from packages.config.paths import store_path
 
 
 class AccelerationMechanism(str, Enum):
@@ -126,7 +127,7 @@ class Level3AccelerationEngine:
     """Orchestrates the 50 learning acceleration mechanisms with strict ROI and governance controls."""
 
     def __init__(self, db_path: Optional[Path] = None):
-        self.db_path = db_path or Path("artifacts/acceleration_engine.db")
+        self.db_path = store_path(db_path, "artifacts/acceleration_engine.db")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_sqlite()
 

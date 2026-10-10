@@ -8,8 +8,15 @@ SQLite databases are copied with the online backup API (consistent while Hood
 runs); other files are copied as-is. A manifest records the SHA-256 of every
 member and is checked before anything is restored. Restore refuses to write
 into a non-empty directory, so it can never overwrite live data. Secrets
-(vault key, receipt key) are excluded unless --include-keys is given; store
-those separately in the OS secret store.
+(vault key, receipt key, download-token key) are excluded unless --include-keys
+is given; store those separately in the OS secret store (or use HOOD_VAULT_KEY /
+HOOD_RECEIPT_KEY in the environment).
+
+Since security batch 1 every persistent store lives under HOOD_DATA_DIR, so this
+backup is complete. Rebuildable bulk is left out and listed in the manifest:
+HOOD's Windows sandbox disk (wsl/HOOD), downloaded tool binaries (tools/, the
+owner's tool approvals in tools/state.json ARE kept), per-run WordPress copies
+(agents/runtime), logs, downloads, caches and the one-time setup code.
 """
 from __future__ import annotations
 
@@ -23,8 +30,21 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-KEY_FILES = {".vault_key", ".receipt_key"}
-SKIP_SUFFIXES = {"-wal", "-shm", ".tmp"}
+KEY_FILES = {".vault_key", ".receipt_key", ".token_key"}
+SKIP_SUFFIXES = {"-wal", "-shm", ".tmp", ".migrating"}
+SKIP_FILES = {"owner_setup_code.txt"}
+# Rebuildable or scratch content (path prefixes relative to the data dir).
+EXCLUDED_PREFIXES = ("wsl/HOOD/", "agents/runtime/", "dev_logs/", "downloads/", "browser_evidence/",
+                     "desktop_evidence/", "disposable_cache/", "migration_temp/")
+KEPT_IN_TOOLS = {"tools/state.json"}
+
+
+def _excluded(rel: str) -> bool:
+    if rel.startswith("tools/") and rel not in KEPT_IN_TOOLS:
+        return True
+    if rel.startswith("wsl/") and rel.endswith((".tar.gz", ".tar.zst")):
+        return True
+    return rel.startswith(EXCLUDED_PREFIXES)
 
 
 def _is_sqlite(path: Path) -> bool:
@@ -37,14 +57,19 @@ def backup(data_dir: Path, out_dir: Path, include_keys: bool = False) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     archive = out_dir / f"hood-backup-{stamp}.zip"
-    manifest = {"created_at": stamp, "source": str(data_dir), "files": {}, "keys_included": include_keys}
+    manifest = {"format": 2, "created_at": stamp, "source": str(data_dir), "files": {},
+                "keys_included": include_keys, "excluded": [], "skipped_keys": []}
     with zipfile.ZipFile(archive, "x", zipfile.ZIP_DEFLATED) as zf:
         for path in sorted(data_dir.rglob("*")):
             if not path.is_file() or path.is_symlink() or any(str(path).endswith(s) for s in SKIP_SUFFIXES):
                 continue
-            if path.name in KEY_FILES and not include_keys:
-                continue
             rel = path.relative_to(data_dir).as_posix()
+            if path.name in KEY_FILES and not include_keys:
+                manifest["skipped_keys"].append(rel)
+                continue
+            if path.name in SKIP_FILES or _excluded(rel):
+                manifest["excluded"].append(rel)
+                continue
             if _is_sqlite(path):
                 with tempfile.TemporaryDirectory() as tmp:
                     copy = Path(tmp) / "db"
@@ -98,7 +123,7 @@ def restore(archive: Path, data_dir: Path) -> dict:
             target = (data_dir / rel).resolve()
             if not target.is_relative_to(data_dir):
                 raise ValueError(f"Unsafe member path {rel}")
-            target.parent.mkdir(parents=True, exist_ok=True)
+            target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             target.write_bytes(zf.read(rel))
             target.chmod(0o600)
     return manifest

@@ -109,6 +109,19 @@ jobs:
           done
           echo "--- container logs ---"; docker logs hood-ci | tail -20
           docker exec hood-ci curl -fsS -H "Host: 127.0.0.1:8990" http://127.0.0.1:8990/api/auth/status
+          # Security batch 1: code read-only for HOOD, every store on the /data volume, no package
+          # helper or sudo in the image, first-run setup code printed and stored in /data only,
+          # and setup refused for anything that came through a proxy.
+          docker exec hood-ci sh -c 'test ! -w /app && test -w /data'
+          docker exec hood-ci sh -c 'test ! -e /app/scripts/wsl/hood-pkg && ! command -v sudo'
+          docker exec hood-ci sh -c 'test -f /data/auth.db && test -f /data/hood_data.db && test -f /data/owner_setup_code.txt'
+          docker exec hood-ci sh -c 'test -z "$(find /app /home/hood -name "*.db" -o -name "*.sqlite3" -o -name vault.enc | head -1)"'
+          docker logs hood-ci 2>&1 | grep -q "One-time setup code"
+          code=$(docker exec hood-ci curl -s -o /dev/null -w '%{http_code}' -X POST -H "Host: 127.0.0.1:8990" \
+            -H "Content-Type: application/json" -H "X-Forwarded-For: 203.0.113.9" \
+            -d "{\"username\":\"x\",\"password\":\"Xx123456789!\",\"setup_code\":\"$(docker exec hood-ci cat /data/owner_setup_code.txt)\"}" \
+            http://127.0.0.1:8990/api/auth/init)
+          echo "proxied first-run setup -> $code"; test "$code" = "403"
           docker rm -f hood-ci
           test -n "$ok"
 

@@ -123,12 +123,10 @@ from services.nodes.migration import NodeMigrationBundle
 
 
 def _auth_db_path(runtime) -> Path:
-    """Identity lives in HOOD_DATA_DIR; an existing legacy artifacts/auth.db keeps being used so an
-    upgrade never silently drops the Root Owner."""
-    legacy_auth = Path("artifacts/auth.db")
-    if legacy_auth.exists() and not (runtime.data_dir / "auth.db").exists():
-        return legacy_auth
-    return runtime.data_dir / "auth.db"
+    """Identity lives in HOOD_DATA_DIR; a legacy artifacts/auth.db (current folder or HOOD folder) was
+    copied there at start-up (migrate_legacy_data), so an upgrade never silently drops the Root Owner."""
+    from packages.config.paths import store_path
+    return store_path(None, "artifacts/auth.db")
 
 
 class HoodSystemRuntime:
@@ -136,6 +134,9 @@ class HoodSystemRuntime:
 
     def __init__(self, config_path: str = "hood.config.yaml"):
         self.config = load_config(Path(config_path))
+        # Every store lives under HOOD_DATA_DIR; copy any left at their pre-batch-1 places, once.
+        from packages.config.paths import migrate_legacy_data
+        migrate_legacy_data()
         self.vault = SecretVault(Path(self.config.security.secret_vault_file))
         self.audit_service = AuditService(Path(self.config.storage.sqlite_path))
         self.memory_service = MemoryService(Path(self.config.storage.sqlite_path))

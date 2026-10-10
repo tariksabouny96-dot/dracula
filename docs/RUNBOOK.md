@@ -89,7 +89,7 @@ Listening (speech-to-text) stays on Gemini. Removing the key switches back to Ge
 | "Virtualization is switched off in this PC's firmware" | WSL2 needs CPU virtualization (a BIOS/UEFI setting) | enable Intel VT-x / AMD SVM in the BIOS/UEFI, then **Try again** ([WSL2.md](WSL2.md)) |
 | Mission `BLOCKED`: "the QA/engineer agent's answer was rejected 3 times" | the AI model kept making the same mistake (the reason is shown) | press **Retry blocked work**: the agent gets a fresh round and is told what was wrong; or cancel and plan again with a clearer brief |
 | "Needs your OK to install PHP, WordPress…" / "Needs your OK once: HOOD sets up its own Linux sandbox…" | a WordPress mission needs tools that aren't installed | press **Allow & install** / **Allow & set up** (chat, plan dialog, mission page or **Settings › Tools**); you allow each tool once and HOOD does the rest |
-| "HOOD is running on a plain Linux server where it has no administrator rights" | Linux server, not WSL, not root | an administrator runs `sudo bash scripts/wsl/enable_installs.sh` once (the helper accepts only HOOD's package list); on Windows and in WSL2 nothing is needed |
+| "Installing system packages on this machine is switched off" | HOOD isn't on Windows (where it installs into its own sandbox); host installs are off by default (security batch 1) | install the package yourself, or on a machine you control set `HOOD_ENABLE_PKG_HELPER=1`; never on a server |
 | Website preview: a cart or saved choice resets | the preview runs sandboxed (no storage, no internet) | open `site/index.html` from the mission folder (**Open folder** on the mission page) |
 | Voice page: `not_configured` | no key or no price for the voice models (or ElevenLabs key / voice ID / price missing) | set them in **Settings › Model provider** and **Settings › Voice** |
 | Voice: "Give consent for cloud audio first" | recordings are only sent to Google after you agree | press **Give consent for cloud audio** on the Voice page |
@@ -122,8 +122,11 @@ Notes:
   Docker's default policy may block them, in which case the sandbox fails closed
   (missions end UNVERIFIED) and everything else runs; enable it by uncommenting
   the `security_opt` block in `docker-compose.yml` on a host you trust.
-- Persisted state lives in the `hood-data` volume (`HOOD_DATA_DIR=/data`); back it
-  up with `scripts/hood_backup.py` as below.
+- Persisted state lives in the `hood-data` volume (`HOOD_DATA_DIR=/data`) and nowhere else: the code in
+  `/app` is read-only for HOOD's account (CI checks this, plus: no sudo, no package helper in the image,
+  setup code only in `/data`). Back it up with `scripts/hood_backup.py` as below.
+- Host system-package installs are off (`HOOD_ENABLE_PKG_HELPER=0`); the passwordless helper
+  (`scripts/wsl/`) is excluded from the image by `.dockerignore`.
 
 ## Release rehearsal and gate
 ```bash
@@ -147,7 +150,16 @@ python scripts/hood_backup.py backup  --data-dir ~/.hood --out /secure/backups
 python scripts/hood_backup.py verify  --archive /secure/backups/hood-backup-<ts>.zip
 python scripts/hood_backup.py restore --archive ... --data-dir ~/.hood-restore   # refuses non-empty targets
 ```
-Also copy `artifacts/` (audit, memory, vault) — it is outside `HOOD_DATA_DIR`. Keys go to the OS secret store.
+Since security batch 1 **everything** persistent is under `HOOD_DATA_DIR` (identity, vault, audit and
+memory, missions, firewall, tool approvals, learning, self-development, exports): the data folder backup
+is complete. Older installs had some stores in `artifacts/` next to the code and missions in
+`~/.hood/nova21`; HOOD copies them into the data folder once at start-up (old copies are left in place;
+delete them after checking). Keys (`.vault_key`, `agents/.receipt_key`, `artifacts/.token_key`) are left
+out unless `--include-keys`: keep them in the OS secret store or set `HOOD_VAULT_KEY`/`HOOD_RECEIPT_KEY`.
+Rebuildable bulk is left out and listed in the manifest (Windows sandbox disk, tool binaries, per-run
+WordPress copies, logs, downloads). Container: `docker compose exec hood python scripts/hood_backup.py
+backup --data-dir /data --out /tmp/b && docker compose cp hood:/tmp/b ./backups` (keep backups off the
+server).
 
 ## Rollback
 1. Stop Hood (`Ctrl+C`), then `python hood_cli.py stop` if anything is still running.

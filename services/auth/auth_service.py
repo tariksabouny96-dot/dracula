@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Set, Tuple
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel, Field
+from packages.config.paths import store_path
 
 
 def validate_password_strength(password: str) -> Tuple[bool, str]:
@@ -204,7 +205,7 @@ class AuthenticationService:
     _DUMMY_HASH = hashlib.scrypt(b"hood-dummy-password", salt=bytes(16), n=16384, r=8, p=1).hex()
 
     def __init__(self, db_path: Optional[Path] = None, session_ttl_hours: int = 12):
-        self.db_path = db_path or Path("artifacts/auth.db")
+        self.db_path = store_path(db_path, "artifacts/auth.db")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.session_ttl = timedelta(hours=session_ttl_hours)
         self.rate_limiter = RateLimiter(max_attempts=5, window_seconds=900)

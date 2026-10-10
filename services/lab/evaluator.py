@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
+from packages.config.paths import store_path
 
 
 class EvaluationDimension(str, Enum):
@@ -66,7 +67,7 @@ class IntelligenceMeasurementLab:
     """Rigorous evaluation laboratory ensuring capabilities are proven by held-out tests, not claims."""
 
     def __init__(self, db_path: Optional[Path] = None):
-        self.db_path = db_path or Path("artifacts/intelligence_lab.db")
+        self.db_path = store_path(db_path, "artifacts/intelligence_lab.db")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_sqlite()
 

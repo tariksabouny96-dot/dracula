@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
+from packages.config.paths import store_dir
 
 
 class CodeEditResult(BaseModel):
@@ -34,7 +35,7 @@ class CodeModifier:
 
     def __init__(self, workspace_root: Path, checkpoint_dir: Optional[Path] = None):
         self.workspace_root = workspace_root.resolve()
-        self.checkpoint_dir = (checkpoint_dir or (self.workspace_root / "artifacts" / "checkpoints")).resolve()
+        self.checkpoint_dir = (checkpoint_dir or store_dir(None, "artifacts/checkpoints")).resolve()
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self.git_bin = "C:\\Program Files\\Git\\cmd\\git.exe" if os.path.exists("C:\\Program Files\\Git\\cmd\\git.exe") else "git"
 

@@ -25,6 +25,7 @@ from services.sentinel.integrity import IntegrityMonitor
 from services.sentinel.self_healing import SelfHealingEngine
 from services.sentinel.x_red_team import XRedTeamFramework
 from services.sentinel.patch_engine import PatchEngine
+from packages.config.paths import store_path
 
 
 class SecuritySentinelService:
@@ -39,7 +40,7 @@ class SecuritySentinelService:
         x_red_team: Optional[XRedTeamFramework] = None,
         patch_engine: Optional[PatchEngine] = None
     ):
-        self.registry_path = registry_path or Path("artifacts/sentinel_vulnerabilities.json")
+        self.registry_path = store_path(registry_path, "artifacts/sentinel_vulnerabilities.json")
         self.firewall_manager = firewall_manager or FirewallManager(read_only=True)
         self.integrity_monitor = integrity_monitor or IntegrityMonitor()
         self.self_healing = self_healing or SelfHealingEngine()
