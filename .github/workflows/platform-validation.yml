@@ -49,6 +49,7 @@ jobs:
           echo "- WebAssembly under RLIMIT_AS 2 GiB: $r" >> "$GITHUB_STEP_SUMMARY"
       - name: Full test suite (real headless Chromium included)
         run: |
+          set -o pipefail
           python -m pytest -q -rs -p no:cacheprovider --junitxml=junit-arm64.xml | tee pytest.log
           echo "- pytest: $(tail -1 pytest.log)" >> "$GITHUB_STEP_SUMMARY"
 
@@ -104,8 +105,9 @@ jobs:
               pg = b.new_page(); pg.set_content('<h1>HOOD</h1>'); print('chromium ok', pg.inner_text('h1')); b.close()
           " && c=works || c=FAILS
           echo "- headless Chromium inside gVisor: $c" >> "$GITHUB_STEP_SUMMARY"
-          docker exec -e HOOD_DATA_DIR=/tmp/hood-test hood-val python -m pytest -q -p no:cacheprovider \
-            tests/agents/test_agent_engine.py -k "sandbox or network" 2>&1 | tail -3 | tee sandbox.log || true
+          docker exec -e HOOD_DATA_DIR=/tmp/hood-test hood-val python -m pytest -q -p no:cacheprovider --tb=short \
+            tests/agents/test_agent_engine.py -k "sandbox or network" 2>&1 | tail -60 | tee sandbox.log || true
+          docker exec hood-val sh -c 'unshare -rn python3 -I /app/services/agents/netns_launcher.py /bin/sh -c "cat /proc/net/dev; echo launcher-ok"' 2>&1 | tail -8 || true
           echo "- HOOD sandbox tests inside gVisor: $(tail -1 sandbox.log)" >> "$GITHUB_STEP_SUMMARY"
           echo "- memory: $(docker stats --no-stream --format '{{.MemUsage}}' hood-val)" >> "$GITHUB_STEP_SUMMARY"
           test "$c" = works

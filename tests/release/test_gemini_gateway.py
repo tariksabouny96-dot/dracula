@@ -65,6 +65,7 @@ def test_proxy_credential_mode_sends_no_key(monkeypatch):
     with pytest.raises(ProviderError, match='not found'):
         adapter.invoke(ModelRequest(prompt='hi'))
     monkeypatch.setenv('HOOD_GEMINI_CREDENTIAL', 'proxy')
+    monkeypatch.setenv('HTTPS_PROXY', 'http://key-injecting-proxy.test:3128')   # the mode needs a proxy
     seen = {}
     def urlopen(req, timeout):
         seen['key'] = req.get_header('X-goog-api-key')
