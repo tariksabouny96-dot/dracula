@@ -18,6 +18,7 @@ from typing import Optional, Any
 
 from services.interaction.interaction_service import InteractionService, UIState
 from services.capabilities.registry import get_capability_inventory
+import services.capabilities.live_probes  # noqa: F401  (registers live status probes)
 from services.operations.mission_service import MissionService, MissionConflict
 from services.operations.agent_runtime import LocalAgentRuntime, AgentRuntimeConflict
 from services.core.emergency_stop import EmergencyStopController
@@ -1066,7 +1067,7 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(f"id: {event_id}\nevent: {event_type}\ndata: {payload}\n\n".encode("utf-8"))
                 self.wfile.flush()
                 last_beat = _time.monotonic()
-        except (BrokenPipeError, ConnectionResetError):
+        except ConnectionError:  # BrokenPipe/Reset, and ConnectionAborted (WinError 10053)
             pass
         finally:
             with self._streams_lock:
@@ -1315,6 +1316,17 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
         pass
 
 
+class _QuietDisconnectServer(ThreadingHTTPServer):
+    """A browser closing a tab, refreshing or switching pages mid-response is
+    normal, not an error: don't print a traceback for it (Windows reports it as
+    ConnectionAbortedError / WinError 10053). Real errors are still printed."""
+
+    def handle_error(self, request, client_address):
+        if isinstance(sys.exc_info()[1], ConnectionError):
+            return
+        super().handle_error(request, client_address)
+
+
 class JarvisServer:
     def __init__(
         self,
@@ -1397,7 +1409,7 @@ class JarvisServer:
             interaction_service.emergency_stop = emergency_stop
         if self.x_session_manager is not None and self.auth_service is not None:
             self.x_session_manager.auth_service = self.auth_service
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", port), JarvisUIHandler)
+        self.httpd = _QuietDisconnectServer(("127.0.0.1", port), JarvisUIHandler)
         self.thread: Optional[threading.Thread] = None
 
     def start(self):

@@ -124,7 +124,7 @@
       "execution_environment": "local + owner Windows machine",
       "test_command": "python scripts/preproduction_gate.py",
       "blockers": [
-        "X state is in-memory (dormant after restart, which is the safe default) \u2014 wake/sleep consent journey not run on target machine"
+        "X state is in-memory (dormant after restart, which is the safe default) — wake/sleep consent journey not run on target machine"
       ],
       "independent_reviewer": null,
       "decision_reason": "Role-based authority, TTL expiry, replay refusal and stand-down verified locally."
@@ -449,25 +449,28 @@
       "priority": "P1",
       "owner": "Hood owner (Zak)",
       "source_paths": [
-        "services/voice/"
+        "services/voice/cloud.py",
+        "services/voice/api.py",
+        "ui/static/next/app.js"
       ],
-      "implementation_status": "NOT_IMPLEMENTED",
-      "local_evidence_level": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "VERIFIED_LOCAL",
       "required_level": "VERIFIED_TARGET",
       "test_ids": [
+        "tests/ui/test_settings_and_voice_http.py::test_voice_transcribes_and_speaks_only_when_allowed",
         "tests/voice/test_voice_surface.py",
         "tests/simulation/test_voice_fail_closed.py"
       ],
       "negative_tests": [
-        "tests/voice/test_voice_surface.py::test_shared_voice_text_continuity_and_barge_in"
+        "tests/ui/test_settings_and_voice_http.py::test_voice_transcribes_and_speaks_only_when_allowed"
       ],
       "execution_environment": "owner Windows machine with microphone",
       "test_command": "python scripts/preproduction_gate.py",
       "blockers": [
-        "No STT/TTS transport implemented; microphone capture not connected"
+        "Not yet run on the owner's Windows machine with a real microphone (VERIFIED_TARGET)"
       ],
       "independent_reviewer": null,
-      "decision_reason": "Passing tests prove only that voice fails closed with a text fallback; voice itself is not implemented."
+      "decision_reason": "Browser recording (MediaRecorder webm) -> Gemini speech-to-text and Gemini text-to-speech -> WAV playback implemented in the console, governed by key, firewall, price, spend caps, emergency stop, and recorded consent before any microphone audio is sent. Verified locally end to end against live Gemini in headless Chrome with a fake microphone (2026-10-10); a real-microphone run on the target machine is still required."
     },
     {
       "id": "ecommerce",
@@ -682,6 +685,92 @@
       ],
       "independent_reviewer": null,
       "decision_reason": "Optional unless explicitly scoped."
+    },
+    {
+      "id": "firewall",
+      "name": "Egress firewall",
+      "scope": "P1",
+      "priority": "P1",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/firewall/",
+        "services/model_gateway/router.py"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_STAGING",
+      "test_ids": [
+        "tests/firewall/test_firewall.py",
+        "tests/firewall/test_firewall_http.py",
+        "tests/firewall/test_router_firewall.py"
+      ],
+      "negative_tests": [
+        "tests/firewall/test_firewall_http.py"
+      ],
+      "execution_environment": "local + staging",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "No staging environment: staging-level (VERIFIED_STAGING) evidence not yet produced"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Default-deny egress enforced in the model gateway before any live call; owner-only rule changes; verified locally, including against the real Gemini host (blocked by default, allowed only when the owner permits it)."
+    },
+    {
+      "id": "learning",
+      "name": "Self-learning",
+      "scope": "P1",
+      "priority": "P1",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/learning/",
+        "services/agents/engine.py"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_STAGING",
+      "test_ids": [
+        "tests/learning/test_learning.py",
+        "tests/learning/test_learning_http.py",
+        "tests/learning/test_semantic_and_autolearn.py"
+      ],
+      "negative_tests": [
+        "tests/learning/test_learning_http.py"
+      ],
+      "execution_environment": "local + staging",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "No staging environment: staging-level (VERIFIED_STAGING) evidence not yet produced"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Lessons auto-recorded from finished missions, trust ladder with owner-only ESTABLISHED, semantic recall via firewall-gated embeddings with an honest lexical fallback; verified locally."
+    },
+    {
+      "id": "self_development",
+      "name": "Governed self-development",
+      "scope": "P1",
+      "priority": "P1",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/evolution/self_development.py",
+        "services/evolution/self_development_api.py"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_STAGING",
+      "test_ids": [
+        "tests/evolution/test_self_development.py",
+        "tests/evolution/test_self_development_http.py"
+      ],
+      "negative_tests": [
+        "tests/evolution/test_self_development_http.py"
+      ],
+      "execution_environment": "local + staging",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "No staging environment: staging-level (VERIFIED_STAGING) evidence not yet produced"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Proposals are recorded only; applying requires the owner's approval bound to the content hash, with checkpoint, validation and rollback; guardrail files are never modifiable. Verified locally."
     }
   ]
 }

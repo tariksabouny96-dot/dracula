@@ -127,5 +127,5 @@ def test_missing_key_error_tells_the_user_what_to_do(monkeypatch):
             return None
 
     adapter = GeminiProviderAdapter(vault=NoVault())
-    with pytest.raises(ProviderNotConfiguredError, match="add GEMINI_API_KEY=.* to the .env file"):
+    with pytest.raises(ProviderNotConfiguredError, match="save it in Settings > Model provider.*GEMINI_API_KEY"):
         adapter.invoke(ModelRequest(prompt="hi"))

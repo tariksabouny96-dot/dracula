@@ -1,7 +1,7 @@
 """Owner-scoped artifact registry with hashed, single-use download tokens.
 
 Security properties:
-- Files are written once (O_EXCL, fsync, mode 0600) and read with O_NOFOLLOW.
+- Files are written once (O_EXCL, fsync, mode 0600, binary) and never through a symlink.
 - Every row and every read is scoped to an owner id; another owner's artifact or
   token is a 404 (KeyError), and a cross-owner token is never consumed.
 - Download tokens are base64url(claims).HMAC-SHA256, bound to owner + artifact,
@@ -26,6 +26,17 @@ from typing import Any, Dict, List, Optional, Tuple
 TOKEN_ENV = "HOOD_ARTIFACT_TOKEN_KEY"
 MIN_TTL, MAX_TTL, DEFAULT_TTL = 1, 600, 300
 MAX_ARTIFACT_BYTES = 25 * 1024 * 1024
+# Windows has no O_NOFOLLOW and no POSIX mode bits: there the profile ACL protects
+# HOOD_DATA_DIR, and symlinks are refused with an explicit check instead.
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+# Without O_BINARY, Windows opens fds in text mode and rewrites \n as \r\n.
+_BINARY = getattr(os, "O_BINARY", 0)
+_POSIX = os.name == "posix"
+
+
+def _refuse_symlink(path: Path) -> None:
+    if not _NOFOLLOW and path.is_symlink():
+        raise ArtifactError(f"{path.name} is a symlink; refusing to follow it")
 
 
 class ArtifactError(Exception):
@@ -58,12 +69,11 @@ class ArtifactRegistry:
             return env.encode("utf-8")
         key_file = self.dir / ".token_key"
         if key_file.is_file():
-            mode = key_file.stat().st_mode & 0o077
-            if mode:
+            if _POSIX and key_file.stat().st_mode & 0o077:
                 raise ArtifactError(f"{key_file} is group/other-accessible; refusing to use it")
             return key_file.read_bytes()
         key = secrets.token_bytes(32)
-        fd = os.open(str(key_file), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        fd = os.open(str(key_file), os.O_WRONLY | os.O_CREAT | os.O_EXCL | _BINARY, 0o600)
         with os.fdopen(fd, "wb") as f:
             f.write(key)
         return key
@@ -95,7 +105,7 @@ class ArtifactRegistry:
         digest = hashlib.sha256(data).hexdigest()
         path = self.blobs / art_id
         # Write once; never follow a symlink; fsync before registering.
-        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW | _BINARY, 0o600)
         try:
             with os.fdopen(fd, "wb") as f:
                 f.write(data)
@@ -193,7 +203,8 @@ class ArtifactRegistry:
 
     @staticmethod
     def _read_blob(path: Path) -> bytes:
-        fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
+        _refuse_symlink(path)
+        fd = os.open(str(path), os.O_RDONLY | _NOFOLLOW | _BINARY)
         try:
             with os.fdopen(fd, "rb") as f:
                 return f.read()

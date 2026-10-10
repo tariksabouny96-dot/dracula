@@ -20,7 +20,11 @@ class SecretVault:
     """Secure encrypted vault for credential storage using reference-based retrieval."""
 
     def __init__(self, vault_path: Optional[Path] = None, master_key: Optional[bytes] = None):
-        self.vault_path = vault_path or Path("artifacts/vault.enc")
+        path = Path(vault_path) if vault_path else Path("artifacts/vault.enc")
+        # A relative vault path is anchored at the HOOD folder, not the current
+        # directory, so the same vault (and saved API key) is used wherever HOOD
+        # is started from.
+        self.vault_path = path if path.is_absolute() else Path(__file__).resolve().parents[2] / path
         self._key = master_key or self._get_or_create_master_key()
         self._fernet = Fernet(self._key)
         self._secrets: Dict[str, str] = {}

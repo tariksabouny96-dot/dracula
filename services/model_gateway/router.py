@@ -3,7 +3,9 @@ HOOD Model Router & Gateway Orchestrator
 Governed by Master System Specification Section 8 & Build Instructions Section 9.
 """
 
-from typing import Dict, List, Optional
+import threading
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 from packages.contracts import (
     ModelRequest,
     ModelResponse,
@@ -40,6 +42,10 @@ class ModelRouter:
         # legacy behaviour for callers that have not wired a firewall yet.
         self.firewall = firewall
         self.providers: Dict[ProviderName, BaseModelProvider] = {}
+        # What this process actually observed per provider (chat, missions, tests
+        # of the connection): the source of truth for "is the AI working now".
+        self._observed: Dict[str, Dict[str, Any]] = {}
+        self._observed_lock = threading.Lock()
         self._init_providers()
 
     def _price_for(self, provider_name: ProviderName, provider: BaseModelProvider,
@@ -78,6 +84,23 @@ class ModelRouter:
         self.providers[ProviderName.LOCAL] = LocalProviderAdapter(
             enabled=local_cfg.enabled if local_cfg else False
         )
+
+    def _observe(self, provider_name: ProviderName, ok: bool, model: Optional[str] = None,
+                 error: Optional[BaseException] = None) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._observed_lock:
+            rec = self._observed.setdefault(provider_name.value, {
+                "last_success_at": None, "last_model": None, "last_failure_at": None, "last_error": None})
+            if ok:
+                rec["last_success_at"], rec["last_model"] = now, model
+            else:
+                rec["last_failure_at"] = now
+                rec["last_error"] = f"{type(error).__name__}: {error}"[:300] if error else "failed"
+
+    def observed_health(self, provider_name: ProviderName) -> Dict[str, Any]:
+        """Last success/failure this process saw for a provider (empty if never called)."""
+        with self._observed_lock:
+            return dict(self._observed.get(provider_name.value, {}))
 
     def estimate_max_cost(self, request: ModelRequest) -> float:
         """Worst-case USD cost of this request over the providers it may route to.
@@ -185,6 +208,7 @@ class ModelRouter:
                     last_error = ProviderNotConfiguredError(
                         f"Egress to {egress_host} for {provider_name.value} is blocked by the "
                         f"HOOD firewall: {decision.reason}. Allow it as the Root Owner to enable this provider.")
+                    self._observe(provider_name, False, error=last_error)
                     continue
 
             reservation = self.cost_controller.reserve(request.task_id, estimate, is_deep_model=is_deep)
@@ -195,6 +219,7 @@ class ModelRouter:
             except (ProviderNotConfiguredError, ProviderRateLimitError) as e:
                 # Refused before generation: no spend is attributable.
                 self.cost_controller.release(reservation)
+                self._observe(provider_name, False, error=e)
                 last_error = e
                 continue
             except ProviderError as e:
@@ -203,6 +228,7 @@ class ModelRouter:
                 from packages.contracts import ModelUsage
                 self.cost_controller.settle(reservation, ModelUsage(), cost_measured=False,
                                             provider=provider_name.value, model=model or "unknown")
+                self._observe(provider_name, False, error=e)
                 last_error = e
                 continue
 
@@ -228,6 +254,8 @@ class ModelRouter:
                 reservation, resp.usage, cost_measured=measured, provider=resp.provider.value,
                 model=resp.model_name, latency_ms=resp.latency_ms, is_fallback=resp.is_fallback,
                 price_source=(f"{price.source} ({price.as_of})" if price else "non-billing provider"))
+            if not resp.is_mock:
+                self._observe(provider_name, True, model=resp.model_name)
             return resp
 
         # If all providers failed. When nothing could have been sent, say so precisely so

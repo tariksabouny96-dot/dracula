@@ -62,8 +62,8 @@
   // ------------------------------------------------------------------ state badges (merge-contract taxonomy)
   const KIND = {
     good: ['verified_online', 'available', 'COMPLETED', 'PASS', 'HALTED', 'ATTACHED_UNVERIFIED_OK', 'active', 'online'],
-    info: ['checking', 'QUEUED', 'RUNNING', 'VERIFYING', 'PLANNING', 'CREATED', 'running'],
-    warn: ['degraded', 'awaiting_approval', 'AWAITING_PLAN_APPROVAL', 'BLOCKED', 'UNVERIFIED', 'PENDING', 'pending',
+    info: ['checking', 'QUEUED', 'RUNNING', 'VERIFYING', 'PLANNING', 'CREATED', 'running', 'configured'],
+    warn: ['degraded', 'needs_pricing', 'awaiting_approval', 'AWAITING_PLAN_APPROVAL', 'BLOCKED', 'UNVERIFIED', 'PENDING', 'pending',
       'ATTACHED_UNVERIFIED', 'MODULE_ONLY'],
     bad: ['failed', 'FAILED', 'offline', 'unavailable', 'blocked', 'ERROR', 'REJECTED', 'engaged'],
     sim: ['simulated', 'SIMULATED', 'MIXED'],
@@ -112,7 +112,7 @@
   const emptyBox = (text) => h('div', { class: 'empty-box' }, text);
   const errorBox = (text) => h('div', { class: 'error-box', role: 'alert' }, text);
   function unavailable(r, feature) {
-    if (r.status === 404) return emptyBox(feature + ' is not installed on this server.');
+    if (r.status === 404) return emptyBox(feature + ' is not built yet in this version of HOOD.');
     if (r.status === 503) return emptyBox(feature + ': ' + (r.error || 'not configured on this server.'));
     if (r.status === 403) return emptyBox(feature + ': your role does not have access.');
     return errorBox(feature + ': ' + r.error);
@@ -251,12 +251,16 @@
       this.overview = r.data;
       const gem = (r.data.providers || []).find((p) => p.id === 'gemini') || { state: 'unknown' };
       const label = { verified_online: '● LIVE · GEMINI', degraded: '● PROVIDER DEGRADED', not_configured: '● NO AI PROVIDER',
-        unknown: '● PROVIDER NOT VERIFIED' }[gem.state] || '● PROVIDER ' + String(gem.state).toUpperCase();
+        needs_pricing: '● AI PRICING NOT SET', configured: '● AI READY', unknown: '● PROVIDER NOT VERIFIED' }[gem.state]
+        || '● PROVIDER ' + String(gem.state).toUpperCase();
       $('sourcePill').textContent = label;
       $('sourcePill').className = 'source-pill ' + kindOf(gem.state);
-      $('envTitle').textContent = gem.state === 'verified_online' ? 'LIVE PROVIDER' : 'PROVIDER ' + String(gem.state).replace(/_/g, ' ').toUpperCase();
-      $('envDetail').textContent = gem.last_success_at ? 'Last successful AI call ' + fmtTime(gem.last_success_at)
-        : 'No successful AI call recorded yet';
+      $('envTitle').textContent = { verified_online: 'LIVE PROVIDER', configured: 'AI READY', needs_pricing: 'PRICING NOT SET',
+        not_configured: 'NO API KEY' }[gem.state] || 'PROVIDER ' + String(gem.state).replace(/_/g, ' ').toUpperCase();
+      $('envDetail').textContent = gem.state === 'degraded' && gem.last_error ? 'Last call failed: ' + String(gem.last_error).slice(0, 140)
+        : (gem.state === 'not_configured' || gem.state === 'needs_pricing') ? 'Set it in Settings › Model provider'
+        : gem.last_success_at ? 'Last successful AI call ' + fmtTime(gem.last_success_at)
+        : 'Not used yet since HOOD started';
       $('envSignal').className = 'signal ' + (gem.state === 'verified_online' ? 'green' : 'amber');
       const pending = r.data.approvals_pending;
       $('approvalCount').textContent = pending === null || pending === undefined ? '?' : String(pending);
@@ -628,7 +632,7 @@
 
   // ------------------------------------------------------------------ Agents
   function agentsView() {
-    const body = h('div', { class: 'dashboard' });
+    const body = h('div', {});  // the loaded content is the grid; nesting two grids squeezed the cards
     fill(body, async () => {
       const r = await api.get('/api/console/agents');
       if (!r.ok) return unavailable(r, 'Agent registry');
@@ -937,7 +941,7 @@
         sendBtn.disabled = !transcript;
         refresh();
       });
-      rec.start(); setAvatar('listening'); recBtn.textContent = '■ Stop'; tick();
+      rec.start(); setAvatar('listening'); recBtn.textContent = '■ Stop recording'; tick();  // distinct from the emergency STOP button
     });
     sendBtn.addEventListener('click', () => runCommand(transcript, out));
     const auto = h('input', { type: 'checkbox', id: 'autoSpeak' });
@@ -952,6 +956,79 @@
           h('label', { class: 'switchline' }, auto, ' Read Hood’s chat replies aloud'))))));
   }
 
+  // ------------------------------------------------------------------ Settings › Model provider (owner only)
+  function modelProviderCard() {
+    const box = h('div', {});
+    const keyInput = h('input', { type: 'password', autocomplete: 'off', spellcheck: 'false',
+      placeholder: 'Paste your Gemini API key', 'aria-label': 'Gemini API key' });
+    const testOut = h('p', {});
+    const done = async (r, okText) => {
+      if (r.ok) { toast(okText); load(); app.refreshOverview(); }
+      return r;
+    };
+    const load = () => fill(box, async () => {
+      const r = await api.get('/api/settings/model');
+      if (!r.ok) return unavailable(r, 'Model settings');
+      const s = r.data, k = s.key, pr = s.pricing;
+      const inputs = {};
+      const customForm = h('div', { class: 'form hidden' },
+        Object.entries(pr.models).map(([m, p]) => {
+          const i = h('input', { type: 'number', min: '0', max: '10', step: '0.00001', value: p ? p.input_per_1k_usd : '', 'aria-label': m + ' input price' });
+          const o = h('input', { type: 'number', min: '0', max: '10', step: '0.00001', value: p ? p.output_per_1k_usd : '', 'aria-label': m + ' output price' });
+          inputs[m] = [i, o];
+          return h('div', {}, h('b', {}, m), h('label', {}, 'Input, USD per 1,000 tokens', i), h('label', {}, 'Output, USD per 1,000 tokens', o));
+        }),
+        h('div', { class: 'form-actions' }, h('button', { class: 'btn small primary', type: 'button', onclick: async () => {
+          const prices = {};
+          for (const [m, [i, o]] of Object.entries(inputs)) prices[m] = { input_per_1k_usd: i.value, output_per_1k_usd: o.value };
+          const res = await api.post('/api/settings/model/pricing', { mode: 'custom', prices, confirm: true });
+          if (!res.ok) toast('Prices not saved: ' + res.error);
+          await done(res, 'Prices saved.');
+        } }, 'Save prices')));
+      return h('div', {},
+        h('dl', { class: 'kv' },
+          h('dt', {}, 'Status'), h('dd', {}, badge(s.state || 'unknown')),
+          h('dt', {}, 'API key'), h('dd', {}, k.set ? 'Set — from ' + k.source + (k.hint ? ' (' + k.hint + ')' : '') : 'Not set'),
+          h('dt', {}, 'Prices'), h('dd', {}, pr.source ? 'From ' + pr.source + (pr.missing.length ? ' — missing: ' + pr.missing.join(', ') : '')
+            : 'Not set: every AI call is refused until prices are on file'),
+          s.last_error ? h('dt', {}, 'Last error') : null, s.last_error ? h('dd', {}, String(s.last_error).slice(0, 200)) : null),
+        h('div', { class: 'form' }, h('label', {}, k.set ? 'Replace API key' : 'Gemini API key', keyInput),
+          h('div', { class: 'form-actions' },
+            h('button', { class: 'btn small primary', type: 'button', onclick: async () => {
+              const v = keyInput.value.trim();
+              if (!v) { toast('Paste a key first.'); return; }
+              const res = await api.post('/api/settings/model/key', { api_key: v, confirm: true });
+              keyInput.value = '';
+              if (!res.ok) toast('Key not saved: ' + res.error);
+              await done(res, 'API key saved. It is used immediately.');
+            } }, 'Save key'),
+            k.source === 'settings' ? h('button', { class: 'btn small', type: 'button', onclick: () => confirmDialog('Remove API key',
+              ['HOOD will stop using the key saved here. A key in your .env file, if any, is used instead.'], 'Remove key',
+              async () => done(await api.post('/api/settings/model/key/remove', { confirm: true }), 'API key removed.')) }, 'Remove key') : null),
+          h('small', {}, 'Get a key at aistudio.google.com (“Get API key”). It is stored encrypted on this computer and never shown again.')),
+        h('h4', {}, 'Prices'),
+        h('p', {}, h('small', {}, 'HOOD never makes an AI call it cannot price. Choose one:')),
+        h('div', { class: 'form-actions' },
+          h('button', { class: 'btn small', type: 'button', onclick: () => confirmDialog('Free tier: $0 prices',
+            ['Only choose this if your Google project has NO billing account. With billing enabled, Google charges you and HOOD would under-count spend.',
+              'HOOD will record $0 for every call to: ' + Object.keys(pr.models).join(', ') + '.'], 'My key has no billing account',
+            async () => done(await api.post('/api/settings/model/pricing', { mode: 'free', confirm: true }), 'Free-tier prices saved.')) }, 'Free tier (no billing)'),
+          h('button', { class: 'btn small', type: 'button', onclick: () => customForm.classList.toggle('hidden') }, 'Enter my prices')),
+        customForm,
+        h('h4', {}, 'Check'),
+        h('div', { class: 'form-actions' }, h('button', { class: 'btn small', type: 'button', onclick: async () => {
+          testOut.textContent = 'Testing…';
+          const res = await api.post('/api/settings/model/test', {});
+          testOut.textContent = !res.ok ? 'Test failed: ' + res.error
+            : res.data.ok ? '✓ Connected — ' + res.data.model + ' answered in ' + res.data.latency_ms + ' ms'
+              : '✗ Not working: ' + res.data.error;
+          load(); app.refreshOverview();
+        } }, 'Test connection')), testOut);
+    });
+    load();
+    return card('Model provider (Gemini)', box);
+  }
+
   // ------------------------------------------------------------------ Settings
   function settingsView() {
     const sessions = h('div', {});
@@ -964,13 +1041,14 @@
     const reduce = h('input', { type: 'checkbox', id: 'reduceMotion' });
     reduce.checked = document.body.classList.contains('reduce-motion');
     reduce.addEventListener('change', () => { document.body.classList.toggle('reduce-motion', reduce.checked); try { localStorage.setItem('hood-next:reduce-motion', reduce.checked ? '1' : '0'); } catch (e) { /* storage blocked */ } });
-    return h('div', {}, head('Settings', 'Your account, sessions and display preferences.'),
+    return h('div', {}, head('Settings', 'Your account, AI model, sessions and display preferences.'),
       h('div', { class: 'two-col' },
         card('Account', h('div', {}, h('dl', { class: 'kv' }, h('dt', {}, 'User'), h('dd', {}, String(session.user)), h('dt', {}, 'Role'), h('dd', {}, String(session.role))),
           h('div', { class: 'form-actions' }, h('button', { class: 'btn', type: 'button', onclick: () => session.logout() }, 'Sign out'),
             h('a', { class: 'btn', href: '/classic' }, 'Classic console (password, users)')))),
         card('Display', h('div', {}, h('label', { class: 'switchline' }, reduce, ' Reduce motion'),
           h('div', { class: 'form-actions' }, h('button', { class: 'btn', type: 'button', onclick: () => { widgets.layout = DEFAULT_LAYOUT.map((w) => ({ ...w })); widgets.save(); toast('Layout reset.'); } }, 'Reset dashboard layout'))))),
+      session.role === 'ROOT_OWNER' ? h('div', { style: { marginTop: '14px' } }, modelProviderCard()) : null,
       h('div', { style: { marginTop: '14px' } }, card('Active sessions', sessions)));
   }
 

@@ -547,8 +547,8 @@ def main():
         gemini_state = runtime.health_check()["providers"]["gemini"]
         print(f"Model provider: gemini {gemini_state}")
         if gemini_state != "ONLINE":
-            print("  Live chat and missions will fail until this says ONLINE. "
-                  "See docs/RUNBOOK.md 'Connect the model'.")
+            print("  Live chat, missions and voice will fail until this says ONLINE: set the key and "
+                  "prices in the UI under Settings > Model provider (docs/RUNBOOK.md 'Connect the model').")
         from services.auth.auth_service import AuthenticationService
         # Identity lives in HOOD_DATA_DIR; an existing legacy artifacts/auth.db keeps being used
         # so an upgrade never silently drops the Root Owner.

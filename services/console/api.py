@@ -39,37 +39,58 @@ def _is_root(ctx) -> bool:
 
 
 def _provider_health(engine) -> List[Dict[str, Any]]:
-    """Observed provider state from the durable spend ledger (no synthetic probes)."""
+    """Provider state from what this process observed (router) plus configuration.
+
+    States: not_configured (no key) · needs_pricing (key, but calls are refused as
+    unknown cost) · configured (ready, not used since HOOD started) ·
+    verified_online (last call succeeded, within 30 min) · degraded (last call
+    failed). Failures from earlier runs (e.g. before a key was set) no longer
+    count; the durable ledger still supplies the last success for history.
+    """
     router = SERVICES.get("router")
     out = []
-    names = ["gemini", "openai", "local"]
-    for name in names:
-        configured = None
+    for name in ["gemini", "openai", "local"]:
+        entry = {"id": name, "configured": None, "state": "unknown", "last_success_at": None,
+                 "last_failure_at": None, "last_error": None, "last_model": None,
+                 "provenance": "model router (this run) + agent-engine spend ledger"}
+        observed: Dict[str, Any] = {}
+        priced = None
         if router is not None:
-            from packages.contracts import ProviderName
-            provider = router.providers.get(ProviderName(name))
-            configured = bool(provider and provider.enabled and provider.is_healthy())
-        entry = {"id": name, "configured": configured, "state": "unknown", "last_success_at": None,
-                 "last_failure_at": None, "last_model": None, "provenance": "agent-engine spend ledger"}
+            from packages.contracts import ModelRequest, ProviderName
+            pname = ProviderName(name)
+            provider = router.providers.get(pname)
+            entry["configured"] = bool(provider and provider.enabled and provider.is_healthy())
+            if entry["configured"]:
+                try:
+                    _, price, billing = router._price_for(pname, provider, ModelRequest(prompt="status"))
+                    priced = price is not None or not billing
+                except Exception:
+                    priced = False
+            observed = router.observed_health(pname) if hasattr(router, "observed_health") else {}
         if engine is not None:
             with sqlite3.connect(engine.db_path) as db:
                 ok = db.execute("SELECT created, model FROM spend WHERE provider=? AND settled IS NOT NULL "
                                 "AND actual_usd IS NOT NULL AND COALESCE(simulated,0)=0 ORDER BY created DESC LIMIT 1",
                                 (name,)).fetchone()
-                bad = db.execute("SELECT created FROM spend WHERE settled IS NOT NULL AND provider IS NULL "
-                                 "ORDER BY created DESC LIMIT 1").fetchone()
             if ok:
                 entry["last_success_at"], entry["last_model"] = ok[0], ok[1]
-            if bad and name == "gemini":
-                entry["last_failure_at"] = bad[0]
-        if configured is False:
+        seen_ok, seen_bad = observed.get("last_success_at"), observed.get("last_failure_at")
+        if seen_ok and (not entry["last_success_at"] or seen_ok > entry["last_success_at"]):
+            entry["last_success_at"], entry["last_model"] = seen_ok, observed.get("last_model")
+        if seen_bad:
+            entry["last_failure_at"], entry["last_error"] = seen_bad, observed.get("last_error")
+
+        if entry["configured"] is False:
             entry["state"] = "not_configured"
-        elif entry["last_success_at"]:
-            recent = datetime.fromisoformat(entry["last_success_at"]) > datetime.now(timezone.utc) - timedelta(minutes=30)
-            failed_after = entry["last_failure_at"] and entry["last_failure_at"] > entry["last_success_at"]
-            entry["state"] = "degraded" if failed_after else ("verified_online" if recent else "unknown")
-        elif configured:
-            entry["state"] = "unknown"
+        elif entry["configured"] and priced is False:
+            entry["state"] = "needs_pricing"
+        elif seen_bad and (not seen_ok or seen_bad > seen_ok):
+            entry["state"] = "degraded"
+        elif seen_ok:
+            recent = datetime.fromisoformat(seen_ok) > datetime.now(timezone.utc) - timedelta(minutes=30)
+            entry["state"] = "verified_online" if recent else "configured"
+        elif entry["configured"]:
+            entry["state"] = "configured"
         out.append(entry)
     return out
 

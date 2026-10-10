@@ -19,7 +19,7 @@ INVENTORY = {item["id"] for item in get_capability_inventory()["items"]}
 
 def test_register_covers_live_registry_exactly():
     assert {c["id"] for c in REGISTER["capabilities"]} == INVENTORY
-    assert len(INVENTORY) == 26
+    assert len(INVENTORY) == 29
     for cap in REGISTER["capabilities"]:
         assert cap["required_level"] in gate.RANK and cap["local_evidence_level"] in gate.RANK
         assert cap["blockers"] or cap["required_level"] == "DEFERRED" or cap["local_evidence_level"] == cap["required_level"]

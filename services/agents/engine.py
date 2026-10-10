@@ -167,7 +167,7 @@ class AgentEngine:
             return env.encode("utf-8")
         key_file = self.root / ".receipt_key"
         if not key_file.exists():
-            with os.fdopen(os.open(str(key_file), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as fh:
+            with os.fdopen(os.open(str(key_file), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600), "wb") as fh:
                 fh.write(secrets.token_bytes(32))
         if os.name == "posix" and key_file.stat().st_mode & 0o077:
             raise PermissionError(f"Receipt key {key_file} must not be readable by other users")
@@ -235,11 +235,17 @@ class AgentEngine:
             db.execute("BEGIN IMMEDIATE")
             spent = db.execute("SELECT COALESCE(SUM(COALESCE(actual_usd, reserved_usd)),0) FROM spend "
                                "WHERE mission_id=?", (mission["id"],)).fetchone()[0]
-            if estimate == float("inf") or spent + estimate > mission["budget_usd"]:
+            if estimate == float("inf"):
+                db.execute("ROLLBACK")
+                raise MissionBudgetExceeded(
+                    "No price on file for the model this mission would call, so its cost can't be "
+                    "bounded and HOOD refuses the call (unknown cost). Set prices in Settings > "
+                    "Model provider, or HOOD_MODEL_PRICING.")
+            if spent + estimate > mission["budget_usd"]:
                 db.execute("ROLLBACK")
                 raise MissionBudgetExceeded(
                     f"Mission budget ${mission['budget_usd']:.4f} would be exceeded "
-                    f"(spent ${spent:.4f}, next call up to {'unknown' if estimate == float('inf') else f'${estimate:.4f}'})")
+                    f"(spent ${spent:.4f}, next call up to ${estimate:.4f})")
             db.execute("INSERT INTO spend (call_id, mission_id, task_id, reserved_usd, created) VALUES (?,?,?,?,?)",
                        (call_id, mission["id"], task_id, estimate, _now()))
             db.execute("COMMIT")

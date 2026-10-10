@@ -33,7 +33,15 @@ class ModelPrice:
     source: str
 
 
+def settings_pricing_file() -> Path:
+    """Prices the owner saved in the UI (Settings > Model provider)."""
+    return Path(os.environ.get("HOOD_DATA_DIR") or (Path.home() / ".hood")).expanduser() / "model_pricing.json"
+
+
 def load_price_table(path: Optional[str] = None) -> Dict[str, Dict[str, ModelPrice]]:
+    """Explicit path, else the owner's Settings choice, else HOOD_MODEL_PRICING."""
+    if not path and settings_pricing_file().is_file():
+        path = str(settings_pricing_file())
     path = path or os.environ.get("HOOD_MODEL_PRICING")
     if not path:
         return {}

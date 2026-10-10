@@ -18,7 +18,7 @@ def test_source_presence_does_not_claim_live_connection():
     by_id = {i['id']: i for i in get_capability_inventory()['items']}
     assert by_id['orchestrator']['status'] == 'MODULE_ONLY'
     assert by_id['openai']['status'] == 'MODULE_ONLY'
-    assert by_id['voice']['status'] == 'PLACEHOLDER'
+    assert by_id['voice']['status'] == 'MODULE_ONLY'   # real code, but not attached here
     assert by_id['freelance']['status'] == 'PLACEHOLDER'
     assert by_id['gemini']['status'] != 'ATTACHED_UNVERIFIED'
 
