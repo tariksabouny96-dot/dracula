@@ -11,10 +11,10 @@ Branches (nothing merged, nothing deployed, no hosting bought, no paid API calls
 
 | Where | Result |
 |---|---|
-| Local, full suite (Phase 4 branch) | 598 passed, 6 skipped (the 6 need live internet or a paid key: off by design) |
+| Local, full suite (Phase 4 branch) | 599 passed, 6 skipped (the 6 need live internet or a paid key: off by design) |
 | Local, full suite (security branch) | 580 passed |
 | GitHub CI (`ci`: Linux and Windows test suites, dependency audit, secret scan, container smoke test, preproduction gate) | green on both branches |
-| arm64 runner, full suite with real headless Chromium | 576 passed, 28 skipped (the runner host blocks user namespaces; those sandbox tests run inside gVisor below) |
+| arm64 runner, full suite with real headless Chromium | 576 passed, 28 skipped (the runner host blocks user namespaces; those sandbox tests run inside gVisor below). One unexplained failure in 8 arm64 runs: a browser login waited over 30 s (`test_layout_persists_per_user`, run on `d963cbe`); not reproduced on the next runs with the same code. To watch on the real ARM server. |
 | gVisor (runsc, systrap) on arm64 and x86 | Python 3.13, Node 22, PHP 8.3 (aarch64) run; HOOD's container is healthy; `unshare -rmn` works; headless Chromium works; HOOD's sandbox tests 5/5 pass (after the loopback fix in this batch) |
 | Release rehearsal (clean export, boot, one-time setup code, login, CSRF, chat, fail-closed mission, emergency stop, backup / verify / restore, reboot) | PASS (`release/staging/LOCAL_REHEARSAL.json`) |
 | `pip-audit -r requirements.txt` | no known vulnerabilities |
