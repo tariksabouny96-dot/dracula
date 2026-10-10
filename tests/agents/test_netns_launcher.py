@@ -46,7 +46,9 @@ def test_netlink_brings_loopback_up_when_the_ioctl_is_refused():
 
 @needs_netns
 def test_without_any_way_to_raise_loopback_the_command_still_runs_isolated():
-    code = PRELUDE + ("launcher.socket.if_nametoindex = lambda name: (_ for _ in ()).throw(OSError('no netlink'))\n"
+    # Nothing works: both ioctls refused (gVisor's lo may already be up, so the query is refused too) and no netlink.
+    code = PRELUDE + ("launcher.fcntl.ioctl = lambda *a: (_ for _ in ()).throw(OSError(errno.ENOTTY, 'refused'))\n"
+                      "launcher.socket.if_nametoindex = lambda name: (_ for _ in ()).throw(OSError('no netlink'))\n"
                       "assert not launcher.loopback_up()\n"
                       f"sys.argv = ['launcher', sys.executable, '-I', '-c', {PROBE!r}]\n"
                       "launcher.main()\n")
