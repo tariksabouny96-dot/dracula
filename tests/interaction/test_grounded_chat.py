@@ -116,3 +116,34 @@ def test_mission_brief_falls_back_to_the_owners_own_words():
     out = svc.draft_mission_objective(sid)
     assert not out["drafted"] and "Build a menu page for the cafe." in out["objective"]
     assert "quota exhausted" in out["note"]
+
+
+def _with_memory(tmp_path, router):
+    from services.memory.service import MemoryService
+    svc = InteractionService(commander=SimpleNamespace(model_router=router), approval_service=ApprovalService(),
+                             memory_service=MemoryService(db_path=tmp_path / "mem.db"))
+    svc.status_facts = lambda: []
+    return svc
+
+
+def test_chat_replies_are_not_saved_as_memories(tmp_path):
+    """Owner's run: Memory showed "Zak: ... | Hood: <invented answer>" cards at 0.95 confidence."""
+    svc = _with_memory(tmp_path, Router(text="Your firewall is fully secure."))
+    svc.handle_text_input("How secure am I?", session_id="user:owner")
+    stored = svc.memory_service.query_memories(project="conversation") + \
+        svc.memory_service.query_memories(project="personal")
+    assert stored == []
+
+
+def test_remember_command_saves_the_owners_words_and_grounds_later_answers(tmp_path):
+    router = Router(text="Noted.")
+    svc = _with_memory(tmp_path, router)
+    reply = svc.handle_text_input("Remember that the coffee shop is called Bean There.", session_id="user:owner")
+    assert "Saved to memory" in reply.text and router.requests == []          # no model call needed
+    facts = [m.content for m in svc.memory_service.query_memories(project="personal")]
+    assert facts == ["The coffee shop is called Bean There"]
+    svc.handle_text_input("souviens-toi que le café ouvre à 7h", session_id="user:owner")
+    assert len(svc.memory_service.query_memories(project="personal")) == 2
+    assert "Saved" not in svc.handle_text_input("Remember when we talked?", session_id="user:owner").text
+    svc.handle_text_input("What should the homepage headline say?", session_id="user:owner")
+    assert "The coffee shop is called Bean There" in router.requests[-1].prompt

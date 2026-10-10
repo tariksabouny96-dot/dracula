@@ -12,6 +12,9 @@ Flow (each arrow is a persisted state change):
                PASS -> artifact zip hashed and registered -> COMPLETED
                FAIL -> repair task with the failure report (bounded) or FAILED
                no usable evidence -> UNVERIFIED
+               website missions (profile static_web) are checked by reading files only;
+               no sandbox on this host -> BLOCKED until the owner approves running the
+               fixed checks on this computer ("Run on my PC"), bound to the workspace hash
     cancel  -> CANCELLED (running processes killed; late results rejected by fence)
     stop    -> emergency stop latch: no new step, processes killed, running work BLOCKED
 
@@ -36,13 +39,14 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from packages.contracts import ModelRequest, ModelResponse
-from packages.security import StopLatch, EmergencyStopActive
-from .contracts import (SCHEMA_VERSION, TERMINAL_MISSION_STATES, AgentRole, AgentWorkProduct, MissionPlan,
-                        MissionState, PlannedTask, ReviewReport, TaskState, VerificationDecision,
-                        VerificationVerdict)
+from packages.security import EmergencyStopActive, PathConfinementError, StopLatch, confine_path
+from .contracts import (PROFILE_WRITE_ROOTS, SCHEMA_VERSION, TERMINAL_MISSION_STATES, AgentRole,
+                        AgentWorkProduct, MissionPlan, MissionProfile, MissionState, PlannedTask, ReviewReport,
+                        TaskState, VerificationDecision, VerificationVerdict)
 from .planner import PlanRejected, plan_mission
-from .sandbox import SandboxUnavailable, SandboxViolation, Workspace
+from .sandbox import IGNORED_DIRS, SandboxUnavailable, SandboxViolation, Workspace, sandbox_problem
 from .specialists import AgentOutputRejected, run_specialist
+from .static_web import SITE_ROOT, verify_static_site
 from .verifier import verify
 from services.model_gateway.cost_controller import BudgetExceededError
 from services.model_gateway.base import ProviderNotConfiguredError
@@ -50,6 +54,15 @@ from services.model_gateway.base import ProviderNotConfiguredError
 LEASE_SECONDS = 600
 MAX_REPAIRS = 2
 MAX_TASK_ATTEMPTS = 3
+ACCEPTANCE_CHECKS = ("independent_acceptance_tests", "independent_acceptance_checks")
+PYTHON_CHECK_COMMANDS = ["python -m compileall app", "python -m pytest tests", "python -m pytest qa_tests"]
+LOCAL_RUN_WAITING = ("No sandbox on this computer: the checks need your approval to run directly on this PC "
+                     "(\"Run on my PC\"), or run HOOD in WSL2/Linux.")
+MAX_VIEW_BYTES = 200_000
+PREVIEW_TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
+                 ".js": "text/javascript; charset=utf-8", ".json": "application/json",
+                 ".txt": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8",
+                 ".svg": "image/svg+xml", ".csv": "text/plain; charset=utf-8"}
 
 
 class MissionConflict(RuntimeError):
@@ -156,6 +169,12 @@ class AgentEngine:
                 seq INTEGER PRIMARY KEY AUTOINCREMENT, mission_id TEXT NOT NULL, ts TEXT NOT NULL,
                 actor TEXT NOT NULL, kind TEXT NOT NULL, detail TEXT NOT NULL);
             """)
+            # Additive columns (older databases keep working): mission kind and "Run on my PC" approval.
+            have = {r[1] for r in db.execute("PRAGMA table_info(missions)")}
+            for col, ddl in (("profile", "TEXT NOT NULL DEFAULT 'python_app'"), ("local_run_request", "TEXT"),
+                             ("local_run_sha", "TEXT"), ("local_run_by", "TEXT")):
+                if col not in have:
+                    db.execute(f"ALTER TABLE missions ADD COLUMN {col} {ddl}")
 
     def _event(self, db, mission_id: str, actor: str, kind: str, detail: Any = ""):
         db.execute("INSERT INTO events (mission_id, ts, actor, kind, detail) VALUES (?,?,?,?,?)",
@@ -212,12 +231,23 @@ class AgentEngine:
                    (state.value, _now(), *fields.values(), mission_id))
         self._event(db, mission_id, actor, "STATE", {"state": state.value, **fields})
 
+    def _profile(self, mission_id: str) -> MissionProfile:
+        with self._db() as db:
+            row = db.execute("SELECT profile FROM missions WHERE id=?", (mission_id,)).fetchone()
+        return MissionProfile(row["profile"] if row and row["profile"] else MissionProfile.PYTHON_APP.value)
+
     def _workspace(self, mission_id: str) -> Workspace:
+        with self._ws_lock:
+            ws = self._workspaces.get(mission_id)
+        if ws is not None:
+            return ws
+        profile = self._profile(mission_id)
         with self._ws_lock:
             ws = self._workspaces.get(mission_id)
             if ws is None:
                 ws = Workspace(self.root / "workspaces" / mission_id, self.stop_latch,
-                               require_network_isolation=self.require_network_isolation)
+                               require_network_isolation=self.require_network_isolation,
+                               write_roots=PROFILE_WRITE_ROOTS[profile])
                 self._workspaces[mission_id] = ws
             return ws
 
@@ -289,9 +319,16 @@ class AgentEngine:
                 "unsettled_calls": sum(1 for r in rows if r["settled"] is None)}
 
     # ================================================================ lifecycle
-    def create_mission(self, owner: str, objective: str, budget_usd: float = 1.0) -> Dict[str, Any]:
+    def create_mission(self, owner: str, objective: str, budget_usd: float = 1.0,
+                       profile: str = MissionProfile.PYTHON_APP.value) -> Dict[str, Any]:
+        """``profile``: "python_app" (verified by running tests in the sandbox) or "static_web"
+        (a website verified by reading its files; nothing it contains is run)."""
         if not isinstance(owner, str) or not owner:
             raise ValueError("Authenticated owner required")
+        try:
+            profile = MissionProfile(profile)
+        except ValueError:
+            raise ValueError("Mission kind must be python_app or static_web") from None
         if not isinstance(objective, str) or not 10 <= len(objective.strip()) <= 8000:
             raise ValueError("Objective must be 10-8000 characters")
         if not isinstance(budget_usd, (int, float)) or not 0 <= budget_usd <= 100:
@@ -300,14 +337,15 @@ class AgentEngine:
         mission_id = "agm_" + uuid.uuid4().hex
         with self._db() as db:
             db.execute("INSERT INTO missions (id, owner, objective, state, budget_usd, created, updated, "
-                       "schema_version) VALUES (?,?,?,?,?,?,?,?)",
+                       "schema_version, profile) VALUES (?,?,?,?,?,?,?,?,?)",
                        (mission_id, owner, objective.strip(), MissionState.PLANNING.value, float(budget_usd),
-                        _now(), _now(), SCHEMA_VERSION))
-            self._event(db, mission_id, owner, "CREATED", {"budget_usd": budget_usd})
+                        _now(), _now(), SCHEMA_VERSION, profile.value))
+            self._event(db, mission_id, owner, "CREATED", {"budget_usd": budget_usd, "profile": profile.value})
         mission = self._mission(owner, mission_id)
         try:
             plan, response = plan_mission(objective.strip(),
-                                          lambda req: self._call_model(mission, None, req), mission_id=mission_id)
+                                          lambda req: self._call_model(mission, None, req), mission_id=mission_id,
+                                          profile=profile)
         except (PlanRejected, AgentOutputRejected, MissionBudgetExceeded, BudgetExceededError,
                 EmergencyStopActive) as exc:
             with self._db() as db:
@@ -349,11 +387,15 @@ class AgentEngine:
                 raise MissionConflict("Approval does not match the current plan")
             db.execute("UPDATE tasks SET state=?, updated=? WHERE mission_id=? AND state=?",
                        (TaskState.QUEUED.value, _now(), mission_id, TaskState.CREATED.value))
+            profile = MissionProfile(mission["profile"] or MissionProfile.PYTHON_APP.value)
+            roots = PROFILE_WRITE_ROOTS[profile]
             self._receipt(db, mission_id, None, "PLAN_APPROVAL", {
                 "plan_sha256": plan_sha256, "approved_by": approver, "budget_usd": mission["budget_usd"],
-                "scope": {"workspace": f"workspaces/{mission_id}", "network": "none",
-                          "commands": ["python -m compileall app", "python -m pytest tests", "python -m pytest qa_tests"],
-                          "role_write_roots": {"engineer": ["app", "tests"], "qa": ["qa_tests"], "reviewer": []}}})
+                "scope": {"workspace": f"workspaces/{mission_id}", "network": "none", "profile": profile.value,
+                          "commands": [] if profile == MissionProfile.STATIC_WEB else PYTHON_CHECK_COMMANDS,
+                          "verification": ("static file checks; the site's code is never run"
+                                           if profile == MissionProfile.STATIC_WEB else "sandboxed test run"),
+                          "role_write_roots": {r.value: list(v) for r, v in roots.items()}}})
             self._set_state(db, mission_id, MissionState.QUEUED, approver, approved_by=approver, approved_at=_now())
             db.execute("COMMIT")
         return self.status(owner, mission_id)
@@ -483,6 +525,9 @@ class AgentEngine:
                        "updated=? WHERE mission_id=? AND task_id=?",
                        (TaskState.RUNNING.value, self.worker_id, expires, fence,
                         0 if ready["proposal"] else 1, _now(), mission_id, ready["task_id"]))
+            self._event(db, mission_id, self.worker_id, "TASK_STARTED",
+                        {"task_id": ready["task_id"], "role": ready["role"], "title": ready["title"],
+                         "attempt": ready["attempts"] + (0 if ready["proposal"] else 1)})
             if state == MissionState.QUEUED:
                 self._set_state(db, mission_id, MissionState.RUNNING, self.worker_id)
             db.execute("COMMIT")
@@ -538,7 +583,8 @@ class AgentEngine:
                 parsed, response = run_specialist(
                     task, mission["objective"], ws.read_files(),
                     lambda req: self._call_model(mission, task.id, req), mission_id=mission_id,
-                    failure=task_row["failure_context"], interface_contract=plan.get("interface_contract", ""))
+                    failure=task_row["failure_context"], interface_contract=plan.get("interface_contract", ""),
+                    profile=mission["profile"] or MissionProfile.PYTHON_APP.value)
                 output = {"schema": "review" if task.role == AgentRole.REVIEWER else "work",
                           "data": parsed.model_dump(mode="json"),
                           "provider": getattr(response.provider, "value", str(response.provider)),
@@ -601,11 +647,24 @@ class AgentEngine:
     def _verify(self, owner: str, mission_id: str) -> Dict[str, Any]:
         ws = self._workspace(mission_id)
         terminal = None  # set to (state, reason, objective) when the mission ends here
-        try:
-            decision = verify(ws)
-        except SandboxUnavailable as exc:
-            decision = VerificationDecision(verdict=VerificationVerdict.UNVERIFIED, checks=[],
-                                            workspace_sha256=ws.digest(), reason=str(exc))
+        profile = self._profile(mission_id)
+        execution = "none: files read, nothing run" if profile == MissionProfile.STATIC_WEB else "sandbox"
+        if profile == MissionProfile.STATIC_WEB:
+            decision = verify_static_site(ws)
+        else:
+            unisolated = False
+            problem = sandbox_problem(self.require_network_isolation)
+            if problem:
+                digest = ws.digest()
+                approved_sha = self._mission(owner, mission_id)["local_run_sha"]
+                if not (approved_sha and hmac.compare_digest(approved_sha, digest)):
+                    return self._request_local_run(owner, mission_id, digest, problem)
+                unisolated, execution = True, "owner-approved run on this computer (no isolation)"
+            try:
+                decision = verify(ws, unisolated=unisolated)
+            except SandboxUnavailable as exc:
+                decision = VerificationDecision(verdict=VerificationVerdict.UNVERIFIED, checks=[],
+                                                workspace_sha256=ws.digest(), reason=str(exc))
         if self.stop_latch.engaged:
             # Processes may have been killed by the stop: that is not evidence of failure.
             with self._db() as db:
@@ -621,22 +680,39 @@ class AgentEngine:
             self._receipt(db, mission_id, None, "VERIFICATION", {
                 "verdict": decision.verdict.value, "workspace_sha256": decision.workspace_sha256,
                 "checks": [{"name": c.name, "exit_code": c.exit_code, "passed": c.passed,
-                            "tests_collected": c.tests_collected, "suite_invalid": c.suite_invalid}
+                            "tests_collected": c.tests_collected, "suite_invalid": c.suite_invalid,
+                            # Static reports lead with the summary; test runs end with it.
+                            "output_tail": (c.output_tail[:2500] if c.command[:1] == ["static-check"]
+                                            else c.output_tail[-1500:])}
                            for c in decision.checks],
-                "network_isolated": ws.network_isolated, "verifier": "deterministic-process-checks"})
+                "network_isolated": ws.network_isolated and execution == "sandbox", "execution": execution,
+                "verifier": ("deterministic-static-checks" if profile == MissionProfile.STATIC_WEB
+                             else "deterministic-process-checks")})
+            self._event(db, mission_id, "verifier", "VERIFIED", {
+                "verdict": decision.verdict.value, "reason": decision.reason[:300],
+                "checks": {c.name: c.passed for c in decision.checks}})
             if decision.verdict == VerificationVerdict.PASS:
                 db.execute("COMMIT")
                 return self._package(owner, mission_id, decision)
             if decision.verdict == VerificationVerdict.FAIL and mission["repairs"] < MAX_REPAIRS:
                 n = mission["repairs"] + 1
-                broken_qa = any(c.suite_invalid for c in decision.checks if c.name == "independent_acceptance_tests")
+                broken_qa = any(c.suite_invalid for c in decision.checks if c.name in ACCEPTANCE_CHECKS)
                 failing = [c for c in decision.checks if not c.passed]
                 report = "\n\n".join(f"[{c.name}] exit={c.exit_code}\n{c.output_tail[-3000:]}" for c in failing)
-                if broken_qa:
+                if broken_qa and profile == MissionProfile.STATIC_WEB:
+                    role, repair_id, title = AgentRole.QA, f"qa_repair_{n}", "Repair malformed acceptance checks"
+                    instructions = ("Your acceptance checks file is malformed (see the report). Rewrite it in the "
+                                    "required format, keep checking the objective through the interface contract, "
+                                    "and do not drop requirements.")
+                elif broken_qa:
                     # The acceptance suite cannot even be collected: the QA agent fixes its own tests.
                     role, repair_id, title = AgentRole.QA, f"qa_repair_{n}", "Repair broken acceptance tests"
                     instructions = ("Your acceptance tests could not be collected. Fix them so they run, keep testing the "
                                     "objective through the interface contract only, and do not weaken assertions.")
+                elif profile == MissionProfile.STATIC_WEB:
+                    role, repair_id, title = AgentRole.ENGINEER, f"repair_{n}", "Repair failing checks"
+                    instructions = ("Fix the website so that the failing independent checks pass. Rewrite every "
+                                    "file you change completely. Do not remove required content.")
                 else:
                     role, repair_id, title = AgentRole.ENGINEER, f"repair_{n}", "Repair failing checks"
                     instructions = ("Fix the application so that the failing independent checks pass. "
@@ -647,7 +723,7 @@ class AgentEngine:
                            (mission_id, repair_id, seq, role.value, title, instructions, "[]", TaskState.QUEUED.value,
                             report, _now()))
                 self._set_state(db, mission_id, MissionState.RUNNING, "verifier", repairs=n,
-                                verdict=decision.verdict.value, error=decision.reason)
+                                verdict=decision.verdict.value, error=decision.reason, local_run_request=None)
             else:
                 final = MissionState.FAILED if decision.verdict == VerificationVerdict.FAIL else MissionState.UNVERIFIED
                 self._set_state(db, mission_id, final, "verifier", verdict=decision.verdict.value,
@@ -659,6 +735,139 @@ class AgentEngine:
                                "failure" if terminal[0] == MissionState.FAILED.value else "unverified",
                                terminal[1] or "")
         return self.status(owner, mission_id)
+
+    # ================================================================ "Run on my PC"
+    def _settings_path(self) -> Path:
+        return self.root / "settings.json"
+
+    def local_run_settings(self) -> Dict[str, Any]:
+        """Owner setting (off by default) plus whether this host has a sandbox at all."""
+        data: Dict[str, Any] = {}
+        try:
+            data = json.loads(self._settings_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
+        problem = sandbox_problem(self.require_network_isolation)
+        return {"allow_local_run": bool(data.get("allow_local_run")), "changed_by": data.get("changed_by"),
+                "changed_at": data.get("changed_at"), "sandbox_available": problem is None,
+                "sandbox_problem": problem, "commands": PYTHON_CHECK_COMMANDS}
+
+    def set_local_run(self, enabled: bool, actor: str) -> Dict[str, Any]:
+        if not isinstance(enabled, bool):
+            raise ValueError("allow_local_run must be true or false")
+        path = self._settings_path()
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps({"allow_local_run": enabled, "changed_by": actor, "changed_at": _now()}),
+                       encoding="utf-8")
+        os.replace(tmp, path)
+        return self.local_run_settings()
+
+    def _request_local_run(self, owner: str, mission_id: str, digest: str, problem: str) -> Dict[str, Any]:
+        """No sandbox here: stop and ask the owner, bound to these exact files. Nothing runs yet."""
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            mission = self._mission(owner, mission_id, db)
+            if mission["state"] != MissionState.VERIFYING.value:
+                db.execute("ROLLBACK")
+                return self.status(owner, mission_id)
+            self._set_state(db, mission_id, MissionState.BLOCKED, "verifier",
+                            error=f"{LOCAL_RUN_WAITING} [{problem}]", local_run_request=digest)
+            self._event(db, mission_id, "verifier", "LOCAL_RUN_REQUESTED",
+                        {"workspace_sha256": digest, "commands": PYTHON_CHECK_COMMANDS, "reason": problem})
+            db.execute("COMMIT")
+        return self.status(owner, mission_id)
+
+    def approve_local_run(self, owner: str, mission_id: str, workspace_sha256: str, approver: str) -> Dict[str, Any]:
+        """Owner approves running the fixed checks on this computer, for these exact files only.
+
+        Any later change to the files (a repair round) needs a new approval.
+        """
+        self.stop_latch.check()
+        if not self.local_run_settings()["allow_local_run"]:
+            raise MissionConflict("\"Run on my PC\" is turned off. Turn it on in Settings > Agents first.")
+        ws = self._workspace(mission_id)
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            mission = self._mission(owner, mission_id, db)
+            requested = mission["local_run_request"]
+            if mission["state"] != MissionState.BLOCKED.value or not requested:
+                db.execute("ROLLBACK")
+                raise MissionConflict("This mission is not waiting for a \"Run on my PC\" approval")
+            if not isinstance(workspace_sha256, str) or not hmac.compare_digest(workspace_sha256, requested) \
+                    or ws.digest() != requested:
+                db.execute("ROLLBACK")
+                raise MissionConflict("The mission's files changed since you were asked; review them again")
+            self._receipt(db, mission_id, None, "LOCAL_RUN_APPROVAL", {
+                "workspace_sha256": requested, "approved_by": approver, "commands": PYTHON_CHECK_COMMANDS,
+                "isolation": "none (no network or filesystem isolation)", "environment": "scrubbed: no API keys",
+                "time_limits_s": {"compile": 60, "each_test_suite": 180}})
+            self._set_state(db, mission_id, MissionState.VERIFYING, approver, error=None, local_run_sha=requested,
+                            local_run_by=approver, local_run_request=None)
+            db.execute("COMMIT")
+        return self.status(owner, mission_id)
+
+    # ================================================================ workspace view (read-only)
+    def files(self, owner: str, mission_id: str) -> Dict[str, Any]:
+        """The mission's files as they are now (verified or not), with which agent wrote each."""
+        self._mission(owner, mission_id)
+        ws = self._workspace(mission_id)
+        writers: Dict[str, Dict[str, Any]] = {}
+        with self._db() as db:
+            for row in db.execute("SELECT task_id, body FROM receipts WHERE mission_id=? AND kind='FILE_WRITES' "
+                                  "ORDER BY created", (mission_id,)):
+                body = json.loads(row["body"])
+                for f in body.get("files", []):
+                    writers[f["path"]] = {"task_id": row["task_id"], "role": body.get("role")}
+        out = []
+        for rel in ws.listing(limit=500):
+            try:
+                size = (ws.root / rel).stat().st_size
+            except OSError:
+                continue
+            out.append({"path": rel, "bytes": size, "written_by": writers.get(rel)})
+        return {"files": out, "folder": str(ws.root)}
+
+    def read_file(self, owner: str, mission_id: str, rel: str) -> Dict[str, Any]:
+        self._mission(owner, mission_id)
+        ws = self._workspace(mission_id)
+        try:
+            target = confine_path(ws.root, rel, label="mission file")
+        except PathConfinementError:
+            raise KeyError("File not found") from None
+        parts = target.relative_to(ws.root).parts
+        if target.is_symlink() or not target.is_file() or set(parts) & IGNORED_DIRS or parts[0].startswith("."):
+            raise KeyError("File not found")
+        with open(target, "rb") as fh:
+            data = fh.read(MAX_VIEW_BYTES + 1)
+        return {"path": target.relative_to(ws.root).as_posix(), "bytes": target.stat().st_size,
+                "truncated": len(data) > MAX_VIEW_BYTES,
+                "text": data[:MAX_VIEW_BYTES].decode("utf-8", errors="replace")}
+
+    def preview_token(self, mission_id: str) -> str:
+        """Unguessable per-mission capability for the website preview (no session cookie needed)."""
+        return hmac.new(self._receipt_key, b"preview:" + mission_id.encode("utf-8"), hashlib.sha256).hexdigest()[:40]
+
+    def preview_file(self, mission_id: str, token: str, rel: str) -> tuple[bytes, str]:
+        """Serve a website mission's site/ files for the browser preview. Raises KeyError if not allowed."""
+        if not isinstance(mission_id, str) or not mission_id.startswith("agm_") or not isinstance(token, str) \
+                or not hmac.compare_digest(self.preview_token(mission_id), token):
+            raise KeyError("Not found")
+        with self._db() as db:
+            row = db.execute("SELECT profile FROM missions WHERE id=?", (mission_id,)).fetchone()
+        if not row or row["profile"] != MissionProfile.STATIC_WEB.value:
+            raise KeyError("Not found")
+        site = self.root / "workspaces" / mission_id / SITE_ROOT
+        rel = rel or "index.html"
+        if rel.endswith("/"):
+            rel += "index.html"
+        try:
+            target = confine_path(site, rel, label="preview file")
+        except PathConfinementError:
+            raise KeyError("Not found") from None
+        mime = PREVIEW_TYPES.get(target.suffix.lower())
+        if mime is None or target.is_symlink() or not target.is_file():
+            raise KeyError("Not found")
+        return target.read_bytes(), mime
 
     def _package(self, owner: str, mission_id: str, decision: VerificationDecision) -> Dict[str, Any]:
         ws = self._workspace(mission_id)
@@ -716,7 +925,7 @@ class AgentEngine:
         mission = self._mission(owner, mission_id)
         with self._db() as db:
             tasks = [dict(r) for r in db.execute(
-                "SELECT task_id, role, title, depends_on, state, attempts, error, result FROM tasks "
+                "SELECT task_id, role, title, depends_on, state, attempts, error, result, updated FROM tasks "
                 "WHERE mission_id=? ORDER BY seq", (mission_id,))]
             artifact = db.execute("SELECT name, sha256, bytes, mime, created FROM artifacts WHERE mission_id=?",
                                   (mission_id,)).fetchone()
@@ -726,8 +935,18 @@ class AgentEngine:
             t["depends_on"] = json.loads(t["depends_on"])
             t["result"] = json.loads(t["result"]) if t["result"] else None
         plan = json.loads(mission["plan"]) if mission["plan"] else None
+        profile = mission["profile"] or MissionProfile.PYTHON_APP.value
+        web = profile == MissionProfile.STATIC_WEB.value
+        site_index = self.root / "workspaces" / mission_id / SITE_ROOT / "index.html"
         return {
             "mission_id": mission_id, "state": mission["state"], "objective": mission["objective"],
+            "profile": profile, "created": mission["created"], "updated": mission["updated"],
+            "preview_path": (f"/preview/{mission_id}/{self.preview_token(mission_id)}/index.html"
+                             if web and site_index.is_file() else None),
+            "local_run": {"awaiting_approval": mission["state"] == MissionState.BLOCKED.value
+                          and bool(mission["local_run_request"]),
+                          "workspace_sha256": mission["local_run_request"], "commands": PYTHON_CHECK_COMMANDS,
+                          "approved_sha256": mission["local_run_sha"], "approved_by": mission["local_run_by"]},
             "plan_sha256": mission["plan_sha256"], "plan": plan, "budget_usd": mission["budget_usd"],
             "approved_by": mission["approved_by"], "repairs": mission["repairs"],
             "provider_mode": mission["provider_mode"], "verdict": mission["verdict"], "error": mission["error"],
@@ -741,7 +960,7 @@ class AgentEngine:
     def list(self, owner: str) -> List[Dict[str, Any]]:
         with self._db() as db:
             return [dict(r) for r in db.execute(
-                "SELECT id, state, objective, provider_mode, verdict, created, updated FROM missions "
+                "SELECT id, state, objective, provider_mode, verdict, created, updated, profile FROM missions "
                 "WHERE owner=? ORDER BY created DESC LIMIT 100", (owner,))]
 
     def events_since(self, owner: str, cursor: int = 0, limit: int = 200) -> List[Dict[str, Any]]:

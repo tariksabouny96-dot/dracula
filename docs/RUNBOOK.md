@@ -17,8 +17,11 @@ py -3.13 -m venv .venv; .\.venv\Scripts\python.exe -m pip install -r requirement
 .\.venv\Scripts\python.exe -m pytest -q -rs
 .\.venv\Scripts\python.exe hood_cli.py ui --port 8999
 ```
-On Windows the agent sandbox has no network namespace, so agent execution **refuses to run**
-(missions end UNVERIFIED). Run agent missions on Linux (or WSL2) until a Windows sandbox exists.
+On Windows there is no sandbox for agent-written code:
+- **Website missions** (HTML/CSS/JS) work anyway: they are verified by reading the files; nothing is run.
+- **Python missions** stop before their checks and ask you. Either turn on **Settings › Agents › Run on
+  my PC** (each mission then asks you to run its fixed check commands directly on your PC, with no
+  isolation), or run HOOD in WSL2, where they get the Linux sandbox: see [WSL2.md](WSL2.md).
 
 First run: open http://127.0.0.1:8999, create the Root Owner, store the one-time recovery key offline.
 
@@ -75,7 +78,8 @@ Listening (speech-to-text) stays on Gemini. Removing the key switches back to Ge
 | Top bar `PROVIDER DEGRADED` | the last AI call failed; the reason is shown in the sidebar and in Settings | fix the cause shown, then **Test connection** |
 | Gemini HTTP 404 | a retired model was configured (e.g. `gemini-2.5-flash`) | leave `HOOD_GEMINI_*_MODEL` blank to use the defaults |
 | Browser page from another device / `421 Misdirected` | Hood binds 127.0.0.1 and checks the Host header | open it on the same machine at `http://127.0.0.1:<port>`; remote access goes through the Docker + Caddy setup below |
-| Agent missions end `UNVERIFIED` on Windows | no sandbox on Windows | run missions on Linux or WSL2 |
+| Python mission `BLOCKED`: "needs your approval to run directly on this PC" | no sandbox on Windows | approve it on the mission page (after turning on **Settings › Agents › Run on my PC**), or run HOOD in WSL2 ([WSL2.md](WSL2.md)); website missions don't need either |
+| Website preview: a cart or saved choice resets | the preview runs sandboxed (no storage, no internet) | open `site/index.html` from the mission folder (**Open folder** on the mission page) |
 | Voice page: `not_configured` | no key or no price for the voice models (or ElevenLabs key / voice ID / price missing) | set them in **Settings › Model provider** and **Settings › Voice** |
 | Voice: "Give consent for cloud audio first" | recordings are only sent to Google after you agree | press **Give consent for cloud audio** on the Voice page |
 | Voice: "Microphone permission denied" | the browser blocked the microphone | allow the microphone for `127.0.0.1` in the browser's site settings |

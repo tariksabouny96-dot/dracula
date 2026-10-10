@@ -60,7 +60,8 @@ def test_every_page_renders_cleanly(stack, viewport):  # noqa: F811
             if viewport["width"] < 800:
                 page.click("#menuToggle")
             page.click(f"#nav [data-page={name}]")
-            page.wait_for_selector(f"#crumb:has-text('{name.upper()}')", state="attached")
+            label = {"Intelligence": "System map"}.get(name, name)   # nav label differs from the page key
+            page.wait_for_selector(f"#crumb:has-text('{label.upper()}')", state="attached")
             page.wait_for_timeout(400)
             overflow = page.evaluate("document.documentElement.scrollWidth > window.innerWidth + 1")
             assert not overflow, f"{name} scrolls horizontally at {viewport['width']}px"
@@ -87,8 +88,8 @@ def test_mission_flow_from_new_console(stack):  # noqa: F811
         page.click("text=Plan mission")
         page.wait_for_selector("text=Approve plan & budget", timeout=30000)
         page.click("text=Approve plan & budget")
-        page.wait_for_selector("text=Run agents", timeout=15000)
-        page.click("text=Run agents")
+        page.wait_for_selector("button:has-text('Run agents')", timeout=15000)
+        page.click("button:has-text('Run agents')")
         page.wait_for_selector("text=Download verified result", timeout=120000)
         detail = page.inner_text(".mission-detail")
         assert "COMPLETED" in detail and "simulated" in detail.lower()

@@ -1330,3 +1330,60 @@ textarea.big { width: 100%; box-sizing: border-box; min-height: 110px; backgroun
   .top-search { min-width: 0; }
   .top-search input { min-width: 0; width: 100%; }
 }
+
+/* Mission live view */
+.missions-layout { grid-template-columns: minmax(260px, 2fr) minmax(0, 3fr); }
+.now-line { display: flex; align-items: center; gap: 8px; padding: 9px 12px; margin-bottom: 12px; border-radius: 10px;
+  background: #0b1a30; border: 1px solid #23395a; font-size: 13px; }
+.pulse { width: 9px; height: 9px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 0 0 #63dafa88; animation: pulse 1.6s infinite; flex: none; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 #63dafa88; } 70% { box-shadow: 0 0 0 9px #63dafa00; } 100% { box-shadow: 0 0 0 0 #63dafa00; } }
+.reduce-motion .pulse { animation: none; }
+.mission-section { border-top: 1px solid #ffffff12; padding: 6px 0; }
+.mission-section > summary { cursor: pointer; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: #8fa3bf;
+  padding: 8px 0; list-style-position: inside; }
+.mission-section > summary:hover { color: var(--txt); }
+.section-extra { margin-left: 8px; color: var(--muted); text-transform: none; letter-spacing: 0; }
+.section-body { padding: 2px 0 10px; }
+.pipeline { list-style: none; margin: 0; padding: 0 0 0 14px; border-left: 2px solid #23395a; }
+.pipe-step { position: relative; padding: 6px 0 10px 12px; }
+.pipe-step::before { content: ""; position: absolute; left: -21px; top: 10px; width: 10px; height: 10px; border-radius: 50%;
+  background: #0b1222; border: 2px solid #8fa3bf; }
+.pipe-step.good::before { border-color: #43e3a3; background: #43e3a3; }
+.pipe-step.info::before { border-color: #6fd3ff; background: #6fd3ff; }
+.pipe-step.warn::before { border-color: #f5c542; }
+.pipe-step.bad::before { border-color: #ff5d7a; background: #ff5d7a; }
+.pipe-role { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.pipe-title { font-size: 14px; margin: 2px 0 4px; }
+.pipe-meta { font-size: 12px; }
+.tick { color: var(--cyan); font-variant-numeric: tabular-nums; }
+.callout { border-radius: 12px; padding: 12px 14px; margin: 12px 0; border: 1px solid #23395a; background: #0b1a30; font-size: 13px; }
+.callout.warn { border-color: #f5c54266; background: #2a220d66; }
+.callout.good { border-color: #43e3a366; background: #0d2a2066; }
+.callout ul { margin: 6px 0; padding-left: 18px; }
+.file-list { list-style: none; margin: 6px 0; padding: 0; font-size: 13px; }
+.file-list li { padding: 3px 0; }
+.linkish { background: none; border: 0; padding: 0; color: var(--cyan); cursor: pointer; text-align: left; }
+.linkish:hover { text-decoration: underline; }
+.file-view { max-height: 60vh; overflow: auto; white-space: pre; background: #071021; border: 1px solid #1d3050; border-radius: 10px;
+  padding: 10px; font-family: "Fira Code", ui-monospace, monospace; font-size: 12px; line-height: 1.5; margin: 6px 0; }
+.output-block { padding: 8px 0; border-bottom: 1px solid #ffffff0d; font-size: 13px; }
+.check-row { padding: 6px 0; border-bottom: 1px solid #ffffff0d; font-size: 13px; }
+.check-row > summary { cursor: pointer; }
+.timeline { list-style: none; margin: 0; padding: 0; max-height: 360px; overflow: auto; font-size: 12.5px; }
+.timeline li { display: grid; grid-template-columns: 76px 1fr; gap: 8px; padding: 4px 0; border-bottom: 1px solid #ffffff08; }
+.timeline time { color: #6f85a5; font-variant-numeric: tabular-nums; }
+.pre-wrap { white-space: pre-wrap; }
+@media (max-width: 1100px) { .missions-layout { grid-template-columns: 1fr; } }
+
+/* System map navigation */
+.map-bar { display: flex; align-items: center; gap: 12px; margin: 0 0 12px; flex-wrap: wrap; }
+.crumbs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; }
+.crumbs b { color: var(--txt); }
+.crumb-sep { color: var(--muted); }
+.health-counts, .map-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12px; margin: 8px 0; }
+.map-legend { padding: 8px 14px 12px; color: var(--muted); }
+.hc { display: inline-flex; align-items: center; gap: 6px; }
+.hc::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--c, #8fa3bf); }
+.graph-mark { font-weight: 700; font-variant-numeric: tabular-nums; pointer-events: none; }
+.graph-node text { pointer-events: none; }
+.section-title { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: #8fa3bf; margin: 18px 0 10px; }

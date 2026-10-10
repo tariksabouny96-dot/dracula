@@ -55,11 +55,22 @@ class AgentRole(str, Enum):
     REVIEWER = "reviewer"      # reads the workspace and reports findings (no writes)
 
 
+class MissionProfile(str, Enum):
+    """What kind of work a mission produces; decides the write areas and how it is verified."""
+    PYTHON_APP = "python_app"    # Python program: verified by running its tests (needs a sandbox)
+    STATIC_WEB = "static_web"    # HTML/CSS/JS website: verified by reading files, nothing is run
+
+
 # Which workspace sub-trees each role may write. Enforced by the sandbox, not the prompt.
 ROLE_WRITE_ROOTS = {
     AgentRole.ENGINEER: ("app", "tests"),
     AgentRole.QA: ("qa_tests",),
     AgentRole.REVIEWER: (),
+}
+PROFILE_WRITE_ROOTS = {
+    MissionProfile.PYTHON_APP: ROLE_WRITE_ROOTS,
+    MissionProfile.STATIC_WEB: {AgentRole.ENGINEER: ("site",), AgentRole.QA: ("qa_checks",),
+                                AgentRole.REVIEWER: ()},
 }
 
 

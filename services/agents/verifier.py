@@ -24,7 +24,8 @@ def _count_tests(output: str) -> int:
     return total
 
 
-def verify(workspace: Workspace) -> VerificationDecision:
+def verify(workspace: Workspace, *, unisolated: bool = False) -> VerificationDecision:
+    """``unisolated``: the owner approved running these fixed checks directly on this computer."""
     digest_before = workspace.digest()
     checks = []
     has_app = any(p.startswith("app/") and p.endswith(".py") for p in workspace.listing())
@@ -32,13 +33,15 @@ def verify(workspace: Workspace) -> VerificationDecision:
     if not has_app:
         return VerificationDecision(verdict=VerificationVerdict.UNVERIFIED, checks=[],
                                     workspace_sha256=digest_before, reason="No application source under app/")
-    compile_check = workspace.run("compile", python_cmd("-m", "compileall", "-q", "app"), timeout=60)
+    compile_check = workspace.run("compile", python_cmd("-m", "compileall", "-q", "app"), timeout=60,
+                                  unisolated=unisolated)
     checks.append(compile_check)
     for name, target in (("engineer_unit_tests", "tests"), ("independent_acceptance_tests", "qa_tests")):
         if not (workspace.root / target).is_dir():
             continue
         result = workspace.run(name, python_cmd("-m", "pytest", "-q", "-p", "no:cacheprovider",
-                                                "--rootdir", ".", target), timeout=180)
+                                                "--rootdir", ".", target), timeout=180,
+                               unisolated=unisolated)
         result.tests_collected = _count_tests(result.output_tail)
         if result.exit_code == 5:  # pytest: no tests collected
             result.passed = False

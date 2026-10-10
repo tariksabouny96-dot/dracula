@@ -176,31 +176,62 @@ def agents(ctx):
             "providers": _provider_health(engine)}
 
 
+# Areas of the system map: what the owner uses HOOD for, not how the code is laid out.
+MAP_AREAS = [
+    ("talk", "Talk", "Chat and voice with HOOD", ("conversation", "voice")),
+    ("build", "Build", "Agents that plan, write, check and deliver work",
+     ("orchestrator", "development", "self_development", "tool_gateway", "artifacts")),
+    ("safety", "Safety", "Your approvals, X, emergency stop, firewall and audit",
+     ("governance", "x", "emergency", "firewall", "sentinel", "audit")),
+    ("models", "AI models", "The AI providers HOOD can use: cloud (Level 1), local (Level 2), its own (Level 3)",
+     ("gemini", "openai", "local_llm", "hood_model")),
+    ("memory", "Memory & learning", "What HOOD remembers and learns from finished missions",
+     ("memory", "learning", "evolution")),
+    ("computer", "Computer control", "Browser, desktop and other machines", ("browser", "desktop", "nodes")),
+    ("business", "Business", "Commerce, freelance work, marketing, calendar and email",
+     ("ecommerce", "freelance", "marketing", "economics", "calendar", "email")),
+]
+SECTION_PAGES = {"tab-command-deck": "Command", "tab-missions": "Missions", "tab-sentinel": "Sentinel",
+                 "tab-systems": "Integrations", "tab-intelligence": "Intelligence", "tab-desktop": "Desktop",
+                 "tab-memory": "Memory", "tab-economic": "Commerce"}
+
+
 @route("GET", r"/api/console/graph", permission="VIEW_PROJECT_DATA")
 def graph(ctx):
     engine = _engine(ctx)
     limit = min(int((ctx.query.get("limit") or ["20"])[0]), 100)
     nodes = [{"id": "hood", "type": "core", "label": "HOOD core", "state": "available", "provenance": "server"}]
     edges = []
+    area_of = {cap: key for key, _, _, caps in MAP_AREAS for cap in caps}
+    for key, label, description, _ in MAP_AREAS:
+        nodes.append({"id": "area:" + key, "type": "area", "label": label, "description": description,
+                      "provenance": "server"})
+        edges.append({"from": "hood", "to": "area:" + key, "type": "has_area"})
     for item in get_capability_inventory()["items"]:
         nid = "cap:" + item["id"]
+        area = area_of.get(item["id"], "build")
         nodes.append({"id": nid, "type": "capability", "label": item["name"], "group": item["category"],
+                      "area": area, "description": item.get("description"),
+                      "page": SECTION_PAGES.get(item.get("section") or ""),
                       "state": item["live"]["state"], "detail": item["live"].get("detail"), "provenance": "registry"})
         edges.append({"from": "hood", "to": nid, "type": "has_capability"})
+        edges.append({"from": "area:" + area, "to": nid, "type": "in_area"})
     for role in AGENT_ROLES:
         nid = "agent:" + role["id"]
-        nodes.append({"id": nid, "type": "agent", "label": role["name"], "state": "available", "provenance": "engine"})
+        nodes.append({"id": nid, "type": "agent", "label": role["name"], "state": "available",
+                      "description": role["duty"], "provenance": "engine"})
         edges.append({"from": "cap:orchestrator", "to": nid, "type": "uses_agent"})
     if engine is not None:
         for m in engine.list(ctx.user_id)[:limit]:
             mid = "mission:" + m["id"]
             nodes.append({"id": mid, "type": "mission", "label": m["objective"][:80], "state": m["state"],
+                          "description": m["objective"][:400], "profile": m.get("profile"),
                           "updated": m["updated"], "provenance": "agent-engine"})
             edges.append({"from": "cap:orchestrator", "to": mid, "type": "has_mission"})
             for t in engine.status(ctx.user_id, m["id"])["tasks"]:
                 tid = f"task:{m['id']}:{t['task_id']}"
                 nodes.append({"id": tid, "type": "task", "label": t["title"], "state": t["state"],
-                              "provenance": "agent-engine"})
+                              "role": t["role"], "mission": mid, "provenance": "agent-engine"})
                 edges.append({"from": mid, "to": tid, "type": "has_task"})
                 edges.append({"from": tid, "to": "agent:" + t["role"], "type": "assigned_role"})
                 for dep in t["depends_on"]:

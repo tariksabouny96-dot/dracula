@@ -193,7 +193,6 @@ class InteractionService:
             else:
                 session.ui_state = UIState.IDLE
 
-        self._persist_conversation_summary(session, user_msg, reply_msg)
         return reply_msg
 
     def handle_voice_input(self, audio_data: bytes, session_id: Optional[str] = None) -> ConversationMessage:
@@ -241,7 +240,6 @@ class InteractionService:
                 session.ui_state = UIState.IDLE
             session.current_speaking_message_id = None
 
-        self._persist_conversation_summary(session, user_msg, reply_msg)
         return reply_msg
 
     def trigger_barge_in_interruption(self, session_id: Optional[str] = None) -> None:
@@ -416,6 +414,25 @@ class InteractionService:
                 "No changes have been made."
             )
 
+        # 5a. Explicit memory: "remember that ..." / "souviens-toi que ..." (stored as the owner said it)
+        remember = re.match(r"^\s*(?:please\s+)?(?:(?:remember|don't forget|do not forget)\s+(?:that\s+)?|note\s+that\s+)"
+                            r"(.{3,600}?)[.!]?\s*$"
+                            r"|^\s*(?:souviens[- ]toi|rappelle[- ]toi|retiens|note)\s+(?:que\s+|qu')(.{3,600}?)[.!]?\s*$",
+                            prompt, re.IGNORECASE | re.S)
+        if remember and self.memory_service and not prompt.strip().endswith("?"):
+            fact = (remember.group(1) or remember.group(2) or "").strip()
+            mem = MemoryObject(
+                memory_id=f"mem_fact_{uuid.uuid4().hex[:8]}", type=MemoryType.EPISODIC,
+                content=fact[0].upper() + fact[1:], project="personal",
+                principal=self._principal_username(session.session_id), source="user_chat",
+                source_agent="Zak", confidence=1.0)
+            session.ui_state = UIState.IDLE
+            try:
+                self.memory_service.write_memory(mem, caller_agent="Zak")
+            except Exception as exc:
+                return f"I couldn't save that to memory: {exc}"
+            return f"Saved to memory (you can see it on the Memory page): {mem.content}"
+
         # 5. Entity Declaration Check (e.g. "Grey is my dog", "Grey is my friend", "Alex is my colleague")
         entity_decl_match = re.match(r"^\s*([A-Za-z0-9_\-]+)\s+is\s+my\s+([A-Za-z0-9_\-\s]+?)[.!]?\s*$", prompt, re.IGNORECASE)
         if entity_decl_match:
@@ -452,9 +469,9 @@ class InteractionService:
                 if self.memory_service:
                     try:
                         principal = self._principal_username(session.session_id)
+                        # Only facts the owner declared; old chat logs may hold HOOD's unverified replies.
                         p_mems = self.memory_service.query_memories(project="personal", principal=principal)
-                        c_mems = self.memory_service.query_memories(project="conversation", principal=principal)
-                        for m in p_mems + c_mems:
+                        for m in p_mems:
                             if q_lower in m.content.lower():
                                 found_facts.append(m.content)
                     except Exception:
@@ -889,31 +906,6 @@ class InteractionService:
         return res_payload
 
     # =========================================================================
-    # MEMORY PERSISTENCE & PRIVACY
+    # MEMORY: only what the owner declares. Chat turns live in the conversation store;
+    # HOOD's own replies are never saved as memories (they are not verified facts).
     # =========================================================================
-
-    def _persist_conversation_summary(
-        self,
-        session: InteractionSession,
-        user_msg: ConversationMessage,
-        hood_msg: ConversationMessage
-    ) -> None:
-        """Stores structured transcript and decisions in durable memory. Raw audio is NOT stored."""
-        if not self.memory_service:
-            return
-        content = f"Zak ({user_msg.modality}): {user_msg.text} | Hood: {hood_msg.text}"
-        mem_id = f"mem_{uuid.uuid4().hex[:12]}"
-        mem = MemoryObject(
-            memory_id=mem_id,
-            type=MemoryType.EPISODIC,
-            content=content,
-            project="conversation",
-            principal=self._principal_username(session.session_id),
-            source="user_chat",
-            source_agent="Zak",
-            confidence=0.95
-        )
-        try:
-            self.memory_service.write_memory(mem, caller_agent="Zak")
-        except Exception:
-            pass

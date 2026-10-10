@@ -662,6 +662,9 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
         if not self._host_allowed():
             self._send_json({"error": "Host not allowed"}, status=421)
             return
+        if self.path.startswith("/preview/"):
+            self._preview_get()
+            return
         # Unauthenticated auth check
         if self.path == "/api/auth/status":
             auth_enabled = self.auth_service is not None
@@ -1120,7 +1123,8 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
                 if payload.get("confirm") is not True:
                     self._send_json({"error": "Explicit confirmation required: planning calls a model provider"}, status=400)
                     return
-                self._send_json(engine.create_mission(owner, objective, budget), status=201)
+                profile = payload.get("profile", "python_app")
+                self._send_json(engine.create_mission(owner, objective, budget, profile=profile), status=201)
                 return
             rest = self.path.removeprefix("/api/agents/missions/")
             mission_id = self._agent_mission_id(rest)
@@ -1302,15 +1306,49 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             }
         }
 
+    def _preview_get(self):
+        """Website-mission preview: /preview/<mission>/<token>/<path>.
+
+        No session cookie is involved: the token is a per-mission capability only the owner's
+        status view hands out. The page runs sandboxed (opaque origin, no network, no forms
+        submitted, resources only from its own preview folder), so agent-written JavaScript
+        can never act on HOOD with the owner's session.
+        """
+        parts = urlsplit(self.path).path.split("/", 4)   # ['', 'preview', mid, token, rest]
+        engine = self.agent_engine
+        try:
+            if engine is None or len(parts) < 4 or not AGENT_MISSION_ID.fullmatch(parts[2]):
+                raise KeyError("Not found")
+            data, mime = engine.preview_file(parts[2], parts[3], unquote(parts[4] if len(parts) > 4 else ""))
+        except KeyError:
+            self.send_response(404)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(b"Not found")
+            return
+        own = f"http://{self.headers.get('Host', '').strip()}/preview/{parts[2]}/{parts[3]}/"
+        self._csp_override = (
+            "sandbox allow-scripts allow-modals allow-popups; "
+            f"default-src {own} data:; script-src {own} 'unsafe-inline'; style-src {own} 'unsafe-inline'; "
+            f"img-src {own} data: blob:; font-src {own} data:; media-src {own} data:; connect-src 'none'; "
+            "form-action 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+        self.send_response(200)
+        self.send_header("Content-Type", mime)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
     def end_headers(self):
         # Defense in depth for every response, including static files.
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Content-Security-Policy",
+        self.send_header("Content-Security-Policy", getattr(self, "_csp_override", None) or (
                          "default-src 'self'; img-src 'self' data:; "
                          "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
-                         "script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+                         "script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"))
         super().end_headers()
 
     def _send_json(self, data, status: int = 200):

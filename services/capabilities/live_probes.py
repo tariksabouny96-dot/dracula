@@ -47,8 +47,9 @@ def _orchestration():
     if SERVICES.get("agents") is None:
         return {"state": "unavailable", "detail": "Agent engine not attached"}
     if not _sandbox_available():
-        return {"state": "degraded", "detail": "Missions can plan, but execution needs the Linux sandbox "
-                                               "(Linux or WSL2); here missions stop as UNVERIFIED"}
+        return {"state": "degraded", "detail": "Website missions work here (checked without running code). "
+                                               "Python missions need the Linux sandbox (WSL2) or your "
+                                               "\"Run on my PC\" approval for each mission"}
     return {"state": "available", "detail": "Planner, engineer, QA and verifier ready; sandbox available"}
 
 

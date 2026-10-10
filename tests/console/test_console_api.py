@@ -83,3 +83,17 @@ def test_governance_has_no_activation_switch(stack):  # noqa: F811
     _, gov = _get(base, "/api/console/governance", c["viewer"])
     assert "no toggle" in gov["x"]["activation"]
     assert gov["emergency_stop"]["engaged"] is False
+
+
+def test_graph_groups_every_capability_into_an_owner_facing_area(stack):  # noqa: F811
+    base, c, engine, _ = stack
+    _, g = _get(base, "/api/console/graph", c["owner"])
+    areas = {n["id"] for n in g["nodes"] if n["type"] == "area"}
+    assert {"area:talk", "area:build", "area:safety", "area:models"} <= areas
+    caps = [n for n in g["nodes"] if n["type"] == "capability"]
+    assert caps and all("area:" + n["area"] in areas for n in caps)
+    edges = {(e["from"], e["to"]) for e in g["edges"]}
+    assert all(("area:" + n["area"], n["id"]) in edges for n in caps)
+    by_id = {n["id"]: n for n in caps}
+    assert by_id["cap:conversation"]["area"] == "talk" and by_id["cap:gemini"]["page"] == "Intelligence"
+    assert by_id["cap:orchestrator"]["description"]

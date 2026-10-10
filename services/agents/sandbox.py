@@ -12,6 +12,11 @@ What it does NOT do: hide the host filesystem from child processes. Treat it as
 defense in depth; a container or VM is required before running untrusted code
 on a machine that holds real data. On platforms without ``unshare`` the runner
 refuses to execute unless network isolation is explicitly waived.
+
+"Run on my PC" (``unisolated=True``) exists for hosts with no sandbox (Windows):
+the owner approves the exact workspace contents and fixed commands first; the
+child still gets a scrubbed environment and a time limit, but NO network or
+filesystem isolation. The engine only uses it after that recorded approval.
 """
 from __future__ import annotations
 
@@ -62,13 +67,23 @@ def _limits():  # runs in the child before exec (POSIX only)
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
+def sandbox_problem(require_network_isolation: bool = True) -> Optional[str]:
+    """Why sandboxed execution is impossible on this host, or None when it is available."""
+    if os.name != "posix":
+        return "Windows has no agent sandbox (it needs Linux or WSL2)"
+    if require_network_isolation and not network_isolation_available():
+        return "Linux network isolation (unshare -rn) is not available on this host"
+    return None
+
+
 class Workspace:
     def __init__(self, root: Path, stop_latch: Optional[StopLatch] = None, *,
-                 require_network_isolation: bool = True):
+                 require_network_isolation: bool = True, write_roots: Optional[dict] = None):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.stop_latch = stop_latch or StopLatch()
         self.require_network_isolation = require_network_isolation
+        self.write_roots = write_roots or ROLE_WRITE_ROOTS
         self._procs: Dict[int, subprocess.Popen] = {}
         self._lock = threading.Lock()
         self._netns = network_isolation_available()
@@ -81,7 +96,7 @@ class Workspace:
             raise SandboxViolation(str(exc)) from None
         rel = target.relative_to(self.root)
         parts = rel.parts
-        allowed_roots = ROLE_WRITE_ROOTS[role]
+        allowed_roots = self.write_roots[role]
         if not parts or parts[0] not in allowed_roots:
             raise SandboxViolation(f"Role {role.value} may not write {rel_path} (allowed: {allowed_roots})")
         if any(p.startswith(".") for p in parts):
@@ -138,19 +153,43 @@ class Workspace:
                 "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1", "PYTHONPATH": str(self.root),
                 "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "TMPDIR": str(self.root)}
 
-    def run(self, name: str, argv: List[str], timeout: int = 120) -> CheckResult:
-        """Run an engine-built command; the agent never supplies argv."""
+    def _env_unisolated(self) -> Dict[str, str]:
+        """Scrubbed environment for an owner-approved run on the host (no API keys, proxies or profile)."""
+        env = self._env()
+        if os.name == "nt":
+            system_root = os.environ.get("SYSTEMROOT", r"C:\Windows")
+            env.update({"PATH": os.pathsep.join([str(Path(sys.executable).parent), system_root + r"\System32",
+                                                 system_root]),
+                        "SYSTEMROOT": system_root, "TEMP": str(self.root), "TMP": str(self.root),
+                        "USERPROFILE": str(self.root), "PYTHONIOENCODING": "utf-8"})
+        return env
+
+    def run(self, name: str, argv: List[str], timeout: int = 120, *, unisolated: bool = False) -> CheckResult:
+        """Run an engine-built command; the agent never supplies argv.
+
+        ``unisolated`` runs it directly on this computer (owner-approved "Run on my PC"):
+        scrubbed environment and time limit, but no network or filesystem isolation.
+        """
         self.stop_latch.check()
-        if os.name != "posix":
-            raise SandboxUnavailable("Process sandbox is only implemented for POSIX hosts")
-        if self.require_network_isolation and not self._netns:
-            raise SandboxUnavailable("Network namespace isolation (unshare -rn) is unavailable")
-        launcher = str(Path(__file__).with_name("netns_launcher.py"))
-        cmd = (["unshare", "-rn", "--", sys.executable, "-I", launcher] if self._netns else []) + argv
+        if unisolated:
+            cmd = list(argv)
+            env = self._env_unisolated()
+        else:
+            if os.name != "posix":
+                raise SandboxUnavailable("Process sandbox is only implemented for POSIX hosts")
+            if self.require_network_isolation and not self._netns:
+                raise SandboxUnavailable("Network namespace isolation (unshare -rn) is unavailable")
+            launcher = str(Path(__file__).with_name("netns_launcher.py"))
+            cmd = (["unshare", "-rn", "--", sys.executable, "-I", launcher] if self._netns else []) + argv
+            env = self._env()
         started = time.monotonic()
-        proc = subprocess.Popen(cmd, cwd=self.root, env=self._env(), stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                start_new_session=True, preexec_fn=_limits)
+        if os.name == "posix":
+            platform_kw = {"start_new_session": True, "preexec_fn": _limits}
+        else:  # Windows: own process group, no console window; killed as a tree on timeout/cancel
+            platform_kw = {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                           | getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+        proc = subprocess.Popen(cmd, cwd=self.root, env=env, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, **platform_kw)
         with self._lock:
             self._procs[proc.pid] = proc
         try:
@@ -169,6 +208,16 @@ class Workspace:
 
     @staticmethod
     def _kill(proc: subprocess.Popen) -> None:
+        if os.name != "posix":
+            try:  # the whole tree: pytest may have started children
+                subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, timeout=15)
+            except (OSError, subprocess.SubprocessError):
+                pass
+            try:
+                proc.kill()
+            except OSError:
+                pass
+            return
         try:
             os.killpg(proc.pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):

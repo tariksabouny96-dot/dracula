@@ -343,7 +343,10 @@ class HoodSystemRuntime:
             for mid, objective, state, error in recent:
                 ok, total = done.get(mid, (0, 0))
                 why = str(error or "")
-                if "sandbox" in why.lower():
+                if "Run on my PC" in why:
+                    why = ("the agents wrote the code; its checks wait for the owner to approve running them "
+                           "on this PC (no sandbox here), or for HOOD in WSL2")
+                elif "sandbox" in why.lower():
                     why = ("the agents wrote the code, but it could not be tested here: Windows has no "
                            "sandbox (needs Linux/WSL2), so it is not verified")
                 facts.append(f"Recent mission \"{objective[:70]}\": {state}; {ok}/{total} agent tasks finished"
@@ -351,9 +354,11 @@ class HoodSystemRuntime:
             from services.agents.sandbox import network_isolation_available
             if not getattr(self, "_sandbox_ok_cached", None):
                 self._sandbox_ok_cached = ("yes" if network_isolation_available() else "no")
-            facts.append("Missions can execute here (sandbox available): " + self._sandbox_ok_cached +
+            facts.append("Website missions (HTML/CSS/JS) work on this computer: they are verified by reading "
+                         "the files, nothing is run")
+            facts.append("Python missions can run their tests in a sandbox here: " + self._sandbox_ok_cached +
                          ("" if self._sandbox_ok_cached == "yes" else
-                          " - on Windows they plan but need Linux/WSL2 to build"))
+                          " - they wait for the owner's \"Run on my PC\" approval (Settings > Agents) or HOOD in WSL2"))
         if getattr(self, "firewall", None) is not None:
             facts.append(f"Egress firewall: default deny, {len(self.firewall.list_rules())} owner-allowed destination(s)")
         if getattr(self, "learning", None) is not None:

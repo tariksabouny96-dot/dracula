@@ -13,6 +13,7 @@
     ['Command', '⌂'], ['Missions', '◎'], ['Agents', '⬡'], ['Intelligence', '◌'], ['Integrations', '⊞'],
     ['Sentinel', '◇'], ['Memory', '▤'], ['Commerce', '◈'], ['Desktop', '▣'], ['Voice', '◉'], ['Settings', '⚙'],
   ];
+  const PAGE_LABEL = { Intelligence: 'System map' };   // page keys stay stable in links; labels are for people
   const $ = (id) => document.getElementById(id);
 
   // ------------------------------------------------------------------ DOM helper (no innerHTML with data)
@@ -241,8 +242,8 @@
       setInterval(() => this.refreshOverview(), 15000);
       setInterval(() => { $('clock').textContent = new Date().toLocaleTimeString(); }, 1000);
       feed.subscribe(() => this.debouncedOverview());
-      const fromHash = decodeURIComponent((location.hash || '').slice(1));
-      this.render(PAGES.some(([p]) => p === fromHash) ? fromHash : 'Command');
+      const fromHash = decodeURIComponent((location.hash || '').slice(1)).split('/')[0];
+      this.render(PAGES.some(([p]) => p === fromHash) ? fromHash : 'Command', { replace: true });
     },
     debouncedOverview() { clearTimeout(this.ovTimer); this.ovTimer = setTimeout(() => this.refreshOverview(), 800); },
     async refreshOverview() {
@@ -257,7 +258,7 @@
       $('sourcePill').className = 'source-pill ' + kindOf(gem.state);
       $('envTitle').textContent = { verified_online: 'LIVE PROVIDER', configured: 'AI READY', needs_pricing: 'PRICING NOT SET',
         not_configured: 'NO API KEY' }[gem.state] || 'PROVIDER ' + String(gem.state).replace(/_/g, ' ').toUpperCase();
-      $('envDetail').textContent = gem.state === 'degraded' && gem.last_error ? 'Last call failed: ' + String(gem.last_error).slice(0, 140)
+      $('envDetail').textContent = gem.state === 'degraded' && gem.last_error ? 'Last call failed: ' + clip(gem.last_error, 140)
         : (gem.state === 'not_configured' || gem.state === 'needs_pricing') ? 'Set it in Settings › Model provider'
         : gem.last_success_at ? 'Last successful AI call ' + fmtTime(gem.last_success_at)
         : 'Not used yet since HOOD started';
@@ -272,16 +273,20 @@
         ' · Spend (ledger): ' + money(r.data.spend_usd) + ' · Every action is checked by the server.';
       if (this.page === 'Command') widgets.refreshAll();
     },
-    render(p) {
+    render(p, opts) {
       this.cleanups.forEach((fn) => { try { fn(); } catch (e) { /* ignore */ } });
       this.cleanups = [];
+      this.subroute = null;
       this.page = PAGES.some(([n]) => n === p) ? p : 'Command';
-      if (location.hash.slice(1) !== this.page) history.replaceState(null, '', '#' + this.page);
-      $('crumb').textContent = this.page.toUpperCase() + ' / ' + (this.page === 'Command' ? 'OVERVIEW' : 'WORKSPACE');
+      // Each page is a browser history entry, so the browser's (or mouse's) Back button works inside HOOD.
+      if (decodeURIComponent(location.hash.slice(1)).split('/')[0] !== this.page) {
+        if (opts && opts.replace) history.replaceState(null, '', '#' + this.page); else history.pushState(null, '', '#' + this.page);
+      }
+      $('crumb').textContent = (PAGE_LABEL[this.page] || this.page).toUpperCase() + ' / ' + (this.page === 'Command' ? 'OVERVIEW' : 'WORKSPACE');
       const nav = clear($('nav'));
       for (const [name, icon] of PAGES) {
         nav.append(h('button', { class: 'nav-link' + (name === this.page ? ' active' : ''), 'data-page': name, type: 'button',
-          'aria-current': name === this.page ? 'page' : null }, h('span', { class: 'nav-icon', 'aria-hidden': 'true' }, icon), name));
+          'aria-current': name === this.page ? 'page' : null }, h('span', { class: 'nav-icon', 'aria-hidden': 'true' }, icon), PAGE_LABEL[name] || name));
       }
       const main = clear($('main'));
       main.append(VIEWS[this.page]());
@@ -293,7 +298,7 @@
 
   function head(title, sub, ...buttons) {
     return h('div', { class: 'page-head' },
-      h('div', {}, h('div', { class: 'eyebrow' }, 'HOOD / ' + app.page.toUpperCase()), h('h1', {}, title), h('p', {}, sub)),
+      h('div', {}, h('div', { class: 'eyebrow' }, 'HOOD / ' + (PAGE_LABEL[app.page] || app.page).toUpperCase()), h('h1', {}, title), h('p', {}, sub)),
       h('div', { class: 'head-actions' }, buttons));
   }
   function card(title, body, opts) {
@@ -393,22 +398,30 @@
     }
     if (voice.autoSpeak) voice.speak(String(r.data.text).replace(/[*`#_]/g, ''), r.data.speaker_id);
   }
+  const WEBSITE_RE = /\b(web ?site|site ?web|landing ?page|web ?page|page ?web|home ?page|html|site)\b/i;
   function planMissionDialog(objective) {
     const obj = h('textarea', { class: 'big', 'aria-label': 'Objective', maxlength: '8000', rows: '12' });
     obj.value = objective || '';
     const budget = h('input', { type: 'number', min: '0', max: '100', step: '0.01', value: '1.00', 'aria-label': 'Spend cap in USD' });
+    const kind = h('select', { 'aria-label': 'Kind of work' },
+      h('option', { value: 'static_web' }, 'Website (HTML, CSS, JavaScript): checked by reading the files, works on this PC'),
+      h('option', { value: 'python_app' }, 'Python program: its tests must run (Linux/WSL2, or "Run on my PC" with your approval)'));
+    kind.value = WEBSITE_RE.test(obj.value) ? 'static_web' : 'python_app';
+    let touched = false;
+    kind.addEventListener('change', () => { touched = true; });
+    obj.addEventListener('input', () => { if (!touched) kind.value = WEBSITE_RE.test(obj.value) ? 'static_web' : 'python_app'; });
     confirmDialog('Plan an agent mission', [
       'Review and edit the brief below: the agents only see this text, not our conversation.',
       'Hood sends this objective to the configured AI provider to draft a task plan.',
       'Nothing runs until you approve that exact plan and its spending cap.'],
     'Plan mission', async () => {
-      const r = await api.post('/api/agents/missions', { objective: obj.value, budget_usd: Number(budget.value), confirm: true });
+      const r = await api.post('/api/agents/missions', { objective: obj.value, budget_usd: Number(budget.value), profile: kind.value, confirm: true });
       if (!r.ok) return r;
       toast(r.data.state === 'AWAITING_PLAN_APPROVAL' ? 'Plan ready for your review.' : 'Planning stopped: ' + (r.data.error || r.data.state));
       missionsPage.selected = r.data.mission_id;
       app.render('Missions');
       return r;
-    }, h('div', { class: 'form' }, h('label', {}, 'Objective', obj), h('label', {}, 'Spend cap (USD)', budget)));
+    }, h('div', { class: 'form' }, h('label', {}, 'Objective', obj), h('label', {}, 'Kind of work', kind), h('label', {}, 'Spend cap (USD)', budget)));
   }
 
   // ------------------------------------------------------------------ Command page widgets
@@ -478,7 +491,7 @@
         h('div', { class: 'metric' }, h('strong', {}, String(n('COMPLETED'))), h('small', {}, 'Verified complete'))),
       ov.missions.recent.length ? ov.missions.recent.slice(0, 4).map((m) => h('button', { class: 'list-row plain', type: 'button',
         style: { width: '100%', textAlign: 'left' }, onclick: () => { missionsPage.selected = m.id; app.render('Missions'); } },
-        h('div', { class: 'row-main' }, h('b', {}, m.objective.slice(0, 90)), h('small', {}, fmtTime(m.updated))),
+        h('div', { class: 'row-main' }, h('b', {}, clip(m.objective, 90)), h('small', {}, fmtTime(m.updated))),
         h('div', { class: 'row-meta' }, badge(m.state), h('br'), m.provider_mode === 'SIMULATED' ? badge('simulated') : null)))
         : emptyBox('No missions yet. Type /mission followed by an objective.'),
       h('button', { class: 'plain', type: 'button', onclick: () => app.render('Missions') }, 'Open mission control →'));
@@ -488,7 +501,7 @@
       if (!r.ok) return unavailable(r, 'System map');
       const holder = h('div', { style: { height: '265px' } });
       graphView.draw(holder, r.data, 'root', true);
-      return h('div', {}, h('div', { class: 'small-note' }, 'Built from live server data. Select a group to explore it.'), holder,
+      return h('div', {}, h('div', { class: 'small-note' }, 'Live: green works, amber needs you, red is failing. Click an area to look inside.'), holder,
         h('button', { class: 'plain', type: 'button', onclick: () => app.render('Intelligence') }, 'Expand network workspace →'));
     } },
     safety: { title: 'Safety & approvals', async load() {
@@ -534,7 +547,7 @@
   function summarizeDetail(detail) {
     try {
       const d = typeof detail === 'string' ? JSON.parse(detail) : detail;
-      if (d && d.state) return d.state + (d.error ? ' — ' + String(d.error).slice(0, 120) : '');
+      if (d && d.state) return d.state + (d.error ? ' — ' + clip(d.error, 120) : '');
       if (d && d.task_id) return 'task ' + d.task_id;
       return JSON.stringify(d).slice(0, 140);
     } catch (e) { return String(detail).slice(0, 140); }
@@ -608,71 +621,269 @@
     dashboardEl);
   }
 
-  // ------------------------------------------------------------------ Missions
-  const missionsPage = { selected: null };
+  // ------------------------------------------------------------------ Missions (live view)
+  const ROLE_LABEL = { planner: 'Planner', engineer: 'Engineer', qa: 'QA', reviewer: 'Reviewer', verifier: 'Verifier' };
+  const PROFILE_LABEL = {
+    static_web: 'Website: checked by reading its files (nothing is run), works on this PC',
+    python_app: 'Python program: checked by running its tests (needs a sandbox, WSL2, or your "Run on my PC" approval)',
+  };
+  const CHECK_LABEL = { site_structure: 'Page structure', links_and_assets: 'Links and files', css_syntax: 'CSS',
+    javascript_structure: 'JavaScript structure', independent_acceptance_checks: 'QA acceptance checks',
+    compile: 'Code compiles', engineer_unit_tests: "Engineer's unit tests", independent_acceptance_tests: 'QA acceptance tests' };
+  const STEP_LABEL = { CREATED: 'waiting', QUEUED: 'waiting', RUNNING: 'working', COMPLETED: 'done', FAILED: 'failed',
+    BLOCKED: 'needs you', CANCELLED: 'cancelled', UNVERIFIED: 'not verified' };
+  const missionsPage = { selected: null, open: new Set(['progress', 'outputs', 'checks']), cache: {}, poll: null };
+  function clip(text, n) {
+    const s = String(text || '');
+    if (s.length <= n) return s;
+    const cut = s.slice(0, n);
+    const at = cut.lastIndexOf(' ');
+    return (at > n * 0.6 ? cut.slice(0, at) : cut).replace(/[\s,.;:]+$/, '') + '…';
+  }
+  function elapsed(iso) {
+    const ms = Date.now() - new Date(iso).getTime();
+    if (!(ms >= 0)) return '';
+    const sec = Math.floor(ms / 1000);
+    return sec < 60 ? sec + 's' : Math.floor(sec / 60) + 'm ' + (sec % 60) + 's';
+  }
+  const missionUrl = (mid, rest) => '/api/agents/missions/' + encodeURIComponent(mid) + (rest || '');
+
   function missionsView() {
     const list = h('div', {});
     const detail = h('div', { class: 'mission-detail' });
     const loadList = () => fill(list, async () => {
       const r = await api.get('/api/agents/missions');
       if (!r.ok) return unavailable(r, 'Agent missions');
-      if (!r.data.length) return emptyBox('No missions yet. Use “Plan mission”.');
+      if (!r.data.length) return emptyBox('No missions yet. Use “Plan mission”, or ask HOOD in the chat to build something.');
       if (!missionsPage.selected) missionsPage.selected = r.data[0].id;
       return h('div', {}, r.data.map((m) => h('button', { type: 'button', class: 'list-row plain' + (m.id === missionsPage.selected ? ' active' : ''),
         style: { width: '100%', textAlign: 'left' }, 'aria-pressed': String(m.id === missionsPage.selected),
-        onclick: () => { missionsPage.selected = m.id; loadList(); loadDetail(); } },
-        h('div', { class: 'row-main' }, h('b', {}, m.objective.slice(0, 100)), h('small', { class: 'mono' }, m.id)),
+        onclick: () => { missionsPage.selected = m.id; loadList(); loadDetail(true); } },
+        h('div', { class: 'row-main' }, h('b', {}, clip(m.objective, 110)),
+          h('small', {}, (m.profile === 'static_web' ? 'Website' : 'Python program') + ' · ' + fmtTime(m.updated))),
         h('div', { class: 'row-meta' }, badge(m.state), ' ', m.provider_mode !== 'LIVE' && m.provider_mode !== 'NONE' ? badge(m.provider_mode) : null))));
     });
-    const loadDetail = () => {
+    // Live re-render without flashing a loading box (keeps scroll position and open sections).
+    const loadDetail = async (fresh) => {
+      clearTimeout(missionsPage.poll);
       if (!missionsPage.selected) { clear(detail).append(emptyBox('Select a mission.')); return; }
-      fill(detail, async () => {
-        const r = await api.get('/api/agents/missions/' + encodeURIComponent(missionsPage.selected));
-        if (!r.ok) return unavailable(r, 'Mission');
-        return missionDetail(r.data, () => { loadList().then(loadDetail); });
-      });
+      if (fresh) clear(detail).append(loading('mission'));
+      const mid = missionsPage.selected;
+      const r = await api.get(missionUrl(mid));
+      if (mid !== missionsPage.selected) return;
+      clear(detail).append(r.ok ? missionDetail(r.data, () => { loadList().then(() => loadDetail()); }) : unavailable(r, 'Mission'));
+      if (r.ok && (r.data.background_run_active || ['PLANNING', 'RUNNING', 'VERIFYING'].includes(r.data.state))) {
+        missionsPage.poll = setTimeout(() => loadDetail(), 4000);   // safety net if a live event is missed
+      }
     };
-    loadList().then(loadDetail);
-    app.onCleanup(feed.subscribe((ev) => { if (ev.mission_id === missionsPage.selected) { clearTimeout(missionsPage.t); missionsPage.t = setTimeout(() => { loadList().then(loadDetail); }, 500); } }));
-    return h('div', {}, head('Mission control', 'Plan, approve, run and verify agent missions. Only independently checked work is marked complete.',
+    loadList().then(() => loadDetail(true));
+    const tick = setInterval(() => document.querySelectorAll('.tick[data-since]').forEach((el) => { el.textContent = ' ' + elapsed(el.dataset.since); }), 1000);
+    app.onCleanup(() => { clearInterval(tick); clearTimeout(missionsPage.poll); });
+    app.onCleanup(feed.subscribe((ev) => { if (ev.mission_id === missionsPage.selected) { clearTimeout(missionsPage.t); missionsPage.t = setTimeout(() => { loadList().then(() => loadDetail()); }, 500); } }));
+    return h('div', {}, head('Mission control', 'Watch the agents work: what each one is doing, what it wrote, and what the independent check found.',
       h('button', { class: 'btn primary', type: 'button', onclick: () => planMissionDialog('') }, '＋ Plan mission')),
-    h('div', { class: 'two-col' }, card('Missions', list), card('Mission detail', detail)));
+    h('div', { class: 'two-col missions-layout' }, card('Missions', list), card('Mission detail', detail)));
   }
+
+  function section(id, title, body, extra) {
+    const d = h('details', { class: 'mission-section', open: missionsPage.open.has(id) || null },
+      h('summary', {}, title, extra ? h('span', { class: 'section-extra' }, extra) : null));
+    const holder = h('div', { class: 'section-body' });
+    d.append(holder);
+    let loaded = false;
+    const load = () => { if (loaded) return; loaded = true; holder.append(typeof body === 'function' ? body() : body); };
+    if (d.open) load();
+    d.addEventListener('toggle', () => { if (d.open) { missionsPage.open.add(id); load(); } else missionsPage.open.delete(id); });
+    return d;
+  }
+
+  function pipeline(m) {
+    const steps = [{ role: 'planner', title: 'Plan the work',
+      state: m.plan ? 'COMPLETED' : m.state === 'PLANNING' ? 'RUNNING' : m.state === 'BLOCKED' ? 'BLOCKED' : 'CREATED',
+      since: m.state === 'PLANNING' ? m.created : null }];
+    m.tasks.forEach((t) => steps.push({ role: t.role, title: t.title, state: t.state, since: t.updated, attempts: t.attempts, error: t.error }));
+    const v = m.last_verification;
+    let vs = 'CREATED';
+    if (m.state === 'VERIFYING') vs = 'RUNNING';
+    else if (m.state === 'COMPLETED') vs = 'COMPLETED';
+    else if (m.local_run && m.local_run.awaiting_approval) vs = 'BLOCKED';
+    else if (v && ['FAILED', 'UNVERIFIED'].includes(m.state)) vs = v.verdict === 'FAIL' ? 'FAILED' : 'UNVERIFIED';
+    else if (v && m.state === 'RUNNING') vs = 'CREATED';   // repair round under way; checked again after it
+    steps.push({ role: 'verifier', title: m.profile === 'static_web' ? 'Check pages, links, code structure and QA checks' : 'Run the tests and QA checks',
+      state: vs, since: m.state === 'VERIFYING' ? m.updated : null });
+    const look = (state) => (['CREATED', 'QUEUED'].includes(state) ? 'muted' : kindOf(state));
+    return h('ol', { class: 'pipeline' }, steps.map((st) => h('li', { class: 'pipe-step ' + look(st.state) },
+      h('div', { class: 'pipe-role' }, ROLE_LABEL[st.role] || st.role),
+      h('div', { class: 'pipe-title' }, st.title),
+      h('div', { class: 'pipe-meta' }, h('span', { class: 'state ' + look(st.state) }, STEP_LABEL[st.state] || st.state),
+        st.state === 'RUNNING' && st.since ? h('span', { class: 'tick', 'data-since': st.since }, ' ' + elapsed(st.since)) : null,
+        st.attempts > 1 ? h('small', {}, ' · attempt ' + st.attempts) : null),
+      st.error && st.state !== 'COMPLETED' ? h('div', { class: 'small-note' }, clip(st.error, 260)) : null)));
+  }
+
+  async function viewFile(mid, path) {
+    const r = await api.get(missionUrl(mid, '/file?path=' + encodeURIComponent(path)));
+    if (!r.ok) { toast('Cannot open ' + path + ': ' + r.error); return; }
+    modal(path, h('div', {}, h('p', { class: 'small-note' }, r.data.bytes + ' bytes' + (r.data.truncated ? ' (first 200 KB shown)' : '') + ' · read-only'),
+      h('pre', { class: 'file-view' }, r.data.text)));
+  }
+  const fileLink = (mid, path) => h('button', { class: 'linkish mono', type: 'button', onclick: () => viewFile(mid, path) }, path);
+  const SEVERITY = { critical: 'FAILED', high: 'FAILED', medium: 'PENDING', low: 'muted', info: 'muted' };
+
+  function agentOutputs(m) {
+    const done = m.tasks.filter((t) => t.result);
+    if (!done.length) return emptyBox('No agent has finished a task yet.');
+    return h('div', {}, done.map((t) => h('div', { class: 'output-block' },
+      h('div', {}, h('b', {}, ROLE_LABEL[t.role] || t.role), ' · ', t.title),
+      t.result.files ? h('ul', { class: 'file-list' }, t.result.files.map((f) => h('li', {}, fileLink(m.mission_id, f.path), h('small', {}, ' ' + f.bytes + ' bytes')))) : null,
+      t.result.findings ? (t.result.findings.length ? h('ul', { class: 'file-list' }, t.result.findings.map((f) => h('li', {},
+        badge(SEVERITY[f.severity] || 'muted', f.severity), ' ', f.path ? h('span', { class: 'mono' }, f.path + ': ') : null, f.message)))
+        : h('p', { class: 'small-note' }, 'No defects reported.')) : null,
+      t.result.notes ? h('p', { class: 'small-note' }, 'Notes: ' + t.result.notes) : null,
+      t.result.uncertainty && !/^none\.?$/i.test(t.result.uncertainty.trim()) ? h('p', { class: 'small-note' }, 'Unsure about: ' + t.result.uncertainty) : null)));
+  }
+
+  function checksSection(m) {
+    const v = m.last_verification;
+    if (!v) return emptyBox(m.profile === 'static_web'
+      ? "Not checked yet. HOOD will read the pages, links, CSS and JavaScript, then apply the QA agent's acceptance checks. The site's code is never run."
+      : 'Not checked yet. HOOD will compile the code and run the unit tests and the QA acceptance tests.');
+    return h('div', {},
+      h('p', {}, badge(v.verdict), ' ', h('small', {}, v.execution ? 'How: ' + v.execution : (v.network_isolated ? 'In the sandbox, no network' : ''))),
+      (v.checks || []).map((c) => h('details', { class: 'check-row' },
+        h('summary', {}, badge(c.passed ? 'PASS' : 'FAILED', c.passed ? 'passed' : 'failed'), ' ', CHECK_LABEL[c.name] || c.name,
+          c.tests_collected !== null && c.tests_collected !== undefined ? h('small', {}, ' · ' + c.tests_collected + (m.profile === 'static_web' ? ' checks' : ' tests')) : null),
+        c.output_tail ? h('pre', { class: 'file-view' }, c.output_tail) : h('p', { class: 'small-note' }, 'No details recorded.'))),
+      m.state === 'RUNNING' && v.verdict === 'FAIL' ? h('p', { class: 'small-note' }, 'The agents are repairing these failures (round ' + m.repairs + ' of 2); HOOD checks again afterwards.') : null);
+  }
+
+  function filesSection(m) {
+    const box = h('div', {}, missionsPage.cache['files:' + m.mission_id] || loading('files'));
+    api.get(missionUrl(m.mission_id, '/files')).then((r) => {
+      const out = !r.ok ? unavailable(r, 'Mission files') : h('div', {},
+        h('div', { class: 'form-actions' },
+          m.preview_path ? h('a', { class: 'btn small primary', href: m.preview_path, target: '_blank', rel: 'noopener noreferrer' },
+            m.state === 'COMPLETED' ? 'Open website preview' : 'Preview (not verified yet)') : null,
+          session.role === 'ROOT_OWNER' ? h('button', { class: 'btn small', type: 'button', onclick: async () => {
+            const x = await api.post(missionUrl(m.mission_id, '/open_folder'), { confirm: true });
+            toast(x.ok ? 'Folder opened (' + x.data.opened_with + ').' : x.error);
+          } }, 'Open folder') : null,
+          h('button', { class: 'btn small', type: 'button', onclick: () => {
+            const done = () => toast('Folder path copied.');
+            if (navigator.clipboard) navigator.clipboard.writeText(r.data.folder).then(done, () => toast(r.data.folder)); else toast(r.data.folder);
+          } }, 'Copy folder path')),
+        h('p', { class: 'small-note mono' }, r.data.folder),
+        m.preview_path ? h('p', { class: 'small-note' }, 'The preview runs sandboxed: no internet and nothing saved in the browser, so a cart that remembers items may reset. Open site/index.html from the folder for the full experience.') : null,
+        r.data.files.length ? h('ul', { class: 'file-list' }, r.data.files.map((f) => h('li', {}, fileLink(m.mission_id, f.path),
+          h('small', {}, ' ' + f.bytes + ' bytes' + (f.written_by ? ' · by ' + (ROLE_LABEL[f.written_by.role] || f.written_by.role) : '')))))
+          : emptyBox('No files written yet.'));
+      missionsPage.cache['files:' + m.mission_id] = out;
+      clear(box).append(out);
+    });
+    return box;
+  }
+
+  function describeEvent(e) {
+    let d = {};
+    try { d = typeof e.detail === 'string' ? JSON.parse(e.detail) : (e.detail || {}); } catch (err) { d = {}; }
+    d = d || {};
+    switch (e.kind) {
+      case 'CREATED': return 'Mission created' + (d.profile ? ' (' + (d.profile === 'static_web' ? 'website' : 'Python program') + ')' : '');
+      case 'STATE': return 'Now ' + String(d.state || '').replace(/_/g, ' ').toLowerCase() + (d.error ? ': ' + clip(d.error, 220) : '');
+      case 'TASK_STARTED': return (ROLE_LABEL[d.role] || 'Agent') + ' started “' + d.title + '”' + (d.attempt > 1 ? ' (attempt ' + d.attempt + ')' : '');
+      case 'TASK_COMPLETED': return 'Task ' + d.task_id + ' finished';
+      case 'TASK_FAILED': return 'Task ' + d.task_id + ' failed';
+      case 'TASK_BLOCKED': return 'Task ' + d.task_id + ' is blocked';
+      case 'TASK_RETRY': return 'Output for ' + d.task_id + ' was rejected; retrying (' + clip(d.error, 160) + ')';
+      case 'VERIFIED': return 'Independent check: ' + d.verdict + (d.reason ? ' — ' + clip(d.reason, 220) : '');
+      case 'LOCAL_RUN_REQUESTED': return 'Waiting for your approval to run the checks on this PC';
+      case 'PROCESSES_KILLED': return 'Stopped ' + d.count + ' running process(es)';
+      case 'TASK_REQUEUED': return 'Task ' + d.task_id + ' re-queued after a restart';
+      default: return e.kind.replace(/_/g, ' ').toLowerCase() + ' ' + summarizeDetail(e.detail);
+    }
+  }
+  function timelineSection(m) {
+    const box = h('div', {}, missionsPage.cache['events:' + m.mission_id] || loading('activity'));
+    api.get(missionUrl(m.mission_id, '/events')).then((r) => {
+      const out = !r.ok ? unavailable(r, 'Activity') : h('ol', { class: 'timeline' }, r.data.slice().reverse().slice(0, 100).map((e) =>
+        h('li', {}, h('time', {}, new Date(e.ts).toLocaleTimeString()), h('span', {}, describeEvent(e)))));
+      missionsPage.cache['events:' + m.mission_id] = out;
+      clear(box).append(out);
+    });
+    return box;
+  }
+
+  function localRunPanel(m, reload) {
+    const lr = m.local_run;
+    const actions = h('div', { class: 'form-actions' });
+    const box = h('div', { class: 'callout warn' },
+      h('b', {}, 'Run the checks on this PC?'),
+      h('p', {}, 'This computer has no sandbox, so HOOD stopped before running anything. To verify this Python program it would run these fixed commands in the mission folder:'),
+      h('ul', {}, lr.commands.map((c) => h('li', { class: 'mono' }, c))),
+      h('p', {}, 'They execute the code the agents wrote directly on this PC, with no network block and no file isolation. API keys are removed from their environment and each step has a time limit. Look at the files below first.'),
+      h('p', { class: 'small-note mono' }, 'Files fingerprint ' + String(lr.workspace_sha256).slice(0, 16) + '… (the approval covers these exact files)'), actions);
+    if (session.role !== 'ROOT_OWNER') { actions.append(h('p', { class: 'small-note' }, 'Only the Root Owner can approve this.')); return box; }
+    api.get('/api/settings/agents').then((st) => {
+      if (st.ok && !st.data.allow_local_run) {
+        actions.append(h('p', { class: 'small-note' }, '"Run on my PC" is turned off. Turn it on in Settings › Agents, or run HOOD in WSL2 (docs/WSL2.md).'),
+          h('button', { class: 'btn small', type: 'button', onclick: () => app.render('Settings') }, 'Open Settings'));
+        return;
+      }
+      actions.append(h('button', { class: 'btn small primary', type: 'button', onclick: () => confirmDialog('Run the checks on this PC',
+        ['The agent-written code runs directly on this computer, without isolation, for these exact files.',
+          'You can stop it at any time with the emergency STOP button.'], 'Run on this PC', async () => {
+          const r = await api.post(missionUrl(m.mission_id, '/approve_local_run'), { confirm: true, workspace_sha256: lr.workspace_sha256 });
+          if (!r.ok) return r;
+          const run = await api.post(missionUrl(m.mission_id, '/run'), { confirm: true });
+          toast(run.ok ? 'Running the checks on this PC…' : run.error);
+          reload();
+          return run;
+        }) }, 'Approve and run on this PC'));
+    });
+    return box;
+  }
+
   function missionDetail(m, reload) {
     const act = (label, path, body, primary) => h('button', { class: 'btn small' + (primary ? ' primary' : ''), type: 'button',
-      onclick: async (e) => { e.target.disabled = true; const r = await api.post('/api/agents/missions/' + m.mission_id + path, body); e.target.disabled = false;
+      onclick: async (e) => { e.target.disabled = true; const r = await api.post(missionUrl(m.mission_id, path), body); e.target.disabled = false;
         if (!r.ok) toast(r.error); else toast(label + ': done'); reload(); } }, label);
     const actions = [];
     if (m.state === 'AWAITING_PLAN_APPROVAL') actions.push(act('Approve plan & budget', '/approve', { confirm: true, plan_sha256: m.plan_sha256 }, true));
     if (['QUEUED', 'RUNNING', 'VERIFYING'].includes(m.state) && !m.background_run_active) actions.push(act('Run agents', '/run', { confirm: true }, true));
-    if (m.state === 'BLOCKED' && m.approved_by) actions.push(act('Retry blocked work', '/retry', { confirm: true }));
+    if (m.state === 'BLOCKED' && m.approved_by && !(m.local_run && m.local_run.awaiting_approval)) actions.push(act('Retry blocked work', '/retry', { confirm: true }));
     if (!['COMPLETED', 'FAILED', 'UNVERIFIED', 'CANCELLED'].includes(m.state)) actions.push(act('Cancel', '/cancel', {}));
-    const v = m.last_verification;
+    const running = m.tasks.find((t) => t.state === 'RUNNING');
+    const now = m.state === 'PLANNING' ? 'The planner is drafting the task plan.'
+      : running ? (ROLE_LABEL[running.role] || running.role) + ' is working on “' + running.title + '”.'
+        : m.state === 'VERIFYING' ? 'The independent check is running.'
+          : m.state === 'AWAITING_PLAN_APPROVAL' ? 'Waiting for you to approve the plan below.'
+            : m.local_run && m.local_run.awaiting_approval ? 'Waiting for your decision to run the checks on this PC.'
+              : m.state === 'QUEUED' || (m.state === 'RUNNING' && !m.background_run_active) ? 'Ready: press “Run agents”.' : null;
     return h('div', {},
+      now ? h('div', { class: 'now-line' }, m.background_run_active || m.state === 'PLANNING' ? h('span', { class: 'pulse', 'aria-hidden': 'true' }) : null, now) : null,
       h('dl', { class: 'kv' },
         h('dt', {}, 'State'), h('dd', {}, badge(m.state), m.background_run_active ? ' (running now)' : ''),
+        h('dt', {}, 'Kind'), h('dd', {}, PROFILE_LABEL[m.profile] || m.profile),
         h('dt', {}, 'Model output'), h('dd', {}, badge(m.provider_mode === 'NONE' ? 'unknown' : m.provider_mode, m.provider_mode === 'LIVE' ? 'live AI' : m.provider_mode === 'NONE' ? 'none yet' : m.provider_mode.toLowerCase())),
-        h('dt', {}, 'Objective'), h('dd', {}, m.objective),
+        h('dt', {}, 'Objective'), h('dd', {}, m.objective.length > 400 ? h('details', {}, h('summary', {}, clip(m.objective, 300)), h('p', { class: 'pre-wrap' }, m.objective)) : h('span', { class: 'pre-wrap' }, m.objective)),
         h('dt', {}, 'Spend / cap'), h('dd', {}, money(m.spend) + ' / ' + money(m.budget_usd)),
         h('dt', {}, 'Repairs'), h('dd', {}, String(m.repairs)),
-        m.error ? h('dt', {}, 'Reason') : null, m.error ? h('dd', {}, m.error) : null,
-        m.plan_sha256 ? h('dt', {}, 'Plan hash') : null, m.plan_sha256 ? h('dd', { class: 'mono' }, m.plan_sha256) : null),
+        m.error ? h('dt', {}, 'Reason') : null, m.error ? h('dd', {}, m.error) : null),
       h('div', { class: 'form-actions' }, actions),
-      m.plan ? h('div', {}, h('h3', {}, 'PLAN'), h('p', {}, m.plan.summary),
-        m.plan.interface_contract ? h('details', {}, h('summary', {}, 'Interface contract'), h('pre', { class: 'mono' }, m.plan.interface_contract)) : null) : null,
-      h('h3', {}, 'TASKS'),
-      m.tasks.length ? h('ul', { class: 'task-list' }, m.tasks.map((t) => h('li', {},
-        h('span', {}, h('b', {}, t.role), ' · ', t.title, t.depends_on.length ? ' (after ' + t.depends_on.join(', ') + ')' : '',
-          t.error ? h('div', { class: 'small-note' }, t.error.slice(0, 300)) : null),
-        badge(t.state)))) : emptyBox('No tasks (planning did not produce a plan).'),
-      h('h3', {}, 'INDEPENDENT CHECK'),
-      v ? h('div', {}, badge(v.verdict), ' ', (v.checks || []).map((c) => badge(c.passed ? 'PASS' : 'FAILED', c.name + (c.tests_collected !== null && c.tests_collected !== undefined ? ' (' + c.tests_collected + ' tests)' : ''))),
-        h('p', { class: 'small-note' }, 'Network isolated: ' + (v.network_isolated ? 'yes' : 'no') + ' · checked by ' + v.verifier))
-        : emptyBox('Not verified yet.'),
-      m.artifact ? h('div', {}, h('h3', {}, 'RESULT'),
-        h('a', { class: 'btn small primary', href: '/api/agents/missions/' + encodeURIComponent(m.mission_id) + '/artifact', download: m.artifact.name },
-          'Download verified result (' + m.artifact.bytes + ' bytes)'),
-        h('p', { class: 'mono' }, 'SHA-256 ' + m.artifact.sha256)) : null);
+      m.local_run && m.local_run.awaiting_approval ? localRunPanel(m, reload) : null,
+      m.artifact ? h('div', { class: 'callout good' }, h('b', {}, 'Verified result ready'),
+        h('div', { class: 'form-actions' },
+          h('a', { class: 'btn small primary', href: missionUrl(m.mission_id, '/artifact'), download: m.artifact.name }, 'Download verified result (' + m.artifact.bytes + ' bytes)'),
+          m.preview_path ? h('a', { class: 'btn small', href: m.preview_path, target: '_blank', rel: 'noopener noreferrer' }, 'Open website preview') : null),
+        h('p', { class: 'mono small-note' }, 'SHA-256 ' + m.artifact.sha256)) : null,
+      section('progress', 'Progress', () => pipeline(m)),
+      m.plan ? section('plan', 'Plan', () => h('div', {}, h('p', {}, m.plan.summary), h('p', { class: 'small-note' }, 'Deliverable: ' + m.plan.deliverable),
+        m.plan.interface_contract ? h('pre', { class: 'file-view' }, m.plan.interface_contract) : null,
+        m.plan_sha256 ? h('p', { class: 'mono small-note' }, 'Plan hash ' + m.plan_sha256) : null)) : null,
+      section('outputs', 'What the agents produced', () => agentOutputs(m)),
+      section('checks', 'Independent check', () => checksSection(m), m.last_verification ? m.last_verification.verdict : null),
+      section('files', 'Files and preview', () => filesSection(m)),
+      section('activity', 'Activity', () => timelineSection(m)));
   }
 
   // ------------------------------------------------------------------ Agents
@@ -692,28 +903,86 @@
     return h('div', {}, head('Agent constellation', 'Who does what, which model they use and what they are allowed to touch.'), body);
   }
 
-  // ------------------------------------------------------------------ Intelligence graph (zoom, pan, drill-down)
+  // ------------------------------------------------------------------ System map (areas → parts → missions → tasks)
+  // Health buckets for the map: green works, amber needs you (setup, approval, degraded), red failing,
+  // grey not built / not connected / unknown.
+  const HEALTH = {
+    working: ['verified_online', 'available', 'active', 'online', 'COMPLETED'],
+    attention: ['not_configured', 'needs_pricing', 'awaiting_approval', 'blocked', 'checking', 'degraded',
+      'AWAITING_PLAN_APPROVAL', 'BLOCKED', 'UNVERIFIED'],
+    failing: ['failed', 'offline', 'FAILED'],
+    busy: ['RUNNING', 'VERIFYING', 'PLANNING', 'QUEUED'],
+  };
+  const HEALTH_COLOR = { working: '#43e3a3', partial: '#2f9b78', attention: '#f5c542', failing: '#ff7f92', busy: '#6fd3ff', other: '#8fa3bf' };
+  const HEALTH_WORD = { working: 'working', partial: 'partly working', attention: 'needs you', failing: 'failing', busy: 'in progress',
+    other: 'not built / unknown' };
+  const HEALTH_GLYPH = { working: '✓', partial: '◐', attention: '!', failing: '✕', busy: '…', other: '?' };
+  const healthOf = (st) => Object.keys(HEALTH).find((k) => HEALTH[k].includes(st)) || 'other';
+  const NEXT_STEP = {
+    gemini: ['Settings', 'Set the Gemini key and prices in Settings › Model provider, then press Test connection.'],
+    conversation: ['Settings', 'Chat needs a working AI model: Settings › Model provider.'],
+    voice: ['Settings', 'Pick a voice in Settings › Voice (this computer’s voice works offline).'],
+    orchestrator: ['Settings', 'Website missions work here. For Python missions, run HOOD in WSL2 or turn on “Run on my PC” in Settings › Agents.'],
+  };
   const graphView = {
-    zoom: 1, pan: { x: 0, y: 0 }, focus: 'root',
-    groups(data) {
-      const by = { capability: [], agent: [], mission: [] };
-      data.nodes.forEach((n) => { if (by[n.type]) by[n.type].push(n); });
-      return by;
+    zoom: 1, pan: { x: 0, y: 0 }, path: ['root'],
+    get focus() { return this.path[this.path.length - 1]; },
+    byId(data, id) { return data.nodes.find((n) => n.id === id); },
+    caps(data, area) { return data.nodes.filter((n) => n.type === 'capability' && n.area === area); },
+    summary(nodes) {
+      const c = { working: 0, attention: 0, failing: 0, busy: 0, other: 0 };
+      nodes.forEach((n) => { c[healthOf(n.state)] += 1; });
+      const health = c.failing ? 'failing' : c.attention ? 'attention' : c.busy ? 'busy'
+        : c.working && c.working === nodes.length ? 'working' : c.working ? 'partial' : 'other';
+      return { counts: c, health, sub: c.working + '/' + nodes.length + ' working' + (c.attention ? ' · ' + c.attention + ' need you' : '') };
+    },
+    missions(data) { return data.nodes.filter((n) => n.type === 'mission'); },
+    node(data, id) {
+      if (id === 'root') {
+        const sum = this.summary(data.nodes.filter((n) => n.type === 'capability'));
+        return { id, type: 'core', label: 'HOOD', sub: sum.sub, health: sum.health, counts: sum.counts };
+      }
+      if (id === 'grp:agent') {
+        const agents = data.nodes.filter((n) => n.type === 'agent');
+        const busy = data.nodes.filter((n) => n.type === 'task' && n.state === 'RUNNING').length;
+        return { id, type: 'group', label: 'Agents', sub: busy ? busy + ' working now' : agents.length + ' roles, idle',
+          health: busy ? 'busy' : 'working', description: 'The specialist agents that do mission work.' };
+      }
+      if (id === 'grp:mission') {
+        const ms = this.missions(data);
+        const sum = this.summary(ms);
+        return { id, type: 'group', label: 'Missions', sub: ms.length + ' yours', health: ms.length ? sum.health : 'other',
+          counts: sum.counts, description: 'Your agent missions, newest first.' };
+      }
+      const n = this.byId(data, id);
+      if (!n) return null;
+      if (n.type === 'area') {
+        const sum = this.summary(this.caps(data, id.slice(5)));
+        return { ...n, sub: sum.sub, health: sum.health, counts: sum.counts };
+      }
+      if (n.type === 'agent') {
+        const tasks = data.nodes.filter((t) => t.type === 'task' && t.role === id.slice(6));
+        const busy = tasks.filter((t) => t.state === 'RUNNING').length;
+        return { ...n, sub: busy ? busy + ' task running' : tasks.length + ' tasks done/queued', health: busy ? 'busy' : 'working' };
+      }
+      if (n.type === 'mission') return { ...n, sub: String(n.state).replace(/_/g, ' ').toLowerCase(), health: healthOf(n.state) };
+      if (n.type === 'task') return { ...n, sub: (ROLE_LABEL[n.role] || n.role) + ' · ' + String(n.state).toLowerCase(), health: healthOf(n.state) };
+      return { ...n, sub: String(n.state || '').replace(/_/g, ' '), health: healthOf(n.state) };
     },
     children(data, id) {
-      const g = this.groups(data);
-      if (id === 'root') return [
-        { id: 'grp:capability', label: 'Capabilities', sub: g.capability.length + ' items', state: 'available' },
-        { id: 'grp:agent', label: 'Agents', sub: g.agent.length + ' roles', state: 'available' },
-        { id: 'grp:mission', label: 'Missions', sub: g.mission.length + ' yours', state: g.mission.length ? 'available' : 'unknown' }];
-      if (id.startsWith('grp:')) return g[id.slice(4)].map((n) => ({ ...n, sub: String(n.state || '') }));
-      const kids = data.edges.filter((e) => e.from === id && e.type !== 'assigned_role').map((e) => data.nodes.find((n) => n.id === e.to)).filter(Boolean);
-      return kids.map((n) => ({ ...n, sub: String(n.state || '') }));
-    },
-    node(data, id) {
-      if (id === 'root') return { id, label: 'HOOD CORE', sub: 'live server data', state: 'available' };
-      if (id.startsWith('grp:')) return this.children(data, 'root').find((n) => n.id === id);
-      return data.nodes.find((n) => n.id === id);
+      let ids = [];
+      if (id === 'root') ids = data.nodes.filter((n) => n.type === 'area').map((n) => n.id);
+      else if (id === 'area:build') ids = this.caps(data, 'build').map((n) => n.id).concat(['grp:agent', 'grp:mission']);
+      else if (id.startsWith('area:')) ids = this.caps(data, id.slice(5)).map((n) => n.id);
+      else if (id === 'cap:orchestrator') ids = ['grp:agent', 'grp:mission'];
+      else if (id === 'grp:agent') ids = data.nodes.filter((n) => n.type === 'agent').map((n) => n.id);
+      else if (id === 'grp:mission') ids = this.missions(data).map((n) => n.id);
+      else if (id.startsWith('mission:')) ids = data.nodes.filter((n) => n.type === 'task' && n.mission === id).map((n) => n.id);
+      else if (id.startsWith('agent:')) {
+        ids = data.nodes.filter((n) => n.type === 'task' && n.role === id.slice(6))
+          .sort((a, b) => (b.state === 'RUNNING') - (a.state === 'RUNNING')).slice(0, 16).map((n) => n.id);
+      }
+      return ids.map((x) => this.node(data, x)).filter(Boolean);
     },
     draw(holder, data, focus, mini, onSelect) {
       clear(holder);
@@ -725,14 +994,30 @@
       const vp = s('g', { transform: mini ? '' : `translate(${this.pan.x} ${this.pan.y}) scale(${this.zoom})` });
       svg.append(vp);
       const cx = 410, cy = 282;
-      const color = (st) => ({ good: '#43e3a3', info: '#6fd3ff', warn: '#f5c542', bad: '#ff5d7a', sim: '#c28bff' }[kindOf(st)] || '#8fa3bf');
-      const nodeEl = (n, x, y, r) => {
-        const g = s('g', { class: 'graph-node', transform: `translate(${x} ${y})`, tabindex: '0', role: 'button', 'aria-label': n.label + ' ' + (n.state || '') });
-        g.append(s('circle', { class: 'graph-halo', r: String(r), fill: '#0d1c31', stroke: color(n.state), 'stroke-width': '1.8' }));
-        const t = s('text', { class: 'graph-label', 'text-anchor': 'middle', y: '-2', 'font-size': mini ? '11' : '13' }); t.textContent = String(n.label).slice(0, 18);
-        const sub = s('text', { class: 'graph-sub', 'text-anchor': 'middle', y: '14' }); sub.textContent = String(n.sub || '').slice(0, 22).replace(/_/g, ' ');
-        g.append(t, sub);
-        const go = () => (onSelect ? onSelect(n.id) : app.render('Intelligence'));
+      const nodeEl = (n, x, y, r, isCenter) => {
+        const color = HEALTH_COLOR[n.health] || HEALTH_COLOR.other;
+        const g = s('g', { class: 'graph-node', transform: `translate(${x} ${y})`, tabindex: '0', role: 'button',
+          'aria-label': n.label + ': ' + (n.sub || '') + (isCenter ? ' (current)' : '') });
+        g.append(s('circle', { class: 'graph-halo', r: String(r), fill: '#0d1c31', stroke: color, 'stroke-width': isCenter ? '2.6' : '1.8' }));
+        const kidsCount = isCenter ? 0 : this.children(data, n.id).length;
+        // Inside the circle: a count (areas, groups) or a status sign; the name and status go underneath.
+        const total = n.counts ? Object.values(n.counts).reduce((a, b) => a + b, 0) : 0;
+        const mark = s('text', { class: 'graph-mark', 'text-anchor': 'middle', y: String(isCenter ? 8 : 6), fill: color,
+          'font-size': String(isCenter ? 22 : mini ? 13 : 16) });
+        mark.textContent = total ? n.counts.working + '/' + total : HEALTH_GLYPH[n.health] || '?';
+        const t = s('text', { class: 'graph-label', 'text-anchor': 'middle', y: String(r + 17), 'font-size': mini ? '11' : '13' });
+        t.textContent = clip(n.label, isCenter ? 34 : 22);
+        g.append(mark, t);
+        if (!mini) {
+          const sub = s('text', { class: 'graph-sub', 'text-anchor': 'middle', y: String(r + 31) }); sub.textContent = clip(n.sub || '', 30);
+          g.append(sub);
+        }
+        if (kidsCount && !mini) { const more = s('text', { class: 'graph-sub', 'text-anchor': 'middle', y: String(r + 45) }); more.textContent = kidsCount + ' inside ›'; g.append(more); }
+        const go = () => {
+          if (onSelect) { onSelect(n.id); return; }
+          graphView.path = n.id === 'root' ? ['root'] : ['root', n.id];
+          app.render('Intelligence');
+        };
         g.addEventListener('click', go);
         g.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
         return g;
@@ -741,55 +1026,125 @@
         const a = (i * 2 * Math.PI) / Math.max(1, kids.length) - Math.PI / 2;
         const rx = kids.length > 12 ? 330 : 260, ry = kids.length > 12 ? 230 : 190;
         const x = cx + Math.cos(a) * rx, y = cy + Math.sin(a) * ry;
-        vp.append(s('path', { class: 'graph-edge', d: `M${cx} ${cy} Q${(cx + x) / 2 + 18} ${(cy + y) / 2 - 24} ${x} ${y}` }));
-        vp.append(nodeEl(n, x, y, mini ? 28 : (kids.length > 12 ? 30 : 38)));
+        vp.append(s('path', { class: 'graph-edge', d: `M${cx} ${cy} Q${(cx + x) / 2 + 18} ${(cy + y) / 2 - 24} ${x} ${y}`,
+          stroke: HEALTH_COLOR[n.health] || HEALTH_COLOR.other, 'stroke-opacity': '.35' }));
+        vp.append(nodeEl(n, x, y, mini ? 22 : (kids.length > 12 ? 24 : 32), false));
       });
-      vp.append(nodeEl(center, cx, cy, mini ? 40 : 50));
+      vp.append(nodeEl(center, cx, mini ? cy - 10 : cy - 16, mini ? 34 : 46, true));
       if (!kids.length && !mini) {
-        const t = s('text', { 'text-anchor': 'middle', x: String(cx), y: String(cy + 90), class: 'graph-sub' }); t.textContent = 'No deeper relationships recorded.'; vp.append(t);
+        const t = s('text', { 'text-anchor': 'middle', x: String(cx), y: String(cy + 90), class: 'graph-sub' }); t.textContent = 'Nothing inside. Press Esc or ← Back to go up.'; vp.append(t);
       }
       holder.append(svg);
       return svg;
     },
   };
+
   function intelligenceView() {
     const canvas = h('div', { style: { height: '100%' }, id: 'networkCanvas' });
+    const crumbs = h('nav', { class: 'crumbs', 'aria-label': 'Where you are on the map' });
+    const backBtn = h('button', { class: 'btn small', type: 'button', title: 'Back one step (Esc)', onclick: () => back() }, '← Back');
     const inspector = h('div', { class: 'card-body' });
     let data = null;
-    const select = (id) => {
-      graphView.focus = id;
-      const n = graphView.node(data, id);
-      graphView.draw(canvas, data, id, false, select);
-      clear(inspector).append(h('div', {}, h('div', { class: 'eyebrow' }, 'SELECTED NODE'), h('h2', {}, n ? n.label : id),
-        n && n.state ? badge(n.state) : null,
-        h('dl', { class: 'kv' }, h('dt', {}, 'Type'), h('dd', {}, (n && n.type) || 'group'), h('dt', {}, 'Data origin'), h('dd', {}, (n && n.provenance) || 'server'),
-          n && n.detail ? h('dt', {}, 'Detail') : null, n && n.detail ? h('dd', {}, n.detail) : null,
-          n && n.updated ? h('dt', {}, 'Updated') : null, n && n.updated ? h('dd', {}, fmtTime(n.updated)) : null),
-        h('div', { class: 'form-actions' }, h('button', { class: 'btn small', type: 'button', onclick: () => select('root') }, '⌂ Back to core'),
-          id.startsWith('mission:') ? h('button', { class: 'btn small primary', type: 'button', onclick: () => { missionsPage.selected = id.slice(8); app.render('Missions'); } }, 'Open mission') : null)));
+    const hashFor = (path) => '#Intelligence' + (path.length > 1 ? '/' + path.slice(1).map(encodeURIComponent).join('/') : '');
+    const fromHash = decodeURIComponent(location.hash.slice(1)).split('/').slice(1).filter(Boolean);
+    if (fromHash.length) graphView.path = ['root', ...fromHash];
+    const label = (id) => { const n = data && graphView.node(data, id); return n ? clip(n.label, 34) : id; };
+    const renderCrumbs = () => {
+      clear(crumbs).append(...graphView.path.map((id, i) => [i ? h('span', { class: 'crumb-sep', 'aria-hidden': 'true' }, '›') : null,
+        i === graphView.path.length - 1 ? h('b', { 'aria-current': 'location' }, label(id))
+          : h('button', { class: 'linkish', type: 'button', onclick: () => go(id) }, label(id))]).flat().filter(Boolean));
+      backBtn.disabled = graphView.path.length <= 1;
     };
+    const renderInspector = (id) => {
+      const n = graphView.node(data, id);
+      if (!n) { clear(inspector).append(emptyBox('This item no longer exists.')); return; }
+      const kids = graphView.children(data, id);
+      const counts = n.counts ? h('div', { class: 'health-counts' }, Object.entries(n.counts).filter(([, v]) => v).map(([k, v]) =>
+        h('span', { class: 'hc', style: { '--c': HEALTH_COLOR[k] } }, v + ' ' + HEALTH_WORD[k]))) : null;
+      const next = n.type === 'capability' && n.health !== 'working' ? NEXT_STEP[id.slice(4)] : null;
+      const attention = kids.filter((k) => ['attention', 'failing'].includes(k.health));
+      clear(inspector).append(h('div', {},
+        h('div', { class: 'eyebrow' }, { core: 'WHOLE SYSTEM', area: 'AREA', group: 'GROUP', capability: 'PART OF HOOD', agent: 'AGENT', mission: 'MISSION', task: 'AGENT TASK' }[n.type] || 'ITEM'),
+        h('h2', {}, n.type === 'mission' ? clip(n.description || n.label, 140) : n.label),
+        ['mission', 'task'].includes(n.type) ? h('p', {}, badge(n.state), n.type === 'task' ? h('small', {}, '  ' + (ROLE_LABEL[n.role] || n.role)) : null)
+          : h('p', {}, h('span', { class: 'state', style: { color: HEALTH_COLOR[n.health] } }, HEALTH_WORD[n.health] || 'unknown'),
+            n.state && n.type === 'capability' ? h('small', {}, '  (' + String(n.state).replace(/_/g, ' ') + ')') : null),
+        n.description && n.type !== 'mission' ? h('p', {}, n.description) : null,
+        n.type === 'core' ? h('p', {}, 'Everything HOOD has, grouped by what you use it for. Click an area to look inside; Esc or ← Back goes up one step.') : null,
+        n.detail ? h('p', { class: 'small-note' }, 'Live: ' + n.detail) : null,
+        counts,
+        n.type === 'mission' ? h('dl', { class: 'kv' }, h('dt', {}, 'Kind'), h('dd', {}, n.profile === 'static_web' ? 'Website' : 'Python program'),
+          h('dt', {}, 'Updated'), h('dd', {}, fmtTime(n.updated))) : null,
+        next ? h('div', { class: 'callout warn' }, h('b', {}, 'Next step'), h('p', {}, next[1]),
+          h('button', { class: 'btn small primary', type: 'button', onclick: () => app.render(next[0]) }, 'Open ' + next[0])) : null,
+        attention.length && n.type !== 'capability' ? h('div', {}, h('div', { class: 'eyebrow' }, 'NEEDS YOU'),
+          h('ul', { class: 'file-list' }, attention.slice(0, 8).map((k) => h('li', {}, h('button', { class: 'linkish', type: 'button', onclick: () => go(k.id) }, k.label),
+            h('small', {}, ' · ' + (k.sub || '')))))) : null,
+        h('div', { class: 'form-actions' },
+          id.startsWith('mission:') ? h('button', { class: 'btn small primary', type: 'button', onclick: () => { missionsPage.selected = id.slice(8); app.render('Missions'); } }, 'Open mission') : null,
+          id.startsWith('task:') ? h('button', { class: 'btn small primary', type: 'button', onclick: () => { missionsPage.selected = id.split(':')[1]; app.render('Missions'); } }, 'Open its mission') : null,
+          n.type === 'capability' && n.page && n.page !== 'Intelligence' ? h('button', { class: 'btn small', type: 'button', onclick: () => app.render(n.page) }, 'Open ' + n.page + ' page') : null,
+          graphView.path.length > 1 ? h('button', { class: 'btn small', type: 'button', onclick: () => back() }, '← Back') : null)));
+    };
+    const show = () => {
+      if (!data) return;
+      if (!graphView.node(data, graphView.focus)) graphView.path = ['root'];   // item vanished (e.g. mission deleted)
+      graphView.draw(canvas, data, graphView.focus, false, (id) => go(id));
+      renderCrumbs();
+      renderInspector(graphView.focus);
+    };
+    // Drill down / jump: a new browser history entry, so the browser's Back button also goes back one step.
+    const go = (id) => {
+      if (id === graphView.focus) return;
+      const at = graphView.path.indexOf(id);
+      graphView.path = id === 'root' ? ['root'] : at >= 0 ? graphView.path.slice(0, at + 1) : [...graphView.path, id];
+      graphView.zoom = 1; graphView.pan = { x: 0, y: 0 };
+      history.pushState({ hoodMap: true }, '', hashFor(graphView.path));
+      show();
+    };
+    // Back one step: undo the last move when it was ours, otherwise go up to the parent.
+    const back = () => {
+      if (graphView.path.length <= 1) return;
+      if (history.state && history.state.hoodMap) { history.back(); return; }   // hashchange → subroute
+      graphView.path = graphView.path.slice(0, -1);
+      history.replaceState(null, '', hashFor(graphView.path));
+      show();
+    };
+    app.subroute = (rest) => { graphView.path = ['root', ...rest]; graphView.zoom = 1; graphView.pan = { x: 0, y: 0 }; show(); };
+    const onKey = (e) => {
+      if (e.key !== 'Escape' || !$('modalBackdrop').classList.contains('hidden')) return;
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || '')) return;
+      back();
+    };
+    document.addEventListener('keydown', onKey);
+    app.onCleanup(() => document.removeEventListener('keydown', onKey));
     const load = async () => {
       const r = await api.get('/api/console/graph?limit=50');
       if (!r.ok) { clear(canvas).append(unavailable(r, 'System map')); return; }
       data = r.data;
-      select(graphView.focus || 'root');
+      if (location.hash.split('/')[0] === '#Intelligence') history.replaceState(history.state, '', hashFor(graphView.path));
+      show();
     };
-    const zoomBy = (f) => { graphView.zoom = Math.min(3, Math.max(0.4, graphView.zoom * f)); if (data) graphView.draw(canvas, data, graphView.focus, false, select); };
+    const zoomBy = (f) => { graphView.zoom = Math.min(3, Math.max(0.4, graphView.zoom * f)); if (data) graphView.draw(canvas, data, graphView.focus, false, go); };
     canvas.addEventListener('wheel', (e) => { e.preventDefault(); zoomBy(e.deltaY < 0 ? 1.1 : 0.9); }, { passive: false });
     let drag = null;
     canvas.addEventListener('pointerdown', (e) => { if (e.target.closest('.graph-node')) return; drag = { x: e.clientX, y: e.clientY, px: graphView.pan.x, py: graphView.pan.y }; canvas.setPointerCapture(e.pointerId); });
-    canvas.addEventListener('pointermove', (e) => { if (!drag || !data) return; graphView.pan = { x: drag.px + (e.clientX - drag.x), y: drag.py + (e.clientY - drag.y) }; graphView.draw(canvas, data, graphView.focus, false, select); });
+    canvas.addEventListener('pointermove', (e) => { if (!drag || !data) return; graphView.pan = { x: drag.px + (e.clientX - drag.x), y: drag.py + (e.clientY - drag.y) }; graphView.draw(canvas, data, graphView.focus, false, go); });
     canvas.addEventListener('pointerup', () => { drag = null; });
     load();
     app.onCleanup(feed.subscribe(() => { clearTimeout(graphView.t); graphView.t = setTimeout(load, 1500); }));
-    return h('div', {}, head('Living intelligence network', 'The real relationships inside this Hood server: capabilities, agents, your missions and their tasks.',
-      h('button', { class: 'btn', type: 'button', onclick: () => { graphView.zoom = 1; graphView.pan = { x: 0, y: 0 }; select('root'); } }, 'Reset view')),
+    const legend = h('div', { class: 'map-legend' }, ['working', 'attention', 'failing', 'busy', 'other'].map((k) =>
+      h('span', { class: 'hc', style: { '--c': HEALTH_COLOR[k] } }, HEALTH_WORD[k])));
+    return h('div', {}, head('System map', 'What HOOD has, what works right now, and what needs you. Click to look inside; Esc or ← Back goes up one step.',
+      h('button', { class: 'btn', type: 'button', onclick: () => go('root') }, '⌂ Whole system')),
+    h('div', { class: 'map-bar' }, backBtn, crumbs),
     h('div', { class: 'network-shell' },
       h('div', { class: 'card graph-card' }, h('div', { class: 'graph-controls' },
+        h('button', { type: 'button', title: 'Back one step (Esc)', 'aria-label': 'Back one step', onclick: () => back() }, '←'),
         h('button', { type: 'button', title: 'Zoom in', 'aria-label': 'Zoom in', onclick: () => zoomBy(1.2) }, '＋'),
         h('button', { type: 'button', title: 'Zoom out', 'aria-label': 'Zoom out', onclick: () => zoomBy(1 / 1.2) }, '−'),
-        h('button', { type: 'button', title: 'Back to core', 'aria-label': 'Back to core', onclick: () => select('root') }, '⌂')), canvas),
-      h('section', { class: 'card graph-inspector' }, h('header', { class: 'card-header' }, h('span', { class: 'card-title' }, 'Node inspector'), badge('available', 'live data')), inspector)));
+        h('button', { type: 'button', title: 'Whole system', 'aria-label': 'Whole system', onclick: () => go('root') }, '⌂')), canvas, legend),
+      h('section', { class: 'card graph-inspector' }, h('header', { class: 'card-header' }, h('span', { class: 'card-title' }, 'Details'), badge('available', 'live data')), inspector)));
   }
 
   // ------------------------------------------------------------------ Integrations / capabilities
@@ -884,16 +1239,39 @@
   // ------------------------------------------------------------------ Memory
   function memoryView() {
     const body = h('div', {});
+    const text = (content) => {
+      const full = String(content || '');
+      if (full.length <= 320) return h('p', { class: 'pre-wrap' }, full);
+      const p = h('p', { class: 'pre-wrap' }, clip(full, 300));
+      const more = h('button', { class: 'linkish', type: 'button', onclick: () => {
+        const open = more.dataset.open === '1';
+        p.textContent = open ? clip(full, 300) : full;
+        more.textContent = open ? 'Show all' : 'Show less';
+        more.dataset.open = open ? '0' : '1';
+      } }, 'Show all');
+      return h('div', {}, p, more);
+    };
+    const memCard = (m, kind) => h('section', { class: 'card', style: { gridColumn: 'span 4' } },
+      h('header', { class: 'card-header' }, h('span', { class: 'card-title' }, kind === 'fact' ? 'You told HOOD' : 'Old chat log'),
+        kind === 'fact' ? badge('available', 'your words') : badge('UNVERIFIED', 'not a verified fact')),
+      h('div', { class: 'card-body' }, text(m.content), h('p', { class: 'small-note' }, fmtTime(m.created_at))));
     fill(body, async () => {
       const r = await api.get('/api/memory/list');
       if (r.status === 403) return emptyBox('Your role does not have access to memory.');
       if (!r.ok) return unavailable(r, 'Memory');
-      if (!r.data.memories || !r.data.memories.length) return emptyBox('No memories stored for you yet.');
-      return h('div', { class: 'dashboard' }, r.data.memories.map((m) => h('section', { class: 'card', style: { gridColumn: 'span 4' } },
-        h('header', { class: 'card-header' }, h('span', { class: 'card-title' }, m.memory_type || m.type || 'memory'), badge(m.learning_status || 'unknown')),
-        h('div', { class: 'card-body' }, h('p', {}, String(m.content || '').slice(0, 400)), h('p', { class: 'small-note' }, 'Project: ' + (m.project || 'unknown') + ' · ' + fmtTime(m.created_at))))));
+      const all = r.data.memories || [];
+      const facts = all.filter((m) => m.project === 'personal');
+      const logs = all.filter((m) => m.project !== 'personal');
+      return h('div', {},
+        h('h3', { class: 'section-title' }, 'Facts you told HOOD (' + facts.length + ')'),
+        facts.length ? h('div', { class: 'dashboard' }, facts.map((m) => memCard(m, 'fact')))
+          : emptyBox('Nothing yet. Tell HOOD in the chat: “Remember that …” (or “Souviens-toi que …”).'),
+        logs.length ? h('div', {},
+          h('h3', { class: 'section-title' }, 'Old chat logs (' + logs.length + ')'),
+          h('p', { class: 'small-note' }, 'Saved by earlier versions of HOOD. They include HOOD’s own replies, which are not verified facts, so HOOD no longer uses them as memory. New chats are kept in the conversation history instead.'),
+          h('details', {}, h('summary', {}, 'Show old chat logs'), h('div', { class: 'dashboard' }, logs.map((m) => memCard(m, 'log'))))) : null);
     });
-    return h('div', {}, head('Memory', 'What Hood remembers for you. Only your own records are shown.'), body);
+    return h('div', {}, head('Memory', 'What HOOD remembers for you: only facts you told it. Only your own records are shown.'), body);
   }
 
   // ------------------------------------------------------------------ Commerce (business module)
@@ -1077,7 +1455,7 @@
           h('dt', {}, 'API key'), h('dd', {}, k.set ? 'Set — from ' + k.source + (k.hint ? ' (' + k.hint + ')' : '') : 'Not set'),
           h('dt', {}, 'Prices'), h('dd', {}, pr.source ? 'From ' + pr.source + (pr.missing.length ? ' — missing: ' + pr.missing.join(', ') : '')
             : 'Not set: every AI call is refused until prices are on file'),
-          s.last_error ? h('dt', {}, 'Last error') : null, s.last_error ? h('dd', {}, String(s.last_error).slice(0, 200)) : null),
+          s.last_error ? h('dt', {}, 'Last error') : null, s.last_error ? h('dd', {}, clip(s.last_error, 200)) : null),
         h('div', { class: 'form' }, h('label', {}, k.set ? 'Replace API key' : 'Gemini API key', keyInput),
           h('div', { class: 'form-actions' },
             h('button', { class: 'btn small primary', type: 'button', onclick: async () => {
@@ -1116,6 +1494,35 @@
   }
 
   // ------------------------------------------------------------------ Settings › Voice (owner only)
+  function agentSettingsCard() {
+    const box = h('div', {});
+    const load = () => fill(box, async () => {
+      const r = await api.get('/api/settings/agents');
+      if (!r.ok) return unavailable(r, 'Agent settings');
+      const a = r.data;
+      const toggle = (on) => confirmDialog(on ? 'Turn on "Run on my PC"' : 'Turn off "Run on my PC"', on ? [
+        'When a Python mission is ready to be checked and this computer has no sandbox, HOOD will ask you, mission by mission, to run its fixed check commands directly on this PC.',
+        'Those commands execute code the agents wrote, without network or file isolation. API keys are removed from their environment and each step has a time limit.',
+        'Nothing runs until you approve the exact files of that mission. Website missions never need this: they are checked without running anything.']
+        : ['Python missions on this computer will wait (or you can run HOOD in WSL2) instead of asking to run here.'],
+      on ? 'Turn on' : 'Turn off', async () => { const x = await api.post('/api/settings/agents', { allow_local_run: on, confirm: true }); if (x.ok) load(); return x; });
+      return h('div', {},
+        h('dl', { class: 'kv' },
+          h('dt', {}, 'Sandbox on this computer'), h('dd', {}, a.sandbox_available ? badge('available', 'available (Linux namespaces)') : badge('unavailable', 'not available'),
+            a.sandbox_problem ? h('div', { class: 'small-note' }, a.sandbox_problem) : null),
+          h('dt', {}, 'Website missions'), h('dd', {}, badge('available', 'work here'), h('div', { class: 'small-note' }, 'Checked by reading the files; nothing is run.')),
+          h('dt', {}, 'Python missions'), h('dd', {}, a.sandbox_available ? 'Tests run in the sandbox.'
+            : a.allow_local_run ? 'Each mission asks you before running its checks on this PC.' : 'Wait for you: turn on "Run on my PC" or use WSL2.'),
+          h('dt', {}, '"Run on my PC"'), h('dd', {}, a.allow_local_run ? badge('active', 'on') : badge('muted', 'off (default)'),
+            a.changed_by ? h('div', { class: 'small-note' }, 'Changed by ' + a.changed_by + ' · ' + fmtTime(a.changed_at)) : null)),
+        h('div', { class: 'form-actions' },
+          h('button', { class: 'btn small' + (a.allow_local_run ? '' : ' primary'), type: 'button', onclick: () => toggle(!a.allow_local_run) },
+            a.allow_local_run ? 'Turn off "Run on my PC"' : 'Turn on "Run on my PC"')),
+        !a.sandbox_available ? h('p', { class: 'small-note' }, 'Safer option: run HOOD inside WSL2 (Linux on Windows), where Python missions get a real sandbox. Guide: docs/WSL2.md; script: scripts\\windows\\hood-wsl.ps1.') : null);
+    });
+    load();
+    return card('Agents', box);
+  }
   function voiceSettingsCard() {
     const box = h('div', {});
     const load = () => fill(box, async () => {
@@ -1264,6 +1671,7 @@
           h('div', { class: 'form-actions' }, h('button', { class: 'btn', type: 'button', onclick: () => { widgets.layout = DEFAULT_LAYOUT.map((w) => ({ ...w })); widgets.save(); toast('Layout reset.'); } }, 'Reset dashboard layout'))))),
       session.role === 'ROOT_OWNER' ? h('div', { style: { marginTop: '14px' } }, modelProviderCard()) : null,
       session.role === 'ROOT_OWNER' ? h('div', { style: { marginTop: '14px' } }, voiceSettingsCard()) : null,
+      session.role === 'ROOT_OWNER' ? h('div', { style: { marginTop: '14px' } }, agentSettingsCard()) : null,
       h('div', { class: 'two-col', style: { marginTop: '14px' } }, securityCard(),
         session.role === 'ROOT_OWNER' ? usersCard() : null),
       h('div', { style: { marginTop: '14px' } }, card('Active sessions', sessions)));
@@ -1280,7 +1688,7 @@
     if (q.length < 2) { box.classList.add('hidden'); return; }
     const [m, c] = await Promise.all([api.get('/api/agents/missions'), api.get('/api/capabilities')]);
     const results = [];
-    if (m.ok) m.data.filter((x) => x.objective.toLowerCase().includes(q)).slice(0, 5).forEach((x) => results.push(['Mission', x.objective.slice(0, 80), () => { missionsPage.selected = x.id; app.render('Missions'); }]));
+    if (m.ok) m.data.filter((x) => x.objective.toLowerCase().includes(q)).slice(0, 5).forEach((x) => results.push(['Mission', clip(x.objective, 80), () => { missionsPage.selected = x.id; app.render('Missions'); }]));
     if (c.ok) c.data.items.filter((x) => (x.name + ' ' + x.description).toLowerCase().includes(q)).slice(0, 5).forEach((x) => results.push(['Capability', x.name, () => app.render('Integrations')]));
     PAGES.filter(([p]) => p.toLowerCase().includes(q)).forEach(([p]) => results.push(['Page', p, () => app.render(p)]));
     clear(box);
@@ -1312,7 +1720,12 @@
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); $('globalSearch').focus(); }
       if (e.key === 'Escape') { closeModal(); $('searchResults').classList.add('hidden'); }
     });
-    window.addEventListener('hashchange', () => { const p = decodeURIComponent(location.hash.slice(1)); if (app.booted && p !== app.page) app.render(p); });
+    window.addEventListener('hashchange', () => {
+      if (!app.booted) return;
+      const [p, ...rest] = decodeURIComponent(location.hash.slice(1)).split('/');
+      if (p !== app.page) app.render(p);
+      else if (app.subroute) app.subroute(rest.filter(Boolean));
+    });
     session.start();
   }
   wire();
