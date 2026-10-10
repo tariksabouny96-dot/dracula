@@ -335,7 +335,19 @@ class HoodSystemRuntime:
         if engine is not None:
             with sqlite3.connect(engine.db_path) as db:
                 rows = db.execute("SELECT state, COUNT(*) FROM missions GROUP BY state").fetchall()
+                recent = db.execute("SELECT id, objective, state, error FROM missions "
+                                    "ORDER BY updated DESC LIMIT 3").fetchall()
+                done = {mid: (ok or 0, total or 0) for mid, ok, total in db.execute(
+                    "SELECT mission_id, SUM(state='COMPLETED'), COUNT(*) FROM tasks GROUP BY mission_id")}
             facts.append("Agent missions: " + (", ".join(f"{n} {st}" for st, n in rows) if rows else "none yet"))
+            for mid, objective, state, error in recent:
+                ok, total = done.get(mid, (0, 0))
+                why = str(error or "")
+                if "sandbox" in why.lower():
+                    why = ("the agents wrote the code, but it could not be tested here: Windows has no "
+                           "sandbox (needs Linux/WSL2), so it is not verified")
+                facts.append(f"Recent mission \"{objective[:70]}\": {state}; {ok}/{total} agent tasks finished"
+                             + (f"; {why[:200]}" if why else ""))
             from services.agents.sandbox import network_isolation_available
             if not getattr(self, "_sandbox_ok_cached", None):
                 self._sandbox_ok_cached = ("yes" if network_isolation_available() else "no")
