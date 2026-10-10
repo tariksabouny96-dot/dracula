@@ -256,8 +256,13 @@ class HoodSystemRuntime:
         # Multi-agent engine: live providers via the router (budgets, pricing), sandboxed tools,
         # independent verification. Simulated output is refused here.
         from services.agents import AgentEngine
+        from services.toolbox import Toolbox
+        # Installs what missions need (WordPress: PHP, WordPress...), only with the owner's OK, once per
+        # tool, and only inside WSL2/Linux; downloads go through the egress firewall.
+        self.toolbox = Toolbox(self.data_dir, firewall=self.firewall, stop_latch=self.stop_latch)
         self.agent_engine = AgentEngine(self.data_dir / "agents", router=self.model_router,
-                                        stop_latch=self.stop_latch, on_outcome=self._on_mission_outcome)
+                                        stop_latch=self.stop_latch, on_outcome=self._on_mission_outcome,
+                                        toolbox=self.toolbox)
         self.emergency_stop.attach("agent_engine", self.agent_engine.halt_all)
         self.commander = HoodCommander(
             self.config,
@@ -276,6 +281,7 @@ class HoodSystemRuntime:
         from services.interaction.conversation_store import ConversationStore
         self.interaction_service.conversation_store = ConversationStore(self.data_dir / "conversations.sqlite3")
         self.interaction_service.status_facts = self._chat_status_facts
+        self.interaction_service.toolbox = self.toolbox
         self.x_controller = XExecutiveController(self.memory_service, self.audit_service)
         self.x_session_manager = XSessionManager(
             approval_service=self.approval_service,

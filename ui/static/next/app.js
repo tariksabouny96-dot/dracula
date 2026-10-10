@@ -396,11 +396,56 @@
         planMissionDialog(d.ok ? d.data.objective : objective);
       };
       btn.addEventListener('click', openPlan);
-      if (notes.length) logEl.append(h('div', { class: 'callout warn' }, h('b', {}, 'Not possible here'), h('ul', {}, notes.map((n) => h('li', {}, n)))));
+      if (r.data.needs_tools) logEl.append(toolsPanel(r.data.needs_tools, () => toast('Ready: you can plan it now.')));
+      else if (notes.length) logEl.append(h('div', { class: 'callout warn' }, h('b', {}, 'Good to know'), h('ul', {}, notes.map((n) => h('li', {}, n)))));
       logEl.append(h('div', { class: 'form-actions' }, btn, h('small', { class: 'small-note' }, 'Nothing runs until you approve the plan.')));
       if (r.data.open_mission_draft) openPlan();   // the owner asked to plan it: open it for review
     }
     if (voice.autoSpeak) voice.speak(String(r.data.text).replace(/[*`#_]/g, ''), r.data.speaker_id);
+  }
+  // "Allow & install": HOOD asks instead of saying no (owner's rule: once per tool, inside WSL2).
+  function toolsPanel(need, onReady) {
+    const box = h('div', { class: 'callout warn tools-panel' });
+    const render = (n) => {
+      clear(box);
+      if (!n || n.ready) { box.className = 'callout good tools-panel'; box.append(h('b', {}, 'Tools ready'), h('p', {}, 'Everything this needs is installed.')); return; }
+      const names = n.missing.map((t) => n.names[t] || t);
+      box.append(h('b', {}, 'Needs: ' + names.join(', ')));
+      if (n.problem) { box.append(h('p', {}, n.problem)); return; }
+      if (n.running) { box.append(h('p', {}, 'Installing…')); follow(n.running); return; }
+      if (!n.unapproved.length) { box.append(h('p', {}, 'You allowed these before; HOOD reinstalls them when the mission needs them.')); return; }
+      box.append(h('p', {}, 'HOOD can install these inside WSL2 from their official sources (checked before use). You allow each tool once; after that HOOD reuses and updates it without asking.'));
+      if (session.role !== 'ROOT_OWNER') { box.append(h('p', { class: 'small-note' }, 'Only the Root Owner can allow installs.')); return; }
+      box.append(h('div', { class: 'form-actions' }, h('button', { class: 'btn small primary', type: 'button', onclick: () => confirmDialog('Allow & install',
+        ['HOOD will install: ' + names.join(', ') + ' (inside WSL2, from their official sources).',
+          'You allow each tool once; later updates and reuse don’t ask again. You can remove them in Settings › Tools.'], 'Allow & install', async () => {
+          const r = await api.post('/api/tools/install', { tools: n.missing, confirm: true });
+          if (!r.ok) return r;
+          follow(r.data.id);
+          return r;
+        }) }, 'Allow & install')));
+    };
+    const follow = async (jobId) => {
+      const log = h('pre', { class: 'file-view wrap' }, 'Starting…');
+      clear(box).append(h('b', {}, 'Installing…'), log);
+      for (;;) {
+        const j = await api.get('/api/tools/jobs/' + jobId);
+        if (!j.ok) { log.textContent = j.error; return; }
+        log.textContent = j.data.log.join('\n') || '…';
+        if (j.data.state !== 'running') {
+          if (j.data.state === 'done') {
+            render({ ready: true });
+            box.append(h('details', {}, h('summary', {}, 'What was installed'), h('pre', { class: 'file-view wrap' }, j.data.log.join('\n'))));
+            toast('Tools installed.');
+            if (onReady) onReady();
+          } else box.append(h('p', {}, 'Install stopped: ' + (j.data.error || 'unknown error')));
+          return;
+        }
+        await new Promise((res) => setTimeout(res, 1500));
+      }
+    };
+    render(need);
+    return box;
   }
   const WEBSITE_RE = /\b(web ?site|site ?web|landing ?page|web ?page|page ?web|home ?page|html|site|catalog(ue)?|boutique|shop|store|portfolio|blog)\b/i;
   function planMissionDialog(objective, opts) {
@@ -410,18 +455,24 @@
     const showLimits = async () => {
       const r = await api.post('/api/agents/scope', { objective: obj.value.slice(0, 8000), profile: kind.value });
       clear(limits);
-      if (r.ok && r.data.notes.length) limits.append(h('div', { class: 'callout warn' }, h('b', {}, 'Not possible here (the plan will say so)'),
+      if (kind.value === 'wordpress_site') {
+        const t = await api.get('/api/tools/needs?profile=wordpress_site');
+        if (t.ok && !t.data.ready) { limits.append(toolsPanel(t.data, showLimits)); return; }
+      }
+      if (r.ok && r.data.notes.length) limits.append(h('div', { class: 'callout warn' }, h('b', {}, 'Good to know before planning'),
         h('ul', {}, r.data.notes.map((n) => h('li', {}, n)))));
     };
     const budget = h('input', { type: 'number', min: '0', max: '100', step: '0.01', value: '1.00', 'aria-label': 'Spend cap in USD' });
     const kind = h('select', { 'aria-label': 'Kind of work' },
       h('option', { value: 'static_web' }, 'Website (HTML, CSS, JavaScript): checked by reading the files, works on this PC'),
+      h('option', { value: 'wordpress_site' }, 'WordPress site: a real WordPress theme and pages, run and checked in the sandbox (needs PHP and WordPress, installed with your OK inside WSL2)'),
       h('option', { value: 'python_app' }, 'Python program: its tests must run (Linux/WSL2, or "Run on my PC" with your approval)'));
-    kind.value = (opts && opts.kind) || (WEBSITE_RE.test(obj.value) ? 'static_web' : 'python_app');
+    const guessKind = (t) => (/\bword ?press\b/i.test(t) ? 'wordpress_site' : WEBSITE_RE.test(t) ? 'static_web' : 'python_app');
+    kind.value = (opts && opts.kind) || guessKind(obj.value);
     let touched = !!(opts && opts.kind), limitTimer = null;
     kind.addEventListener('change', () => { touched = true; showLimits(); });
     obj.addEventListener('input', () => {
-      if (!touched) kind.value = WEBSITE_RE.test(obj.value) ? 'static_web' : 'python_app';
+      if (!touched) kind.value = guessKind(obj.value);
       clearTimeout(limitTimer); limitTimer = setTimeout(showLimits, 500);
     });
     showLimits();
@@ -640,10 +691,12 @@
   const ROLE_LABEL = { planner: 'Planner', engineer: 'Engineer', qa: 'QA', reviewer: 'Reviewer', verifier: 'Verifier' };
   const PROFILE_LABEL = {
     static_web: 'Website: checked by reading its files (nothing is run), works on this PC',
+    wordpress_site: 'WordPress site: theme and pages, run by a real WordPress in the sandbox and checked',
     python_app: 'Python program: checked by running its tests (needs a sandbox, WSL2, or your "Run on my PC" approval)',
   };
   const CHECK_LABEL = { site_structure: 'Page structure', links_and_assets: 'Links and files', css_syntax: 'CSS',
     javascript_structure: 'JavaScript structure', independent_acceptance_checks: 'QA acceptance checks',
+    php_syntax: 'PHP syntax', wordpress_setup: 'WordPress set up', pages_render: 'Pages render without errors',
     compile: 'Code compiles', engineer_unit_tests: "Engineer's unit tests", independent_acceptance_tests: 'QA acceptance tests' };
   const STEP_LABEL = { CREATED: 'waiting', QUEUED: 'waiting', RUNNING: 'working', COMPLETED: 'done', FAILED: 'failed',
     BLOCKED: 'needs you', CANCELLED: 'cancelled', UNVERIFIED: 'not verified' };
@@ -662,6 +715,7 @@
     return sec < 60 ? sec + 's' : Math.floor(sec / 60) + 'm ' + (sec % 60) + 's';
   }
   // A brief may open with "Not possible here: ..."; its "Goal:" line names the mission better.
+  const KIND_SHORT = { static_web: 'Website', wordpress_site: 'WordPress site', python_app: 'Python program' };
   function missionTitle(objective) {
     const text = String(objective || '');
     const goal = text.match(/^\s*(?:goal|objectif)\s*:\s*(.+)$/im);
@@ -703,7 +757,7 @@
         style: { width: '100%', textAlign: 'left' }, 'aria-pressed': String(m.id === missionsPage.selected),
         onclick: () => { missionsPage.selected = m.id; loadList(); loadDetail(true); } },
         h('div', { class: 'row-main' }, h('b', {}, clip(missionTitle(m.objective), 110)),
-          h('small', {}, (m.profile === 'static_web' ? 'Website' : 'Python program') + ' · ' + fmtTime(m.updated))),
+          h('small', {}, (KIND_SHORT[m.profile] || 'Python program') + ' · ' + fmtTime(m.updated))),
         h('div', { class: 'row-meta' }, badge(m.state), ' ', m.provider_mode !== 'LIVE' && m.provider_mode !== 'NONE' ? badge(m.provider_mode) : null))));
     });
     // Live re-render without flashing a loading box (keeps scroll position and open sections).
@@ -752,7 +806,8 @@
     else if (m.local_run && m.local_run.awaiting_approval) vs = 'BLOCKED';
     else if (v && ['FAILED', 'UNVERIFIED'].includes(m.state)) vs = v.verdict === 'FAIL' ? 'FAILED' : 'UNVERIFIED';
     else if (v && m.state === 'RUNNING') vs = 'CREATED';   // repair round under way; checked again after it
-    steps.push({ role: 'verifier', title: m.profile === 'static_web' ? 'Check pages, links, code structure and QA checks' : 'Run the tests and QA checks',
+    steps.push({ role: 'verifier', title: m.profile === 'static_web' ? 'Check pages, links, code structure and QA checks'
+      : m.profile === 'wordpress_site' ? 'Run WordPress, render the pages, apply QA checks' : 'Run the tests and QA checks',
       state: vs, since: m.state === 'VERIFYING' ? m.updated : null });
     const look = (state) => (['CREATED', 'QUEUED'].includes(state) ? 'muted' : kindOf(state));
     return h('ol', { class: 'pipeline' }, steps.map((st) => h('li', { class: 'pipe-step ' + look(st.state) },
@@ -790,7 +845,9 @@
     const v = m.last_verification;
     if (!v) return emptyBox(m.profile === 'static_web'
       ? "Not checked yet. HOOD will read the pages, links, CSS and JavaScript, then apply the QA agent's acceptance checks. The site's code is never run."
-      : 'Not checked yet. HOOD will compile the code and run the unit tests and the QA acceptance tests.');
+      : m.profile === 'wordpress_site'
+        ? "Not checked yet. HOOD will set up a real WordPress with this theme and these pages in the sandbox, render every page, and apply the QA agent's checks to what WordPress shows."
+        : 'Not checked yet. HOOD will compile the code and run the unit tests and the QA acceptance tests.');
     return h('div', {},
       h('p', {}, badge(v.verdict), ' ', h('small', {}, v.execution ? 'How: ' + v.execution : (v.network_isolated ? 'In the sandbox, no network' : ''))),
       (v.checks || []).map((c) => h('details', { class: 'check-row' },
@@ -831,7 +888,7 @@
     try { d = typeof e.detail === 'string' ? JSON.parse(e.detail) : (e.detail || {}); } catch (err) { d = {}; }
     d = d || {};
     switch (e.kind) {
-      case 'CREATED': return 'Mission created' + (d.profile ? ' (' + (d.profile === 'static_web' ? 'website' : 'Python program') + ')' : '');
+      case 'CREATED': return 'Mission created' + (d.profile ? ' (' + (KIND_SHORT[d.profile] || d.profile).toLowerCase() + ')' : '');
       case 'STATE': return 'Now ' + String(d.state || '').replace(/_/g, ' ').toLowerCase() + (d.error ? ': ' + clip(d.error, 220) : '');
       case 'TASK_STARTED': return (ROLE_LABEL[d.role] || 'Agent') + ' started “' + d.title + '”' + (d.attempt > 1 ? ' (attempt ' + d.attempt + ')' : '');
       case 'TASK_COMPLETED': return 'Task ' + d.task_id + ' finished';
@@ -891,9 +948,11 @@
       onclick: async (e) => { e.target.disabled = true; const r = await api.post(missionUrl(m.mission_id, path), body); e.target.disabled = false;
         if (!r.ok) toast(r.error); else toast(label + ': done'); reload(); } }, label);
     const actions = [];
+    const toolsMissing = m.needs_tools && !m.needs_tools.ready;
     if (m.state === 'AWAITING_PLAN_APPROVAL') {
       // One approval starts the work: approve this exact plan and budget, then the agents run.
-      actions.push(h('button', { class: 'btn small primary', type: 'button', onclick: async (e) => {
+      actions.push(h('button', { class: 'btn small primary', type: 'button', disabled: toolsMissing || null,
+        title: toolsMissing ? 'Install the tools above first' : null, onclick: async (e) => {
         e.target.disabled = true;
         const a = await api.post(missionUrl(m.mission_id, '/approve'), { confirm: true, plan_sha256: m.plan_sha256 });
         if (!a.ok) { e.target.disabled = false; toast(a.error); return; }
@@ -932,6 +991,7 @@
         h('dt', {}, 'Spend / cap'), h('dd', {}, money(m.spend) + ' / ' + money(m.budget_usd)),
         h('dt', {}, 'Repairs'), h('dd', {}, String(m.repairs)),
         m.error ? h('dt', {}, 'Reason') : null, m.error ? h('dd', {}, reasonBlock(m.error)) : null),
+      toolsMissing && !['COMPLETED', 'CANCELLED'].includes(m.state) ? toolsPanel(m.needs_tools, reload) : null,
       beforeApprove,
       h('div', { class: 'form-actions' }, actions),
       m.local_run && m.local_run.awaiting_approval ? localRunPanel(m, reload) : null,
@@ -1137,7 +1197,7 @@
         n.type === 'core' ? h('p', {}, 'Everything HOOD has, grouped by what you use it for. Click an area to look inside; Esc or ← Back goes up one step.') : null,
         n.detail ? h('p', { class: 'small-note' }, 'Live: ' + n.detail) : null,
         counts,
-        n.type === 'mission' ? h('dl', { class: 'kv' }, h('dt', {}, 'Kind'), h('dd', {}, n.profile === 'static_web' ? 'Website' : 'Python program'),
+        n.type === 'mission' ? h('dl', { class: 'kv' }, h('dt', {}, 'Kind'), h('dd', {}, KIND_SHORT[n.profile] || 'Python program'),
           h('dt', {}, 'Updated'), h('dd', {}, fmtTime(n.updated))) : null,
         next ? h('div', { class: 'callout warn' }, h('b', {}, 'Next step'), h('p', {}, next[1]),
           h('button', { class: 'btn small primary', type: 'button', onclick: () => app.render(next[0]) }, 'Open ' + next[0])) : null,
@@ -1558,6 +1618,52 @@
   }
 
   // ------------------------------------------------------------------ Settings › Voice (owner only)
+  function toolsSettingsCard() {
+    const box = h('div', {});
+    const load = () => fill(box, async () => {
+      const r = await api.get('/api/tools');
+      if (!r.ok) return unavailable(r, 'Tools');
+      const t = r.data;
+      const act = (label, path, body, okText, confirmLines) => h('button', { class: 'btn small', type: 'button', onclick: () => {
+        const go = async () => {
+          const x = await api.post(path, body);
+          if (!x.ok) { toast(x.error); return x; }
+          toast(okText);
+          if (x.data && x.data.id) follow(x.data.id); else load();
+          return x;
+        };
+        if (confirmLines) confirmDialog(label, confirmLines, label, go); else go();
+      } }, label);
+      const follow = async (jobId) => {
+        for (;;) {
+          const j = await api.get('/api/tools/jobs/' + jobId);
+          if (!j.ok || j.data.state !== 'running') { load(); if (j.ok && j.data.state === 'failed') toast('Install stopped: ' + j.data.error); return; }
+          await new Promise((res) => setTimeout(res, 1500));
+        }
+      };
+      return h('div', {},
+        h('p', {}, 'Tools HOOD installs when a mission needs them, only inside WSL2 and only with your OK (once per tool; after that HOOD reuses and updates them without asking).'),
+        t.platform_problem ? h('div', { class: 'callout warn' }, t.platform_problem)
+          : t.helper_problem ? h('div', { class: 'callout warn' }, h('b', {}, 'System packages: not switched on yet'), h('p', {}, t.helper_problem),
+            h('p', { class: 'small-note' }, 'Downloads such as WordPress itself still work; PHP needs this step.')) : null,
+        h('div', { class: 'tool-rows' }, t.tools.map((tool) => h('div', { class: 'list-row' },
+          h('div', { class: 'row-main' }, h('b', {}, tool.name), h('small', {}, tool.purpose + ' · ' + tool.size + ' · from ' + tool.source),
+            tool.detail ? h('small', {}, tool.detail) : null, tool.last_error ? h('small', { class: 'small-note' }, 'Last problem: ' + clip(tool.last_error, 160)) : null),
+          h('div', { class: 'row-meta' },
+            tool.installed ? badge('available', 'installed' + (tool.version ? ' · ' + clip(tool.version, 24) : '')) : badge('muted', 'not installed'), ' ',
+            tool.approved ? badge('active', 'allowed') : null, ' ',
+            !tool.installed ? act('Allow & install', '/api/tools/install', { tools: [tool.id], confirm: true }, 'Installing ' + tool.name + '…',
+              ['HOOD will install ' + tool.name + (tool.requires.length ? ' (and what it needs: ' + tool.requires.join(', ') + ')' : '') + ' from ' + tool.source + '.',
+                'You allow it once; later updates and reuse don’t ask again.']) : null,
+            tool.installed && tool.approved ? act('Update', '/api/tools/update', { tool: tool.id }, 'Updating ' + tool.name + '…') : null,
+            tool.installed && (tool.installed_by_hood || tool.kind !== 'apt') && tool.approved ? act('Remove', '/api/tools/remove', { tool: tool.id, confirm: true }, tool.name + ' removed.',
+              ['Remove ' + tool.name + '? HOOD will ask again before reinstalling it.']) : null)))),
+        t.history.length ? h('details', {}, h('summary', {}, 'History'), h('ol', { class: 'timeline' }, t.history.slice().reverse().map((e) =>
+          h('li', {}, h('time', {}, fmtTime(e.at)), h('span', {}, e.actor + ' · ' + e.action + ' · ' + e.tool + ' · ' + e.result))))) : null);
+    });
+    load();
+    return card('Tools (installs)', box);
+  }
   function agentSettingsCard() {
     const box = h('div', {});
     const load = () => fill(box, async () => {
@@ -1736,6 +1842,7 @@
       session.role === 'ROOT_OWNER' ? h('div', { style: { marginTop: '14px' } }, modelProviderCard()) : null,
       session.role === 'ROOT_OWNER' ? h('div', { style: { marginTop: '14px' } }, voiceSettingsCard()) : null,
       session.role === 'ROOT_OWNER' ? h('div', { style: { marginTop: '14px' } }, agentSettingsCard()) : null,
+      session.role === 'ROOT_OWNER' ? h('div', { style: { marginTop: '14px' } }, toolsSettingsCard()) : null,
       h('div', { class: 'two-col', style: { marginTop: '14px' } }, securityCard(),
         session.role === 'ROOT_OWNER' ? usersCard() : null),
       h('div', { style: { marginTop: '14px' } }, card('Active sessions', sessions)));

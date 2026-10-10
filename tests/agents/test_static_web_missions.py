@@ -220,7 +220,7 @@ def test_local_run_settings_are_off_by_default_and_persist(tmp_path):
 
 
 def test_unknown_mission_kind_is_refused(tmp_path):
-    with pytest.raises(ValueError, match="python_app or static_web"):
+    with pytest.raises(ValueError, match="python_app, static_web or wordpress_site"):
         _engine(tmp_path, ScriptedModel()).create_mission(OWNER, WEB_OBJECTIVE, profile="rocket")
 
 
@@ -274,7 +274,8 @@ def test_planner_is_told_what_cannot_be_built_and_the_owner_sees_it():
     engine = _engine(Path(tempfile.mkdtemp()), model)
     status = engine.create_mission(OWNER, "Create a website using WordPress for perfumes, with a catalogue",
                                    profile="static_web")
-    assert any("WordPress can't be built" in n for n in status["scope_notes"])
+    # A website mission asked for WordPress: HOOD says it's the static option and how to get real WordPress.
+    assert any("not WordPress" in n and "WordPress site" in n for n in status["scope_notes"])
     planner_prompt = next(r for r in model.requests if r.agent == "planner").prompt
     assert "HOOD SCOPE NOTES" in planner_prompt and "WordPress" in planner_prompt
     plain = engine.create_mission(OWNER, WEB_OBJECTIVE, profile="static_web")

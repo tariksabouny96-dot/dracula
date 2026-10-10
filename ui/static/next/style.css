@@ -1394,3 +1394,5 @@ details.tech > summary { cursor: pointer; color: var(--muted); font-size: 11px; 
 .command-log .form-actions { align-items: center; margin-top: 10px; }
 .command-log .callout { margin: 10px 0 0; }
 .command-log .callout { font-size: 11px; }
+.tool-rows .row-main small { display: block; }
+.tools-panel pre { max-height: 180px; }

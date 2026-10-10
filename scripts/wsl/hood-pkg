@@ -1,0 +1,31 @@
+#!/bin/bash
+# HOOD package helper (installed by enable_installs.sh as root:root 0755 in /usr/local/sbin).
+#
+# HOOD may call this through sudo WITHOUT a password, so it accepts ONLY the packages below,
+# only from this machine's configured (signed) Ubuntu repositories, and nothing else: no
+# shell, no options, no other commands. To allow a new package, the owner updates HOOD and
+# re-runs enable_installs.sh; HOOD itself cannot change this list.
+set -euo pipefail
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+ALLOWED="composer mariadb-client mariadb-server nodejs npm php-cli php-curl php-gd php-intl php-mbstring php-sqlite3 php-xml php-zip sqlite3"
+
+action="${1:-}"
+[ $# -gt 0 ] && shift
+case "$action" in
+  check) echo "hood-pkg ready"; exit 0 ;;
+  install|upgrade|remove) ;;
+  *) echo "usage: hood-pkg check | install|upgrade|remove PACKAGE..." >&2; exit 2 ;;
+esac
+[ $# -gt 0 ] || { echo "no packages given" >&2; exit 2; }
+for pkg in "$@"; do
+  case " $ALLOWED " in
+    *" $pkg "*) ;;
+    *) echo "refused: '$pkg' is not on HOOD's allowlist" >&2; exit 3 ;;
+  esac
+done
+export DEBIAN_FRONTEND=noninteractive
+case "$action" in
+  install) apt-get update -qq && apt-get install -y --no-install-recommends -- "$@" ;;
+  upgrade) apt-get update -qq && apt-get install -y --only-upgrade -- "$@" ;;
+  remove)  apt-get remove -y -- "$@" ;;
+esac

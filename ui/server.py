@@ -619,7 +619,8 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
                 "approval": approval_data,
                 "suggested_mission": getattr(resp, "suggested_mission", None),
                 "open_mission_draft": bool(getattr(resp, "open_mission_draft", False)),
-                "scope_notes": list(getattr(resp, "scope_notes", []) or [])
+                "scope_notes": list(getattr(resp, "scope_notes", []) or []),
+                "needs_tools": getattr(resp, "needs_tools", None)
             })
 
         elif self.path == "/api/interrupt":
@@ -1439,7 +1440,8 @@ class JarvisServer:
                             ("firewall", getattr(runtime, "firewall", None)),
                             ("selfdev", getattr(runtime, "self_dev", None)),
                             ("memory", getattr(runtime, "memory_service", None)),
-                            ("learning", getattr(runtime, "learning", None))):
+                            ("learning", getattr(runtime, "learning", None)),
+                            ("toolbox", getattr(runtime, "toolbox", None) or getattr(engine, "toolbox", None))):
             if value is not None:
                 feature_routes.SERVICES[name] = value
             else:

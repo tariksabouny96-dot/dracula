@@ -80,7 +80,9 @@ Listening (speech-to-text) stays on Gemini. Removing the key switches back to Ge
 | Browser page from another device / `421 Misdirected` | Hood binds 127.0.0.1 and checks the Host header | open it on the same machine at `http://127.0.0.1:<port>`; remote access goes through the Docker + Caddy setup below |
 | Python mission `BLOCKED`: "needs your approval to run directly on this PC" | no sandbox on Windows | approve it on the mission page (after turning on **Settings › Agents › Run on my PC**), or run HOOD in WSL2 ([WSL2.md](WSL2.md)); website missions don't need either |
 | Mission `BLOCKED`: "the QA/engineer agent's answer was rejected 3 times" | the AI model kept making the same mistake (the reason is shown) | press **Retry blocked work**: the agent gets a fresh round and is told what was wrong; or cancel and plan again with a clearer brief |
-| "WordPress can't be built or run here" (or PHP, database, payments…) | the agents build HTML/CSS/JS websites and Python programs only | accept the static-site alternative shown, or wait for the Docker/WSL2 step for real WordPress |
+| "Needs your OK to install PHP, WordPress…" | a WordPress mission needs tools that aren't installed | press **Allow & install** (chat, plan dialog, mission page or **Settings › Tools**); you allow each tool once |
+| "Installs happen only inside WSL2" | HOOD is running on Windows itself | run HOOD in WSL2 ([WSL2.md](WSL2.md)); website missions still work on Windows |
+| "Installs aren't switched on yet" | the WSL2 package helper isn't set up | in Ubuntu: `sudo bash ~/hood/scripts/wsl/enable_installs.sh` (once) |
 | Website preview: a cart or saved choice resets | the preview runs sandboxed (no storage, no internet) | open `site/index.html` from the mission folder (**Open folder** on the mission page) |
 | Voice page: `not_configured` | no key or no price for the voice models (or ElevenLabs key / voice ID / price missing) | set them in **Settings › Model provider** and **Settings › Voice** |
 | Voice: "Give consent for cloud audio first" | recordings are only sent to Google after you agree | press **Give consent for cloud audio** on the Voice page |

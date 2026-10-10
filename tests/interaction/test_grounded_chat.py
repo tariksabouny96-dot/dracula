@@ -168,18 +168,28 @@ def test_owner_asking_to_plan_opens_the_plan_and_button_stays_available():
     assert svc.approval_service.list_pending() == []                       # still nothing started
 
 
-def test_wordpress_request_gets_honest_limits_before_planning():
-    router = Router(text="Here's what I can do.")
+def test_wordpress_request_asks_to_install_what_is_missing_instead_of_refusing():
+    """Owner's rule: HOOD does what is asked with what it has; if something is missing it asks permission
+    to install it (inside WSL2, once per tool), never a flat 'no'."""
+    class Toolbox:
+        def needs_for_profile(self, profile):
+            names = {"php": "PHP", "wordpress": "WordPress"}
+            return {"tools": list(names), "missing": list(names), "unapproved": list(names), "names": names,
+                    "ready": False, "problem": None, "running": None}
+    router = Router(text="I can build that once the tools are installed.")
     svc = _chat(router)
+    svc.toolbox = Toolbox()
     reply = svc.handle_text_input("Build a WordPress website for perfumes with a catalogue and checkout")
-    assert any("WordPress can't be built" in n for n in reply.scope_notes)
+    assert reply.suggested_mission and reply.needs_tools["unapproved"] == ["php", "wordpress"]
+    assert any("Needs your OK to install PHP, WordPress" in n for n in reply.scope_notes)
     assert any("No real payments" in n for n in reply.scope_notes)
     prompt = router.requests[-1].prompt
-    assert "LIMITS FOR THIS REQUEST" in prompt and "cannot install or run WordPress" in prompt
+    assert "WHAT THIS REQUEST NEEDS" in prompt and "never just say no" in prompt
+    assert "never just says no" in prompt and "ask to install it instead of refusing" in prompt
     svc.handle_text_input("Build a WordPress site", session_id="user:o")
-    router.text = "Not possible here: WordPress. Build a static catalogue site."
+    router.text = "Goal: WordPress site."
     svc.draft_mission_objective("user:o")
-    assert "Not possible here" in router.requests[-1].prompt
+    assert "WordPress sites" in router.requests[-1].prompt
 
 
 def test_planned_request_is_not_offered_again():

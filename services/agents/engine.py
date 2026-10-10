@@ -58,6 +58,13 @@ MAX_TASK_ATTEMPTS = 3
 ACCEPTANCE_CHECKS = ("independent_acceptance_tests", "independent_acceptance_checks")
 ROLE_NAMES = {"engineer": "engineer", "qa": "QA", "reviewer": "reviewer"}
 PYTHON_CHECK_COMMANDS = ["python -m compileall app", "python -m pytest tests", "python -m pytest qa_tests"]
+WORDPRESS_CHECK_COMMANDS = ["php -l (each theme file)", "WP-CLI: install WordPress on SQLite, activate the theme, "
+                            "create the pages", "php -S 127.0.0.1 (loopback only) and fetch every page"]
+
+
+def check_commands(profile) -> List[str]:
+    return {MissionProfile.WORDPRESS.value: WORDPRESS_CHECK_COMMANDS,
+            MissionProfile.STATIC_WEB.value: []}.get(getattr(profile, "value", profile), PYTHON_CHECK_COMMANDS)
 LOCAL_RUN_WAITING = ("No sandbox on this computer: the checks need your approval to run directly on this PC "
                      "(\"Run on my PC\"), or run HOOD in WSL2/Linux.")
 MAX_VIEW_BYTES = 200_000
@@ -88,7 +95,8 @@ class AgentEngine:
                  invoke: Optional[Callable[[ModelRequest], ModelResponse]] = None,
                  stop_latch: Optional[StopLatch] = None, allow_simulated: bool = False,
                  require_network_isolation: bool = True, worker_id: Optional[str] = None,
-                 on_outcome: Optional[Callable[[str, str, str, str, str], None]] = None):
+                 on_outcome: Optional[Callable[[str, str, str, str, str], None]] = None,
+                 toolbox: Any = None):
         """``router`` is a ModelRouter (live providers, budgets, pricing).
 
         ``invoke`` replaces the router for deterministic contract tests; its
@@ -112,6 +120,9 @@ class AgentEngine:
         # terminal state, as (owner, mission_id, objective, outcome, detail).
         # Best-effort — it can never affect or break a mission.
         self.on_outcome = on_outcome
+        # Installs what a mission kind needs (WordPress: PHP, WordPress, SQLite plugin, WP-CLI),
+        # only with the owner's permission (once per tool) and only inside WSL2/Linux.
+        self.toolbox = toolbox
         self._workspaces: Dict[str, Workspace] = {}
         self._ws_lock = threading.Lock()
         self._receipt_key = self._load_receipt_key()
@@ -333,7 +344,9 @@ class AgentEngine:
         try:
             profile = MissionProfile(profile)
         except ValueError:
-            raise ValueError("Mission kind must be python_app or static_web") from None
+            raise ValueError("Mission kind must be python_app, static_web or wordpress_site") from None
+        if profile == MissionProfile.WORDPRESS and self.toolbox is None:
+            raise ValueError("WordPress missions need HOOD's toolbox, which isn't attached to this engine")
         if not isinstance(objective, str) or not 10 <= len(objective.strip()) <= 8000:
             raise ValueError("Objective must be 10-8000 characters")
         if not isinstance(budget_usd, (int, float)) or not 0 <= budget_usd <= 100:
@@ -390,6 +403,10 @@ class AgentEngine:
             if not isinstance(plan_sha256, str) or not hmac.compare_digest(plan_sha256, mission["plan_sha256"]):
                 db.execute("ROLLBACK")
                 raise MissionConflict("Approval does not match the current plan")
+            missing = self._tools_problem(mission["profile"])
+            if missing:
+                db.execute("ROLLBACK")
+                raise MissionConflict(missing)
             db.execute("UPDATE tasks SET state=?, updated=? WHERE mission_id=? AND state=?",
                        (TaskState.QUEUED.value, _now(), mission_id, TaskState.CREATED.value))
             profile = MissionProfile(mission["profile"] or MissionProfile.PYTHON_APP.value)
@@ -397,9 +414,11 @@ class AgentEngine:
             self._receipt(db, mission_id, None, "PLAN_APPROVAL", {
                 "plan_sha256": plan_sha256, "approved_by": approver, "budget_usd": mission["budget_usd"],
                 "scope": {"workspace": f"workspaces/{mission_id}", "network": "none", "profile": profile.value,
-                          "commands": [] if profile == MissionProfile.STATIC_WEB else PYTHON_CHECK_COMMANDS,
+                          "commands": check_commands(profile),
                           "verification": ("static file checks; the site's code is never run"
-                                           if profile == MissionProfile.STATIC_WEB else "sandboxed test run"),
+                                           if profile == MissionProfile.STATIC_WEB else
+                                           "WordPress run in the sandbox, rendered pages checked"
+                                           if profile == MissionProfile.WORDPRESS else "sandboxed test run"),
                           "role_write_roots": {r.value: list(v) for r, v in roots.items()}}})
             self._set_state(db, mission_id, MissionState.QUEUED, approver, approved_by=approver, approved_at=_now())
             db.execute("COMMIT")
@@ -674,6 +693,12 @@ class AgentEngine:
         if profile == MissionProfile.STATIC_WEB:
             decision = verify_static_site(ws)
         else:
+            if profile == MissionProfile.WORDPRESS:
+                missing = self._tools_problem(profile.value, install_approved=True)
+                if missing:
+                    with self._db() as db:
+                        self._set_state(db, mission_id, MissionState.BLOCKED, "verifier", error=missing)
+                    return self.status(owner, mission_id)
             unisolated = False
             problem = sandbox_problem(self.require_network_isolation)
             if problem:
@@ -683,7 +708,10 @@ class AgentEngine:
                     return self._request_local_run(owner, mission_id, digest, problem)
                 unisolated, execution = True, "owner-approved run on this computer (no isolation)"
             try:
-                decision = verify(ws, unisolated=unisolated)
+                if profile == MissionProfile.WORDPRESS:
+                    decision = self._verify_wordpress(mission_id, ws, unisolated)
+                else:
+                    decision = verify(ws, unisolated=unisolated)
             except SandboxUnavailable as exc:
                 decision = VerificationDecision(verdict=VerificationVerdict.UNVERIFIED, checks=[],
                                                 workspace_sha256=ws.digest(), reason=str(exc))
@@ -797,7 +825,8 @@ class AgentEngine:
             self._set_state(db, mission_id, MissionState.BLOCKED, "verifier",
                             error=f"{LOCAL_RUN_WAITING} [{problem}]", local_run_request=digest)
             self._event(db, mission_id, "verifier", "LOCAL_RUN_REQUESTED",
-                        {"workspace_sha256": digest, "commands": PYTHON_CHECK_COMMANDS, "reason": problem})
+                        {"workspace_sha256": digest, "commands": check_commands(self._profile(mission_id)),
+                         "reason": problem})
             db.execute("COMMIT")
         return self.status(owner, mission_id)
 
@@ -822,7 +851,8 @@ class AgentEngine:
                 db.execute("ROLLBACK")
                 raise MissionConflict("The mission's files changed since you were asked; review them again")
             self._receipt(db, mission_id, None, "LOCAL_RUN_APPROVAL", {
-                "workspace_sha256": requested, "approved_by": approver, "commands": PYTHON_CHECK_COMMANDS,
+                "workspace_sha256": requested, "approved_by": approver,
+                "commands": check_commands(self._profile(mission_id)),
                 "isolation": "none (no network or filesystem isolation)", "environment": "scrubbed: no API keys",
                 "time_limits_s": {"compile": 60, "each_test_suite": 180}})
             self._set_state(db, mission_id, MissionState.VERIFYING, approver, error=None, local_run_sha=requested,
@@ -878,9 +908,10 @@ class AgentEngine:
             raise KeyError("Not found")
         with self._db() as db:
             row = db.execute("SELECT profile FROM missions WHERE id=?", (mission_id,)).fetchone()
-        if not row or row["profile"] != MissionProfile.STATIC_WEB.value:
+        if not row or row["profile"] not in (MissionProfile.STATIC_WEB.value, MissionProfile.WORDPRESS.value):
             raise KeyError("Not found")
-        site = self.root / "workspaces" / mission_id / SITE_ROOT
+        site = (self.runtime_dir(mission_id) / "rendered" / "preview" if row["profile"] == MissionProfile.WORDPRESS.value
+                else self.root / "workspaces" / mission_id / SITE_ROOT)
         rel = rel or "index.html"
         if rel.endswith("/"):
             rel += "index.html"
@@ -893,6 +924,48 @@ class AgentEngine:
             raise KeyError("Not found")
         return target.read_bytes(), mime
 
+    # ================================================================ WordPress missions
+    def _tools_problem(self, profile: Optional[str], install_approved: bool = False) -> Optional[str]:
+        """Plain reason the mission can't proceed for lack of tools, or None when they're ready.
+
+        Tools the owner already allowed are (re)installed without asking (owner's rule)."""
+        if self.toolbox is None or profile != MissionProfile.WORDPRESS.value:
+            return None
+        need = self.toolbox.needs_for_profile(profile)
+        if need is None or need["ready"]:
+            return None
+        names = ", ".join(need["names"][t] for t in need["missing"])
+        if need["problem"]:
+            return f"Needs {names} installed first. {need['problem']}"
+        if need["unapproved"]:
+            return (f"Needs your OK to install {names} (inside WSL2, once per tool). Press \"Allow & install\" "
+                    "on this mission or in Settings > Tools.")
+        if need["running"] is None and install_approved:
+            try:
+                self.toolbox.ensure(list(need["missing"]), actor="hood")
+            except Exception as exc:  # reported, never hidden
+                return f"Installing {names} failed: {exc}"
+        return f"Installing {names} (you allowed them earlier). Retry when the install finishes."
+
+    def runtime_dir(self, mission_id: str) -> Path:
+        return self.root / "runtime" / mission_id
+
+    def _verify_wordpress(self, mission_id: str, ws: Workspace, unisolated: bool) -> VerificationDecision:
+        from .wordpress import harness_argv, judge, prepare_runtime
+        runtime = self.runtime_dir(mission_id)
+        prepare_runtime(runtime, ws.root, self.toolbox)
+        port = 8080 if (ws.network_isolated and not unisolated) else self._free_port()
+        result = ws.run("wordpress_render", harness_argv(runtime, self.toolbox, ws.root, port), timeout=600,
+                        unisolated=unisolated)
+        return judge(ws, runtime, result)
+
+    @staticmethod
+    def _free_port() -> int:
+        import socket
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            return sock.getsockname()[1]
+
     def _package(self, owner: str, mission_id: str, decision: VerificationDecision) -> Dict[str, Any]:
         ws = self._workspace(mission_id)
         if ws.digest() != decision.workspace_sha256:
@@ -902,6 +975,16 @@ class AgentEngine:
             return self.status(owner, mission_id)
         files = {rel: (ws.root / rel).read_bytes() for rel in ws.listing(limit=10_000)}
         mission = self._mission(owner, mission_id)
+        if mission["profile"] == MissionProfile.WORDPRESS.value:
+            # Deliverable extras: how to install it, and the pages exactly as WordPress rendered them.
+            from .wordpress import install_guide
+            version = self.toolbox.detect("wordpress").get("version") if self.toolbox is not None else ""
+            files["INSTALL.md"] = install_guide(ws.root, version or "").encode("utf-8")
+            preview = self.runtime_dir(mission_id) / "rendered" / "preview"
+            if preview.is_dir():
+                for f in sorted(preview.rglob("*")):
+                    if f.is_file() and not f.is_symlink():
+                        files["preview/" + f.relative_to(preview).as_posix()] = f.read_bytes()
         manifest = {"schema_version": SCHEMA_VERSION, "mission_id": mission_id, "plan_sha256": mission["plan_sha256"],
                     "provider_mode": mission["provider_mode"], "workspace_sha256": decision.workspace_sha256,
                     "verification": decision.model_dump(mode="json"),
@@ -960,17 +1043,22 @@ class AgentEngine:
             t["result"] = json.loads(t["result"]) if t["result"] else None
         plan = json.loads(mission["plan"]) if mission["plan"] else None
         profile = mission["profile"] or MissionProfile.PYTHON_APP.value
-        web = profile == MissionProfile.STATIC_WEB.value
-        site_index = self.root / "workspaces" / mission_id / SITE_ROOT / "index.html"
+        web = profile in (MissionProfile.STATIC_WEB.value, MissionProfile.WORDPRESS.value)
+        site_index = (self.runtime_dir(mission_id) / "rendered" / "preview" / "index.html"
+                      if profile == MissionProfile.WORDPRESS.value
+                      else self.root / "workspaces" / mission_id / SITE_ROOT / "index.html")
+        needs_tools = (self.toolbox.needs_for_profile(profile)
+                       if self.toolbox is not None and profile == MissionProfile.WORDPRESS.value else None)
         return {
             "mission_id": mission_id, "state": mission["state"], "objective": mission["objective"],
             "profile": profile, "created": mission["created"], "updated": mission["updated"],
-            "scope_notes": scope_notes(mission["objective"], profile),
+            "scope_notes": scope_notes(mission["objective"], profile, needs_tools),
+            "needs_tools": needs_tools,
             "preview_path": (f"/preview/{mission_id}/{self.preview_token(mission_id)}/index.html"
                              if web and site_index.is_file() else None),
             "local_run": {"awaiting_approval": mission["state"] == MissionState.BLOCKED.value
                           and bool(mission["local_run_request"]),
-                          "workspace_sha256": mission["local_run_request"], "commands": PYTHON_CHECK_COMMANDS,
+                          "workspace_sha256": mission["local_run_request"], "commands": check_commands(profile),
                           "approved_sha256": mission["local_run_sha"], "approved_by": mission["local_run_by"]},
             "plan_sha256": mission["plan_sha256"], "plan": plan, "budget_usd": mission["budget_usd"],
             "approved_by": mission["approved_by"], "repairs": mission["repairs"],

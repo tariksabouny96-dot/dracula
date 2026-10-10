@@ -533,7 +533,9 @@ def load_spec(text: str) -> List[dict]:
     return out
 
 
-def _run_spec(checks: List[dict], pages: Dict[str, Page]) -> Tuple[List[str], int]:
+def _run_spec(checks: List[dict], pages: Dict[str, Page], resolver=None) -> Tuple[List[str], int]:
+    """``resolver(page_rel, href)`` classifies links (default: static files under site/)."""
+    resolve = resolver or _resolve
     lines, failed = [], 0
     for n, chk in enumerate(checks, 1):
         cid = chk.get("id") or f"check_{n}"
@@ -564,7 +566,7 @@ def _run_spec(checks: List[dict], pages: Dict[str, Page]) -> Tuple[List[str], in
             for el in page.elements:
                 if el.tag != "a" or "href" not in el.attrs:
                     continue
-                kind, resolved, frag = _resolve(page_rel, el.attrs["href"])
+                kind, resolved, frag = resolve(page_rel, el.attrs["href"])
                 if kind in ("local", "fragment") and resolved == want and (not want_frag or frag == want_frag):
                     ok = True
                     break

@@ -34,7 +34,8 @@ from typing import Dict, List, Optional
 from packages.security import confine_path, PathConfinementError, StopLatch
 from .contracts import ROLE_WRITE_ROOTS, AgentRole, CheckResult, FileWrite, MAX_FILE_BYTES
 
-ALLOWED_SUFFIXES = {".py", ".md", ".txt", ".json", ".html", ".css", ".js", ".toml", ".cfg", ".ini", ".csv"}
+ALLOWED_SUFFIXES = {".py", ".md", ".txt", ".json", ".html", ".css", ".js", ".toml", ".cfg", ".ini", ".csv",
+                    ".php"}  # .php: WordPress theme templates (run only inside the sandbox)
 FORBIDDEN_NAMES = {"sitecustomize.py", "usercustomize.py", "pytest.ini", "tox.ini", "setup.cfg",
                    "pyproject.toml", "setup.py"}
 IGNORED_DIRS = {"__pycache__", ".pytest_cache"}

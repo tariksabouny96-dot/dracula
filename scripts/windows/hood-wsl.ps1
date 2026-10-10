@@ -17,6 +17,7 @@
 param(
     [switch]$InstallWsl,
     [switch]$NoStart,
+    [switch]$EnableInstalls,
     [int]$Port = 8999,
     [string]$Distro = ""
 )
@@ -64,6 +65,7 @@ $wslRepo = (wsl.exe @wslArgs wslpath -a ($repo -replace "\\", "/")).Trim()
 Say "HOOD folder as seen from Linux: $wslRepo"
 
 $startFlag = if ($NoStart) { "" } else { "--start" }
+if ($EnableInstalls) { $startFlag = "--enable-installs $startFlag" }
 if (-not $NoStart) {
     # Open Chrome (default browser) once HOOD answers; runs in the background while HOOD starts here.
     Start-Job -ScriptBlock {

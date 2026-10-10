@@ -9,16 +9,20 @@
 #   2. creates ~/hood/.venv and installs requirements.txt
 #   3. checks that the agent sandbox (unshare -rn) works, and tells you how to fix it if not
 #   4. with --start: runs HOOD on 127.0.0.1:<port>; Chrome on Windows opens the same address
+#   with --enable-installs: also switches on tool installs (asks your Linux password once; see
+#      enable_installs.sh) so HOOD can install what you approve, e.g. PHP for WordPress missions
 # It never uses sudo by itself; when something needs it, it prints the exact command for you.
 set -euo pipefail
 
 SRC="${1:-}"
 shift || true
 START=0
+ENABLE_INSTALLS=0
 PORT=8999
 while [ $# -gt 0 ]; do
   case "$1" in
     --start) START=1 ;;
+    --enable-installs) ENABLE_INSTALLS=1 ;;
     --port) PORT="$2"; shift ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
@@ -77,6 +81,15 @@ else
     echo "  in PowerShell: wsl -l -v   (VERSION must be 2)"
   fi
   echo "Website missions work either way (they are checked without running code)."
+fi
+
+if [ "$ENABLE_INSTALLS" = "1" ]; then
+  say "Switching on tool installs (your Linux password is asked by sudo, not by HOOD)"
+  sudo bash "$DEST/scripts/wsl/enable_installs.sh" || echo "Not switched on; you can run it later."
+elif [ ! -x /usr/local/sbin/hood-pkg ]; then
+  echo
+  echo "Tip: to let HOOD install tools you approve (WordPress missions need PHP), run once:"
+  echo "  sudo bash $DEST/scripts/wsl/enable_installs.sh"
 fi
 
 say "4/4 Done"

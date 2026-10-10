@@ -39,6 +39,20 @@ First start: this is a separate HOOD from the Windows one. Create the owner acco
 your Gemini key and prices again in **Settings › Model provider** (keys are never copied
 between installations). Settings › Agents should show **Sandbox on this computer: available**.
 
+## Let HOOD install what missions need (WordPress sites)
+
+WordPress missions need PHP, WordPress, its SQLite plugin and WP-CLI. HOOD installs them **inside WSL2
+only**, after you allow each tool once (it can reuse and update an allowed tool without asking again).
+PHP comes from Ubuntu's packages, so switch on system installs once (your Linux password is asked by
+`sudo`, never by HOOD):
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\windows\hood-wsl.ps1 -EnableInstalls
+```
+or, inside Ubuntu: `sudo bash ~/hood/scripts/wsl/enable_installs.sh`. This adds a small helper that can
+only install the packages on HOOD's list (PHP, MariaDB, Node.js, Composer, SQLite) and nothing else.
+Then, in HOOD: ask for a WordPress site in the chat (or **Settings › Tools**) and press **Allow & install**.
+Undo: `sudo rm /usr/local/sbin/hood-pkg /etc/sudoers.d/hood-pkg`.
+
 ## Troubleshooting
 
 | What you see | Fix |

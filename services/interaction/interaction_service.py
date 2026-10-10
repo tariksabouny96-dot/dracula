@@ -57,8 +57,11 @@ class ConversationMessage(BaseModel):
     suggested_mission: Optional[str] = None
     # The owner asked to plan it now: the UI opens the plan dialog (nothing runs before plan approval).
     open_mission_draft: bool = False
-    # What can't be built for that request (WordPress, real payments...), said before planning.
+    # What that request needs that isn't there yet (tools to install, limits), said before planning.
     scope_notes: List[str] = Field(default_factory=list)
+    # Tools the request needs (toolbox needs(): missing, unapproved, names, problem): the UI offers
+    # "Allow & install" for them. HOOD asks instead of saying no.
+    needs_tools: Optional[Dict[str, Any]] = None
 
 
 class TaskProgressItem(BaseModel):
@@ -194,9 +197,12 @@ class InteractionService:
         )
         if speaker_id == "hood" and not approval_ref and session.offer:
             from services.agents.scope import scope_notes
+            profile = self.guess_profile(session.offer)
+            needs = self._tool_needs(profile)
             reply_msg.suggested_mission = session.offer
             reply_msg.open_mission_draft = session.plan_now
-            reply_msg.scope_notes = scope_notes(session.offer, self.guess_profile(session.offer))
+            reply_msg.scope_notes = scope_notes(session.offer, profile, needs)
+            reply_msg.needs_tools = needs if needs and not needs.get("ready") else None
             session.pending_mission = session.offer
         session.offer, session.plan_now = None, False
         self._append(session, reply_msg)
@@ -580,8 +586,10 @@ class InteractionService:
     _BUILD_NOUN = (r"(website|site|web\s*app|app|application|landing|page|api|script|program|tool|bot|game|"
                    r"dashboard|store|shop|backend|frontend|database|plugin|extension|project|service|projet|boutique)")
     # Either order: "create a website ..." or "... a website ... can you create it?"
-    _BUILD_RE = re.compile(rf"\b{_BUILD_VERB}\b.{{0,120}}\b{_BUILD_NOUN}\b|\b{_BUILD_NOUN}\b.{{0,160}}\b{_BUILD_VERB}\b",
-                           re.IGNORECASE | re.DOTALL)
+    _WANT = r"(i\s+want|i\s+need|i'?d\s+like|i\s+would\s+like|we\s+need|we\s+want|je\s+veux|j'aimerais|il\s+me\s+faut)"
+    _BUILD_RE = re.compile(rf"\b{_BUILD_VERB}\b.{{0,120}}\b{_BUILD_NOUN}\b|\b{_BUILD_NOUN}\b.{{0,160}}\b{_BUILD_VERB}\b"
+                           rf"|\b{_WANT}\s+(?:a|an|my|our|new|une?|des|mon|ma|notre|nouveau|nouvelle)\s+"
+                           rf"(?:[\w'-]+\s+){{0,3}}{_BUILD_NOUN}\b", re.IGNORECASE | re.DOTALL)
     _AFFIRM = {"yes", "yep", "yeah", "sure", "ok", "okay", "go ahead", "do it", "proceed", "please do",
                "yes please", "oui", "vas-y", "go", "start", "let's go", "lets go"}
     # Follow-ups about the open build request ("plan it", "ETA?", "did you start?"): offer it again.
@@ -598,9 +606,22 @@ class InteractionService:
     _WEBSITE_RE = re.compile(r"\b(web ?site|site ?web|landing ?page|web ?page|home ?page|html|site|"
                              r"catalog(?:ue)?|boutique|shop|store|portfolio|blog)\b", re.IGNORECASE)
 
+    _WORDPRESS_RE = re.compile(r"\bword ?press\b", re.IGNORECASE)
+
     @classmethod
     def guess_profile(cls, objective: str) -> str:
+        if cls._WORDPRESS_RE.search(objective or ""):
+            return "wordpress_site"
         return "static_web" if cls._WEBSITE_RE.search(objective or "") else "python_app"
+
+    def _tool_needs(self, profile: str) -> Optional[Dict[str, Any]]:
+        toolbox = getattr(self, "toolbox", None)
+        if toolbox is None:
+            return None
+        try:
+            return toolbox.needs_for_profile(profile)
+        except Exception:
+            return None
 
     def _owner_name(self, session: InteractionSession) -> str:
         sid = session.session_id
@@ -773,10 +794,12 @@ class InteractionService:
         limits = ""
         if offer:
             from services.agents.scope import scope_notes
-            notes = scope_notes(offer, self.guess_profile(offer))
+            profile = self.guess_profile(offer)
+            notes = scope_notes(offer, profile, self._tool_needs(profile))
             if notes:
-                limits = ("LIMITS FOR THIS REQUEST (say them plainly before the owner plans it; offer the closest "
-                          "alternative):\n" + "\n".join(f"- {n}" for n in notes) + "\n")
+                limits = ("WHAT THIS REQUEST NEEDS (say it plainly before the owner plans it; when tools are "
+                          "missing, ask permission to install them, an \"Allow & install\" button is shown; never "
+                          "just say no):\n" + "\n".join(f"- {n}" for n in notes) + "\n")
         memory_block = "\n".join(f"- {m}" for m in memories) or "- (nothing recorded yet)"
         history = self._history_for_model(session, owner)
         system_instruction = (
@@ -790,7 +813,8 @@ class InteractionService:
             "2. Never claim you ran, built, changed, tested or verified anything. From chat you can only talk.\n"
             f"3. If {owner} wants something built (a website, an app, a script...), help shape the requirements. "
             "Follow the UI line below exactly when you mention the mission plan. Never promise what agents can't "
-            "build (see LIVE STATUS); say it and offer the closest option. Give a time estimate only when asked, "
+            "build yet (see LIVE STATUS); when a tool would make it possible, ask to install it instead of refusing. "
+            "Give a time estimate only when asked, "
             "using only the measured run times in LIVE STATUS; if there are none, say so.\n"
             f"4. Personal facts about {owner} or other people come only from MEMORY; otherwise say you don't "
             "know yet.\n"

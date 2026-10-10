@@ -59,6 +59,7 @@ class MissionProfile(str, Enum):
     """What kind of work a mission produces; decides the write areas and how it is verified."""
     PYTHON_APP = "python_app"    # Python program: verified by running its tests (needs a sandbox)
     STATIC_WEB = "static_web"    # HTML/CSS/JS website: verified by reading files, nothing is run
+    WORDPRESS = "wordpress_site" # WordPress theme + pages: rendered by a real WordPress in the sandbox
 
 
 # Which workspace sub-trees each role may write. Enforced by the sandbox, not the prompt.
@@ -71,6 +72,8 @@ PROFILE_WRITE_ROOTS = {
     MissionProfile.PYTHON_APP: ROLE_WRITE_ROOTS,
     MissionProfile.STATIC_WEB: {AgentRole.ENGINEER: ("site",), AgentRole.QA: ("qa_checks",),
                                 AgentRole.REVIEWER: ()},
+    MissionProfile.WORDPRESS: {AgentRole.ENGINEER: ("theme", "content"), AgentRole.QA: ("qa_checks",),
+                               AgentRole.REVIEWER: ()},
 }
 
 
