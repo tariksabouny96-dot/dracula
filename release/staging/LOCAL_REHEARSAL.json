@@ -1,7 +1,7 @@
 {
   "kind": "LOCAL_REHEARSAL_NOT_STAGING",
-  "commit": "05c30aaa5fea7a2a473a60e6ed4d4fe877891025",
-  "generated_at": "2026-10-10T18:19:12.889092+00:00",
+  "commit": "d963cbe5ae4dd7037e91f5358ea2abcadabd868a",
+  "generated_at": "2026-10-10T23:20:29.736908+00:00",
   "host": "linux",
   "checks": {
     "clean_export": "PASS",
