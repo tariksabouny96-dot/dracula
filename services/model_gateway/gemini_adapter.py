@@ -107,8 +107,9 @@ class GeminiProviderAdapter(BaseModelProvider):
         api_key = self._get_api_key()
         if not api_key and not self._proxy_credential():
             raise ProviderNotConfiguredError(
-                f"Gemini API key not found in vault ({self.api_key_secret_ref}) or environment, and "
-                "HOOD_GEMINI_CREDENTIAL=proxy is not set."
+                "Gemini API key not found: add GEMINI_API_KEY=<your key> to the .env file in the HOOD "
+                "folder (or set it in the environment), then restart HOOD. "
+                f"(Also checked: vault {self.api_key_secret_ref}, HOOD_GEMINI_CREDENTIAL=proxy.)"
             )
 
         models = self.candidate_models(request)

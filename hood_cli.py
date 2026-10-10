@@ -38,8 +38,11 @@ def _load_dotenv(path: Path) -> int:
     import re
     if not path.is_file():
         return 0
+    data = path.read_bytes()
+    # PowerShell 5's `>` writes UTF-16; Notepad may add a UTF-8 BOM. Accept both.
+    text = data.decode("utf-16") if data[:2] in (b"\xff\xfe", b"\xfe\xff") else data.decode("utf-8-sig")
     loaded = 0
-    for raw in path.read_text(encoding="utf-8-sig").splitlines():
+    for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -472,9 +475,17 @@ def main():
 
     args = parser.parse_args()
     env_file = Path(os.environ.get("HOOD_ENV_FILE") or Path(__file__).resolve().parent / ".env")
+    notepad_copy = env_file.with_name(env_file.name + ".txt")
+    if not env_file.is_file() and notepad_copy.is_file():
+        # Windows Notepad saves ".env" as ".env.txt" unless told otherwise.
+        sys.stderr.write(f"Note: using {notepad_copy} (rename it to {env_file.name}).\n")
+        env_file = notepad_copy
     loaded = _load_dotenv(env_file)
     if loaded:
         sys.stderr.write(f"Loaded {loaded} setting(s) from {env_file}\n")
+    else:
+        sys.stderr.write(f"No settings loaded from {env_file} (missing or no values set); "
+                         "using environment variables only.\n")
     runtime = HoodSystemRuntime()
 
     if args.command == "status" or not args.command:
@@ -533,6 +544,11 @@ def main():
 
     elif args.command == "ui":
         print(f"Launching HOOD Interactive Surface on http://127.0.0.1:{args.port} ...")
+        gemini_state = runtime.health_check()["providers"]["gemini"]
+        print(f"Model provider: gemini {gemini_state}")
+        if gemini_state != "ONLINE":
+            print("  Live chat and missions will fail until this says ONLINE. "
+                  "See docs/RUNBOOK.md 'Connect the model'.")
         from services.auth.auth_service import AuthenticationService
         # Identity lives in HOOD_DATA_DIR; an existing legacy artifacts/auth.db keeps being used
         # so an upgrade never silently drops the Root Owner.

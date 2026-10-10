@@ -85,3 +85,47 @@ def test_status_names_missing_pricing_when_key_is_set(tmp_path):
     assert providers({})["gemini"].startswith("KEY_SET_BUT_NO_PRICING")
     priced = providers({"HOOD_MODEL_PRICING": "config/model_pricing.free-tier.json"})
     assert priced["gemini"] == "ONLINE"
+
+
+def test_dotenv_loader_reads_powershell_utf16_file(tmp_path, monkeypatch):
+    import os
+    from hood_cli import _load_dotenv
+    monkeypatch.setenv("HOOD_T_UTF16", "x")
+    monkeypatch.delenv("HOOD_T_UTF16")
+    env = tmp_path / ".env"
+    env.write_bytes("HOOD_T_UTF16=from-powershell\r\n".encode("utf-16"))  # what `>` writes on PS 5
+    assert _load_dotenv(env) == 1
+    assert os.environ["HOOD_T_UTF16"] == "from-powershell"
+
+
+def test_cli_uses_notepad_env_txt_and_reports_provider_state(tmp_path):
+    import os
+    env_txt = tmp_path / ".env.txt"
+    env_txt.write_text(f"HOOD_DATA_DIR={tmp_path / 'data'}\n", encoding="utf-8")
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("HOOD_MODEL_PRICING", "GEMINI_API_KEY", "GOOGLE_API_KEY",
+                        "HOOD_GEMINI_CREDENTIAL", "HOOD_DATA_DIR")}
+    env["HOOD_ENV_FILE"] = str(tmp_path / ".env")  # .env absent, Notepad's .env.txt present
+    proc = subprocess.run([sys.executable, "hood_cli.py", "status"], cwd=ROOT, env=env,
+                          capture_output=True, text=True, timeout=120)
+    assert proc.returncode == 0, proc.stderr
+    assert "rename it to .env" in proc.stderr
+    assert "Loaded 1 setting(s)" in proc.stderr
+    assert "gemini: CONFIGURED_PENDING_KEY" in proc.stdout
+
+
+def test_missing_key_error_tells_the_user_what_to_do(monkeypatch):
+    import pytest
+    from packages.contracts import ModelRequest
+    from services.model_gateway.base import ProviderNotConfiguredError
+    from services.model_gateway.gemini_adapter import GeminiProviderAdapter
+    for k in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "HOOD_GEMINI_CREDENTIAL"):
+        monkeypatch.delenv(k, raising=False)
+
+    class NoVault:
+        def get_secret(self, *_a, **_k):
+            return None
+
+    adapter = GeminiProviderAdapter(vault=NoVault())
+    with pytest.raises(ProviderNotConfiguredError, match="add GEMINI_API_KEY=.* to the .env file"):
+        adapter.invoke(ModelRequest(prompt="hi"))
