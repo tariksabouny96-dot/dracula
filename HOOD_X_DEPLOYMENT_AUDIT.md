@@ -216,3 +216,54 @@ Hetzner list prices and specs were **not verified** (no web check). [A] CX43 ≈
 
 ### What I could not verify
 Live Gemini behaviour (not re-run; no approval/spend authorised), Docker image build/size and container runtime (no daemon here — though CI's docker-build job is green on the head commit), real Caddy proxying (simulated at request level), Windows features, Hetzner prices/specs, and the cause of the ~230 MB server memory growth under load.
+
+---
+
+## 13. Addendum — Hood Levels 1, 2 and 3 (follow-up audit)
+
+Added after the owner asked whether the three model levels were considered. The first version covered Level 1 only in depth.
+
+### 13.1 What the levels are, and what actually exists [V]
+
+| Level | Intent (`services/evolution`, `services/lab`) | Reality in this commit |
+|---|---|---|
+| **L1 External** | Frontier API (Gemini) as teacher/primary | **Live.** Everything in §3–§5 applies. |
+| **L2 Self-hosted** | Ollama/vLLM/llama.cpp, e.g. `llama3-8b-local`, needs ≥ 8 GB VRAM single device; for private/routine work at $0 API cost | Adapter exists but is **disabled by default** and **never tested** (F17). Endpoint and model are **hard-coded defaults** (`127.0.0.1:11434`, `llama3:8b`): the router builds `LocalProviderAdapter(enabled=…)` with no endpoint/model from config, and the example config has no `local` provider block. Loopback-only enforced. |
+| **L3 HOOD-owned** | QLoRA-fine-tuned `hood-code-candidate-v1` on top of L2, ≥ 12 GB VRAM, starts in SHADOW | **Does not exist.** No training code or ML libraries anywhere (no torch/transformers/peft/vllm/llama.cpp in code or requirements). What exists is governance scaffolding: experience collector, dataset builder (JSON; X_SEALED excluded), model arena, promotion/drift/calibration logic, hardware planner. The chat layer itself tells the owner "Level 3 … does not exist yet". |
+
+Further facts [V]:
+- **The levelled router is not on the live request path.** `EvolutionEngine`/`CostAwareEvolutionRouter` is instantiated by the CLI runtime and used only by `evolution-*` inspection commands and the emergency-stop wiring. Real chat and missions go through `services/model_gateway/router.py` (provider order Gemini → Local → OpenAI → Mock). So "route private tasks to L2/L3, high-risk to L1 + checker" is **designed, not enforced**.
+- **Registry shows models that are not installed.** `llama3-8b-local` is registered as SECONDARY and the L3 candidate is listed, on a **simulated** RTX 4080 / 32 GB profile; the registered L1 is `gemini-2.5-flash` (the code elsewhere notes 2.5 models 404 for new keys; real defaults are 3.8-flash / 3.5-flash-lite). The registry and the live provider settings disagree.
+- **Bug:** `python hood_cli.py evolution-breakeven` **crashes** (`AttributeError: 'Namespace' object has no attribute 'api_spend'`, `hood_cli.py:826`; the argument is never defined). The financial tool the owner would use to decide on GPUs does not run today.
+- **Name collision:** `Level3AccelerationEngine` is a separate "learning acceleration" mechanism (lessons/skills in SQLite), not the Level-3 model. It adds another cwd-relative DB (`artifacts/acceleration_engine.db`) to the persistence problem (B3); `artifacts/evolution/*` likewise.
+- These modules are **deferred/optional** in the ledger (F30, F35) but their entry points remain enabled; the gate counts that against you until the owner defers them in writing.
+
+### 13.2 What each level needs from infrastructure [A unless noted]
+
+| | Compute | Network/security | Verdict |
+|---|---|---|---|
+| **L1 only (today)** | CPU VM, no GPU (§4) | Outbound HTTPS to Google | Ready for staging after B1–B4 |
+| **L2 on the Hood VM** | An 8B model quantised to 4-bit needs roughly 5–6 GB of memory; on CPU-only 8 vCPU expect single-digit tokens/second [A, unmeasured] — usable for short private tasks, too slow for multi-agent coding missions | Loopback today ⇒ same VM only | Feasible as a *private fallback*, not as a productive coding engine; quality for missions is **unknown** — must be benchmarked before any routing to it |
+| **L2 on a separate GPU box** | GPU with ≥ 8 GB VRAM (registry requirement), 12–16 GB more comfortable | Needs a code change (configurable endpoint) plus WireGuard/mTLS; `validate_local_endpoint` currently rejects any non-loopback host — keep that rule and add an explicit, authenticated "private node" mode rather than loosening it | Defer until L2 quality is proven |
+| **L3 training** | ≥ 12 GB VRAM single device (registry); QLoRA run is hours, not continuous — rent per run, don't own | Training data = mission experiences ⇒ privacy review; X_SEALED exclusion needs independent review; **no trainer exists**, so this is a build project, not a deployment | Not deployable; plan as a separate programme |
+
+### 13.3 Break-even (using the repo's own defaults and formula, since its CLI is broken)
+
+Defaults in the repo: purchase $1,600, 150 GPU-hours/month, rental $0.79/h, 24-month depreciation, 350 W, $0.15/kWh. These are **repo placeholders, not market data** — replace with quotes.
+- Rented: 150 h × $0.79 ≈ **$118.5/month**.
+- Owned: $1,600/24 ≈ $66.7 + power ≈ $7.9 ⇒ **≈ $74.6/month**; break-even vs rental ≈ 14.5 months (and a purchased GPU does nothing for a cloud-only deployment).
+- Versus Gemini: the free tier is $0; paid Gemini Flash-class tokens are cheap [A]. A GPU only beats the API if monthly token spend exceeds the monthly GPU cost (~$75–120 on these placeholders) **or** privacy requires local processing. Current measured evidence (one live mission: ~5 calls, $0) gives **no case yet** for L2/L3 on cost grounds.
+
+### 13.4 Recommendations [R]
+
+1. **Stage with L1 only.** Keep L2/L3 disabled in staging; state that explicitly in the deployment config so the registry cannot imply otherwise.
+2. **Run an L2 evaluation before buying anything:** install Ollama on a throwaway GPU instance or the owner's PC, point the adapter at it, and run the existing golden-journey missions plus a private-task set. Record pass rate, tokens/s, and failure modes. Only if L2 passes the verifier at an acceptable rate do you size GPU capacity.
+3. **Decide the privacy rule first.** If "private tasks must never leave" is a hard requirement, then without L2 those tasks must be refused in the cloud — today nothing enforces that routing.
+4. **Wire or retire the levelled router.** Either make `ModelRouter` consult the evolution routing policy (with tests) or mark the evolution router as inactive in the UI/CLI so it cannot be mistaken for live behaviour.
+5. **Fix before relying on it:** `evolution-breakeven` crash (add `--api-spend`), registry/live model mismatch, configurable L2 endpoint/model via config + env (private authenticated node only), move `artifacts/evolution` and acceleration DB under `HOOD_DATA_DIR`.
+6. **L3 as a separate programme:** needs a real trainer, an evaluation arena against L1 on held-out missions, data-governance sign-off and rented-GPU approval gates (the approval/spend-gate abstractions exist). Revisit after months of verified mission data exist.
+
+### 13.5 Effect on the verdict
+No change: **CONDITIONAL GO for private staging with L1 only; NO-GO for production.** The levels add two items to the blocker list: **B11 (Medium)** — levelled routing is not enforced on the live path, so privacy-based routing guarantees don't exist; **B12 (Low)** — broken `evolution-breakeven` CLI and registry that advertises uninstalled/simulated models.
+
+*Not verified:* L2 model quality or speed on any hardware, any GPU provider's pricing, and whether a trained L3 model could ever outperform L1 for Hood's tasks.
