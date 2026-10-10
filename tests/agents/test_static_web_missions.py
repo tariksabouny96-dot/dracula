@@ -17,6 +17,7 @@ from services.agents.sandbox import Workspace
 from services.agents.specialists import check_acceptance_spec
 from services.agents.static_web import js_problems, load_spec, SpecError, verify_static_site
 from tests.agents.scripted_provider import ScriptedModel
+from tests.agents.test_agent_engine import needs_netns
 from tests.agents.scripted_web import ACCEPTANCE, WEB_OBJECTIVE, ScriptedWebModel, site_files
 
 OWNER = "user_root_owner_01"
@@ -208,6 +209,7 @@ def test_python_mission_without_sandbox_waits_for_owner_then_runs_on_this_pc(tmp
     assert engine.verify_receipts(OWNER, mid)["valid"]
 
 
+@needs_netns              # the resumed check really runs in the Linux sandbox
 def test_python_mission_waiting_for_the_sandbox_continues_by_itself_when_it_is_ready(tmp_path, monkeypatch):
     """Windows: the owner approves HOOD's Linux sandbox once; the mission doesn't need another click."""
     problem = {"now": "HOOD is setting up its Linux sandbox right now."}
