@@ -291,6 +291,14 @@ class HoodSystemRuntime:
                                         toolbox=self.toolbox)
         self.emergency_stop.attach("agent_engine", self.agent_engine.halt_all)
 
+        # Self-repair (Phase 4): investigate a reported HOOD problem, prove a fix in the sandbox,
+        # apply it only with the Root Owner's approval of that exact change.
+        from services.selfrepair import SelfRepairService
+        self.self_repair = SelfRepairService(
+            self.data_dir, self.model_router, stop_latch=self.stop_latch,
+            local_run_allowed=lambda: bool(self.agent_engine.local_run_settings().get("allow_local_run")),
+            recent_errors=self._recent_errors)
+
         def _environment_changed():
             # Missions that waited only for the sandbox/tools the owner approved continue by themselves.
             self.agent_engine.resume_waiting()
@@ -325,6 +333,23 @@ class HoodSystemRuntime:
             x_controller=self.x_controller
         )
         self.interaction_service.x_session_manager = self.x_session_manager
+
+    def _recent_errors(self) -> list:
+        """Errors HOOD recorded recently, for self-repair investigations (provider + missions)."""
+        out = []
+        try:
+            from packages.contracts import ProviderName
+            seen = self.model_router.observed_health(ProviderName.GEMINI)
+            if seen.get("last_error"):
+                out.append(f"AI provider ({seen.get('last_failure_at')}): {seen['last_error']}")
+            import sqlite3 as _sqlite3
+            with _sqlite3.connect(self.agent_engine.db_path, timeout=5) as db:
+                for state, error, updated in db.execute(
+                        "SELECT state, error, updated FROM missions WHERE error IS NOT NULL ORDER BY updated DESC LIMIT 5"):
+                    out.append(f"Mission {state} ({updated}): {error}")
+        except Exception:  # noqa: BLE001 - context only, never blocks an investigation
+            pass
+        return out
 
     def _on_mission_outcome(self, owner: str, mission_id: str, objective: str, outcome: str, detail: str) -> None:
         """Self-learning hook: record a lesson from each finished mission.
@@ -700,12 +725,31 @@ def main():
             port=args.port,
             auth_service=auth_svc
         )
+        import threading as _threading
+        restart = _threading.Event()
+
+        def _request_restart():
+            # Owner-approved (Self-repair page): stop serving, then start the same command again.
+            restart.set()
+            _threading.Thread(target=lambda: (__import__("time").sleep(1.5), server.httpd.shutdown()),
+                              daemon=True).start()
+        if getattr(runtime, "self_repair", None) is not None:
+            runtime.self_repair.restart_hook = _request_restart
         print("HOOD Interface running. Press Ctrl+C to halt.")
         try:
             server.httpd.serve_forever()
         except KeyboardInterrupt:
             print("\nShutting down HOOD UI server.")
             server.stop()
+        if restart.is_set():
+            server.httpd.server_close()
+            print("Restarting HOOD to load the applied fix...")
+            argv = [sys.executable, os.path.abspath(sys.argv[0]), *sys.argv[1:]]
+            if os.name == "posix":
+                os.execv(sys.executable, argv)
+            import subprocess as _subprocess
+            _subprocess.Popen(argv)
+            sys.exit(0)
 
     elif args.command == "voice":
         print(f"Zak (Voice): {args.phrase}")

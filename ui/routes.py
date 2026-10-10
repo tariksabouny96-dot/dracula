@@ -134,4 +134,6 @@ API_MODULES: List[str] = [
     "services.voice.api",
     "services.agents.api",
     "services.toolbox.api",
+    "services.selfrepair.api",
+    "services.console.intelligence_api",
 ]

@@ -155,7 +155,9 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             return
         try:
             size = int(self.headers.get("Content-Length", "0"))
-            if size < 0 or size > 1024 * 1024:
+            # Self-repair reports may carry a screenshot (up to 4 MB, base64): 6 MB for that route only.
+            limit = 6 * 1024 * 1024 if self.path == "/api/selfrepair/report" else 1024 * 1024
+            if size < 0 or size > limit:
                 raise ValueError("Invalid request size")
             if size and self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
                 self._send_json({"error": "JSON content required"}, status=415)
@@ -658,7 +660,8 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
                 "suggested_mission": getattr(resp, "suggested_mission", None),
                 "open_mission_draft": bool(getattr(resp, "open_mission_draft", False)),
                 "scope_notes": list(getattr(resp, "scope_notes", []) or []),
-                "needs_tools": getattr(resp, "needs_tools", None)
+                "needs_tools": getattr(resp, "needs_tools", None),
+                "offer_self_repair": bool(getattr(resp, "offer_self_repair", False))
             })
 
         elif self.path == "/api/interrupt":
@@ -982,22 +985,23 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             else:
                 self._send_json([])
         elif self.path == "/api/intelligence/summary":
-            commander = getattr(self.interaction_service, "commander", None) if self.interaction_service else None
-            lab = getattr(commander, "intelligence_lab", None) if commander else None
-            gap_map = lab.compute_frontier_gap_map() if lab else None
+            # Honest by construction (Phase 4): the configured models, and NO scores until HOOD has
+            # actually measured them (the lab's gap map used to return fixed numbers as if measured).
+            router = getattr(self.runtime, "model_router", None) if self.runtime else None
+            levels = {"level_1": None, "level_2": None, "level_3": None}
+            if router is not None:
+                from packages.contracts import ModelClass, ModelRequest, ProviderName
+                gem = router.providers.get(ProviderName.GEMINI)
+                if gem is not None and hasattr(gem, "resolve_model"):
+                    levels["level_1"] = "Gemini " + gem.resolve_model(ModelRequest(prompt="", model_class=ModelClass.STANDARD))
+                local = router.providers.get(ProviderName.LOCAL)
+                levels["level_2"] = "local model (enabled)" if local is not None and local.enabled else "not set up"
+            levels["level_3"] = "not built yet"
             self._send_json({
-                "levels": {
-                    "level_1": "Gemini 2.5 Flash (PRIMARY FRONTIER)",
-                    "level_2": "LLaMA 3.1 8B (SELF-HOSTED FALLBACK)",
-                    "level_3": "Hood-Code-v1 (SHADOW VERIFICATION)"
-                },
-                "frontier_gap": gap_map.frontier_gap_percentage if gap_map else 12.0,
-                "level_1_score": gap_map.level_1_frontier_baseline_score if gap_map else 92.0,
-                "level_2_score": gap_map.level_2_self_hosted_score if gap_map else 80.0,
-                "level_3_score": gap_map.level_3_hood_score if gap_map else 80.96,
-                "acceleration_mechanisms_active": 50,
-                "gpu_topology": "Detected Local Compute (CPU/CUDA Hybrid Fallback)"
-            })
+                "levels": levels, "measured": False, "frontier_gap": None, "level_1_score": None,
+                "level_2_score": None, "level_3_score": None,
+                "note": "No Level 1/2/3 evaluations have been run on this machine; HOOD shows no scores until "
+                        "they are measured. Live usage, spend and mission results: GET /api/intelligence/live."})
         elif self.path == "/api/capabilities":
             self._send_json(get_capability_inventory(self.interaction_service, self.runtime,
                                                      self.sentinel_service, self.x_session_manager))
@@ -1347,7 +1351,8 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             "v1_2": {
                 "impossible_list_barriers": len(self.interaction_service.commander.impossible_list.list_unresolved()) if self.interaction_service and hasattr(self.interaction_service.commander, "impossible_list") else 0,
                 "economic_mode": self.interaction_service.commander.economic_engine.current_financial_mode.value if self.interaction_service and hasattr(self.interaction_service.commander, "economic_engine") else "NORMAL",
-                "frontier_gap": self.interaction_service.commander.intelligence_lab.compute_frontier_gap_map().frontier_gap_percentage if self.interaction_service and hasattr(self.interaction_service.commander, "intelligence_lab") else None
+                # Not measured on this machine (the lab's gap map holds fixed placeholder scores).
+                "frontier_gap": None
             },
             "sentinel": self.sentinel_service.get_security_summary() if self.sentinel_service else {
                 "posture": "NOT INSPECTED",
@@ -1493,7 +1498,8 @@ class JarvisServer:
                             ("memory", getattr(runtime, "memory_service", None)),
                             ("learning", getattr(runtime, "learning", None)),
                             ("toolbox", getattr(runtime, "toolbox", None) or getattr(engine, "toolbox", None)),
-                            ("wsl_sandbox", getattr(runtime, "wsl_sandbox", None))):
+                            ("wsl_sandbox", getattr(runtime, "wsl_sandbox", None)),
+                            ("selfrepair", getattr(runtime, "self_repair", None))):
             if value is not None:
                 feature_routes.SERVICES[name] = value
             else:
