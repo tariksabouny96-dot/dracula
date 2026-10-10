@@ -37,7 +37,9 @@ def _spend(router) -> Dict[str, Any]:
     cc = getattr(router, "cost_controller", None)
     if cc is None:
         return {"available": False}
-    out: Dict[str, Any] = {"available": True, **cc.get_summary(), "by_model": [], "recent": [], "days": []}
+    summary = cc.get_summary()
+    summary["ledger"] = bool(summary.get("ledger"))        # kept or not; the file path stays on the server
+    out: Dict[str, Any] = {"available": True, **summary, "by_model": [], "recent": [], "days": []}
     if not getattr(cc, "ledger_path", None) or not cc.ledger_path.exists():
         out["note"] = "No durable spend ledger yet (no paid or priced call recorded on this machine)."
         return out

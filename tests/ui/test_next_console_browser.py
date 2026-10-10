@@ -18,7 +18,7 @@ from tests.agents.test_agent_http import stack  # noqa: F401  (fixture)
 
 playwright = pytest.importorskip("playwright.sync_api")
 PAGES = ["Command", "Missions", "Agents", "Intelligence", "Integrations", "Sentinel", "Memory", "Commerce",
-         "Desktop", "Voice", "Settings"]
+         "Desktop", "Voice", "Repair", "Settings"]
 
 
 def _launch(p):
@@ -60,7 +60,7 @@ def test_every_page_renders_cleanly(stack, viewport):  # noqa: F811
             if viewport["width"] < 800:
                 page.click("#menuToggle")
             page.click(f"#nav [data-page={name}]")
-            label = {"Intelligence": "System map"}.get(name, name)   # nav label differs from the page key
+            label = {"Intelligence": "System map", "Repair": "Self-repair"}.get(name, name)   # nav label != page key
             page.wait_for_selector(f"#crumb:has-text('{label.upper()}')", state="attached")
             page.wait_for_timeout(400)
             overflow = page.evaluate("document.documentElement.scrollWidth > window.innerWidth + 1")
@@ -159,3 +159,79 @@ def test_sandbox_is_one_approval_then_hood_does_the_rest(stack, tmp_path):  # no
         assert sbx.approved() and sum(c[0] == "powershell.exe" for c in win.calls) == 1
     finally:
         routes.SERVICES.pop("wsl_sandbox", None)
+
+
+def test_self_repair_from_report_to_applied_fix_and_undo(stack, tmp_path, monkeypatch):  # noqa: F811
+    """Phase 4 in the console: report (with a consented screenshot), HOOD's diagnosis and proof, the
+    exact change, Apply only after confirming, and Undo. The AI model is scripted; the repo is fake."""
+    import base64
+    import json
+    from ui import routes
+    from services.agents import sandbox as sandbox_mod
+    from tests.selfrepair_service.test_self_repair import BUGGY, Model, proposal, service
+    repo = tmp_path / "hood"
+    (repo / "services" / "demo").mkdir(parents=True)
+    (repo / "services" / "demo" / "greeting.py").write_text(BUGGY)
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_existing.py").write_text("def test_existing():\n    assert True\n")
+    (repo / "pytest.ini").write_text("[pytest]\n")
+    monkeypatch.setattr(sandbox_mod, "sandbox_problem", lambda *a: "no sandbox on this computer")
+    svc = service(tmp_path, repo, Model(proposal()), local_run_allowed=lambda: True)
+    routes.SERVICES["selfrepair"] = svc
+    shot = tmp_path / "shot.png"
+    shot.write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="))
+    try:
+        with playwright.sync_playwright() as p:
+            browser = _launch(p)
+            page = browser.new_page(viewport={"width": 1440, "height": 900})
+            errors = _errors(page)
+            _login(page, base := stack[0])
+            # Chat: a problem with HOOD itself gets an "Investigate & fix" offer that opens the report.
+            said = "The greeting on the Command page is wrong, it says Helo"
+            page.route("**/api/chat", lambda route: route.fulfill(status=200, content_type="application/json", body=json.dumps(
+                {"sender": "Hood", "text": "Sorry about that.", "speaker_id": "hood", "offer_self_repair": True})))
+            page.fill("#commandInput", said)
+            page.press("#commandInput", "Enter")
+            page.click("button:has-text('Investigate & fix')")
+            assert page.input_value("#modalBody textarea") == said and svc.list() == []   # nothing sent yet
+            page.click("#modalBody button:has-text('Cancel')")
+            page.click("#nav [data-page=Repair]")
+            page.click("button:has-text('Report a problem')")
+            page.fill("#modalBody textarea", 'On the Command page the greeting says "Helo" instead of Hello.')
+            page.set_input_files("#modalBody input[type=file]", str(shot))
+            page.wait_for_selector("#modalBody img.repair-shot")
+            page.click("#modalBody button:has-text('Investigate')")
+            assert "Tick" in page.inner_text("#modalBody .error-box")          # screenshot needs consent
+            assert svc.list() == []
+            page.check("#modalBody input[type=checkbox]")
+            page.click("#modalBody button:has-text('Investigate')")
+            page.wait_for_selector("button:has-text('Run checks on this PC')", timeout=30000)
+            assert "couldn’t prove it in its sandbox" in page.inner_text("main")
+            page.click("button:has-text('Run checks on this PC')")
+            page.click("#modalBody button:has-text('Run checks here')")
+            page.wait_for_selector("button:has-text('Apply fix')", timeout=120000)
+            main = page.inner_text("main")
+            assert "The greeting said 'Helo'" in main and "All of HOOD’s other tests still pass" in main
+            assert page.locator(".diff-view .d-add").count() >= 1
+            if os.environ.get("HOOD_SCREENSHOT_DIR"):
+                page.screenshot(path=os.path.join(os.environ["HOOD_SCREENSHOT_DIR"], "self-repair-decision.png"), full_page=True)
+            assert (repo / "services/demo/greeting.py").read_text() == BUGGY       # nothing changed yet
+            page.click("button:has-text('Apply fix')")
+            page.click("#modalBody button:has-text('Apply fix')")
+            page.wait_for_selector("button:has-text('Undo')", timeout=30000)
+            assert '"Hello, "' in (repo / "services/demo/greeting.py").read_text()
+            assert page.locator("button:has-text('Restart HOOD')").count() == 1    # Python changed
+            page.click("button:has-text('Undo')")
+            page.click("#modalBody button:has-text('Undo fix')")
+            page.wait_for_selector(".repair-item:has-text('Undone')", timeout=30000)
+            assert (repo / "services/demo/greeting.py").read_text() == BUGGY
+            page.click("#nav [data-page=Intelligence]")
+            page.wait_for_selector("text=AI MODELS IN USE")
+            if os.environ.get("HOOD_SCREENSHOT_DIR"):
+                page.locator("text=AI MODELS IN USE").scroll_into_view_if_needed()
+                page.screenshot(path=os.path.join(os.environ["HOOD_SCREENSHOT_DIR"], "intelligence-live.png"))
+            browser.close()
+        real = [e for e in errors if all(s not in e for s in ("401", "403", "404", "429", "503"))]
+        assert not real, real
+    finally:
+        routes.SERVICES.pop("selfrepair", None)

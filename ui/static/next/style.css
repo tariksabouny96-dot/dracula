@@ -1396,3 +1396,18 @@ details.tech > summary { cursor: pointer; color: var(--muted); font-size: 11px; 
 .command-log .callout { font-size: 11px; }
 .tool-rows .row-main small { display: block; }
 .tools-panel pre { max-height: 180px; }
+/* Self-repair (Phase 4) and Intelligence live data */
+.repair-layout { display: grid; grid-template-columns: minmax(260px, 1fr) 2fr; gap: 14px; align-items: start; }
+@media (max-width: 1100px) { .repair-layout { grid-template-columns: 1fr; } }
+.repair-item { width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid #243249; color: inherit;
+  cursor: pointer; padding: 10px 8px; border-radius: 8px; font: inherit; }
+.repair-item:hover, .repair-item.active { background: #0f2340; }
+.repair-item:focus-visible { outline: 2px solid var(--cyan); }
+.repair-shot { display: block; max-width: 100%; max-height: 320px; margin: 8px 0; border: 1px solid #263b55; border-radius: 8px; }
+.diff-view .d-add { color: #7ee2a8; } .diff-view .d-del { color: #ff8f8f; }
+.diff-view .d-hunk { color: #7fb7ff; } .diff-view .d-file { color: #c9d6e8; font-weight: 600; }
+.mini-table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 8px 0; }
+.mini-table th { text-align: left; color: #8fa3bf; font-weight: 500; padding: 4px 6px; border-bottom: 1px solid #243249; }
+.mini-table td { padding: 4px 6px; border-bottom: 1px solid #ffffff0d; word-break: break-word; }
+ol.call-list { list-style: none; padding: 0; font-size: 12px; }
+ol.call-list time { color: var(--muted); margin-right: 8px; font-variant-numeric: tabular-nums; }

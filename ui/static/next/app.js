@@ -11,9 +11,9 @@
 (() => {
   const PAGES = [
     ['Command', '⌂'], ['Missions', '◎'], ['Agents', '⬡'], ['Intelligence', '◌'], ['Integrations', '⊞'],
-    ['Sentinel', '◇'], ['Memory', '▤'], ['Commerce', '◈'], ['Desktop', '▣'], ['Voice', '◉'], ['Settings', '⚙'],
+    ['Sentinel', '◇'], ['Memory', '▤'], ['Commerce', '◈'], ['Desktop', '▣'], ['Voice', '◉'], ['Repair', '✚'], ['Settings', '⚙'],
   ];
-  const PAGE_LABEL = { Intelligence: 'System map' };   // page keys stay stable in links; labels are for people
+  const PAGE_LABEL = { Intelligence: 'System map', Repair: 'Self-repair' };   // page keys stay stable in links; labels are for people
   const $ = (id) => document.getElementById(id);
 
   // ------------------------------------------------------------------ DOM helper (no innerHTML with data)
@@ -401,6 +401,12 @@
       else if (notes.length) logEl.append(h('div', { class: 'callout warn' }, h('b', {}, 'Good to know'), h('ul', {}, notes.map((n) => h('li', {}, n)))));
       logEl.append(h('div', { class: 'form-actions' }, btn, h('small', { class: 'small-note' }, 'Nothing runs until you approve the plan.')));
       if (r.data.open_mission_draft) openPlan();   // the owner asked to plan it: open it for review
+    }
+    if (r.data.offer_self_repair && session.role === 'ROOT_OWNER') {
+      // A problem with HOOD itself: offer self-repair. Only an offer; the dialog asks before sending anything.
+      logEl.append(h('div', { class: 'callout' }, h('b', {}, 'Is something wrong with HOOD itself?'),
+        h('p', {}, 'HOOD can look for the cause in its own code, test a fix in its sandbox, and show you the exact change before anything is applied.'),
+        h('div', { class: 'form-actions' }, h('button', { class: 'btn primary', type: 'button', onclick: () => reportProblemDialog(text) }, '✚ Investigate & fix'))));
     }
     if (voice.autoSpeak) voice.speak(String(r.data.text).replace(/[*`#_]/g, ''), r.data.speaker_id);
   }
@@ -1361,7 +1367,208 @@
         h('button', { type: 'button', title: 'Zoom in', 'aria-label': 'Zoom in', onclick: () => zoomBy(1.2) }, '＋'),
         h('button', { type: 'button', title: 'Zoom out', 'aria-label': 'Zoom out', onclick: () => zoomBy(1 / 1.2) }, '−'),
         h('button', { type: 'button', title: 'Whole system', 'aria-label': 'Whole system', onclick: () => go('root') }, '⌂')), canvas, legend),
-      h('section', { class: 'card graph-inspector' }, h('header', { class: 'card-header' }, h('span', { class: 'card-title' }, 'Details'), badge('available', 'live data')), inspector)));
+      h('section', { class: 'card graph-inspector' }, h('header', { class: 'card-header' }, h('span', { class: 'card-title' }, 'Details'), badge('available', 'live data')), inspector)),
+    h('div', { style: { marginTop: '14px' } }, liveDataCard()));
+  }
+
+  // ------------------------------------------------------------------ Intelligence: live data (Phase 4)
+  // What HOOD actually uses, spends and achieves, from its own stores. Nothing estimated or invented.
+  const perMillion = (p) => (p === null || p === undefined) ? 'no price set' : (p.input_per_1k_usd === 0 && p.output_per_1k_usd === 0)
+    ? 'free tier' : '$' + (p.input_per_1k_usd * 1000).toFixed(2) + ' in / $' + (p.output_per_1k_usd * 1000).toFixed(2) + ' out per 1M tokens';
+  function liveDataCard() {
+    const box = h('div', {});
+    fill(box, async () => {
+      const r = await api.get('/api/intelligence/live');
+      if (!r.ok) return unavailable(r, 'Live data');
+      const d = r.data, m = d.models || {}, s = d.spend || {}, ms = d.missions || {}, env = d.environment || {}, sr = d.self_repair || {};
+      const classes = Object.entries(m.classes || {});
+      const seen = m.observed || {};
+      return h('div', {},
+        h('p', { class: 'small-note' }, 'Measured ' + fmtTime(d.measured_at) + ' from ' + d.sources + '.'),
+        h('div', { class: 'two-col' },
+          h('div', {}, h('h3', { class: 'eyebrow' }, 'AI MODELS IN USE'),
+            classes.length ? h('dl', { class: 'kv' }, classes.map(([, c]) => [h('dt', {}, c.role),
+              h('dd', {}, h('b', {}, c.model), ' · ', perMillion((m.prices || {})[c.model]),
+                c.fallbacks.length ? h('small', { class: 'small-note' }, ' (if busy: ' + c.fallbacks.join(', ') + ')') : null)]))
+              : emptyBox('No AI provider configured. Set it in Settings › Model provider.'),
+            seen.last_success_at || seen.last_error ? h('p', { class: 'small-note' }, seen.last_success_at ? 'Last answer ' + fmtTime(seen.last_success_at) + '. ' : '',
+              seen.last_error ? 'Last problem: ' + clip(seen.last_error, 160) : '') : null),
+          h('div', {}, h('h3', { class: 'eyebrow' }, 'SPEND (DURABLE LEDGER)'),
+            !s.available ? emptyBox('Spend tracking is not attached.') : h('div', {},
+              h('dl', { class: 'kv' }, h('dt', {}, 'Today'), h('dd', {}, money(s.daily_spend_usd) + ' of ' + money(s.max_daily_limit_usd)),
+                h('dt', {}, 'This month'), h('dd', {}, money(s.monthly_spend_usd) + ' of ' + money(s.max_monthly_limit_usd)),
+                s.reserved_usd ? [h('dt', {}, 'Reserved now'), h('dd', {}, money(s.reserved_usd))] : null),
+              s.ledger_error ? h('div', { class: 'callout warn' }, 'The spend ledger could not be written: ' + s.ledger_error) : null,
+              s.note ? h('p', { class: 'small-note' }, s.note) : null,
+              (s.by_model || []).length ? h('table', { class: 'mini-table' }, h('thead', {}, h('tr', {}, h('th', {}, 'Model (30 days)'), h('th', {}, 'Calls'), h('th', {}, 'Tokens in / out'), h('th', {}, 'Cost'))),
+                h('tbody', {}, s.by_model.map((x) => h('tr', {}, h('td', {}, x.model), h('td', {}, String(x.calls)),
+                  h('td', {}, x.prompt_tokens.toLocaleString() + ' / ' + x.completion_tokens.toLocaleString()), h('td', {}, money(x.cost_usd)))))) : null,
+              (s.recent || []).length ? h('details', {}, h('summary', {}, 'Last ' + s.recent.length + ' AI calls'), h('ol', { class: 'call-list' }, s.recent.map((x) =>
+                h('li', {}, h('time', {}, fmtTime(x.ts)), h('span', {}, x.kind + ' · ' + x.model + ' · ' + x.tokens.toLocaleString() + ' tokens · ' + money(x.cost_usd) + (x.measured ? '' : ' (not reported by the provider: full reservation charged)')))))) : null))),
+        h('div', { class: 'two-col' },
+          h('div', {}, h('h3', { class: 'eyebrow' }, 'MISSIONS'),
+            !ms.available ? emptyBox('The agent engine is not attached.') : !ms.total ? emptyBox('No missions yet.') : h('div', {},
+              h('dl', { class: 'kv' }, h('dt', {}, 'Total'), h('dd', {}, String(ms.total)),
+                h('dt', {}, 'Success rate'), h('dd', {}, ms.success_rate === null ? 'none finished yet' : Math.round(ms.success_rate * 100) + '% of finished missions'),
+                h('dt', {}, 'Typical duration'), h('dd', {}, ms.median_completed_seconds === null ? 'none completed yet' : Math.round(ms.median_completed_seconds / 60) + ' min (median)')),
+              h('p', {}, Object.entries(ms.by_state || {}).map(([k, v]) => [badge(k, v + ' ' + k.replace(/_/g, ' ').toLowerCase()), ' '])))),
+          h('div', {}, h('h3', { class: 'eyebrow' }, 'ENVIRONMENT'),
+            h('dl', { class: 'kv' }, h('dt', {}, 'Sandbox'), h('dd', {}, env.sandbox_ready ? badge('available', 'ready') : h('span', {}, badge('UNVERIFIED', 'not ready'), ' ', h('small', {}, clip(env.sandbox_problem || '', 160)))),
+              env.tools ? [h('dt', {}, 'Tools'), h('dd', {}, env.tools.error ? 'unknown (' + clip(env.tools.error, 80) + ')' : env.tools.installed + ' installed, ' + env.tools.approved + ' allowed, of ' + env.tools.known)] : null,
+              h('dt', {}, 'Self-repair'), h('dd', {}, !sr.available ? 'not attached' : Object.keys(sr.by_state || {}).length
+                ? Object.entries(sr.by_state).map(([k, v]) => v + ' ' + (REPAIR_STATE[k] ? REPAIR_STATE[k][1] : k).toLowerCase()).join(', ') : 'no reports yet')))));
+    }, (x) => x);
+    return card('Live data', box, { right: h('button', { class: 'btn small', type: 'button', onclick: () => app.render('Intelligence') }, '↻ Refresh') });
+  }
+
+  // ------------------------------------------------------------------ Self-repair (Phase 4)
+  // The owner reports a problem with HOOD; HOOD looks for the cause in its own code, proves a fix in
+  // its sandbox, and changes nothing until the Root Owner approves that exact fix (undo available).
+  const REPAIR_STATE = {
+    INVESTIGATING: ['RUNNING', 'Looking for the cause'], VERIFYING: ['VERIFYING', 'Testing the fix'],
+    NEEDS_DECISION: ['awaiting_approval', 'Fix ready: your decision'], AWAITING_LOCAL_RUN: ['PENDING', 'Waiting: where to test'],
+    NO_RELIABLE_FIX: ['UNVERIFIED', 'No reliable fix found'], APPLIED: ['COMPLETED', 'Applied'], UNDONE: ['muted', 'Undone'],
+    DISCARDED: ['muted', 'Discarded'], FAILED: ['FAILED', 'Stopped'],
+  };
+  const repairBadge = (s) => { const [k, label] = REPAIR_STATE[s] || [s, s]; return badge(k, label); };
+  const REPAIR_CHECK = { reproduces_the_problem: 'The new test fails on today’s code (it reproduces the problem)',
+    fix_makes_it_pass: 'With the fix, the new test passes', whole_suite_still_passes: 'All of HOOD’s other tests still pass' };
+  const repairPage = { selected: null };
+  const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+
+  function reportProblemDialog(prefill) {
+    if (session.role !== 'ROOT_OWNER') { toast('Only the Root Owner can ask HOOD to repair itself.'); return; }
+    const text = h('textarea', { class: 'big', rows: '6', maxlength: '8000', 'aria-label': 'What is wrong',
+      placeholder: 'Where (page, button), what you did, what you expected, what happened. Copy any error message exactly.' });
+    text.value = prefill || '';
+    const file = h('input', { type: 'file', accept: IMAGE_TYPES.join(','), 'aria-label': 'Screenshot (optional)' });
+    const preview = h('div', {});
+    const consent = h('input', { type: 'checkbox', 'aria-label': 'Send this screenshot to the AI provider' });
+    const consentLine = h('label', { class: 'switchline hidden' },
+      h('span', {}, h('b', {}, 'Send this screenshot to the AI provider'), h('small', {}, 'Check it shows nothing private (passwords, keys, personal data).')), consent);
+    let shot = null;
+    file.addEventListener('change', () => {
+      shot = null; clear(preview); consentLine.classList.add('hidden'); consent.checked = false;
+      const f = file.files && file.files[0];
+      if (!f) return;
+      if (!IMAGE_TYPES.includes(f.type)) { preview.append(errorBox('Use a PNG, JPEG or WebP image.')); return; }
+      if (f.size > 4 * 1024 * 1024) { preview.append(errorBox('The screenshot must be under 4 MB.')); return; }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const url = String(reader.result);
+        shot = { mime: f.type, b64: url.slice(url.indexOf(',') + 1) };
+        preview.append(h('img', { src: url, alt: 'Your screenshot', class: 'repair-shot' }));
+        consentLine.classList.remove('hidden');
+      };
+      reader.readAsDataURL(f);
+    });
+    confirmDialog('Report a problem with HOOD', [
+      'HOOD looks for the cause in its own code: it sends your description and short excerpts of its code (secrets removed) to the AI model.',
+      'If it finds a fix it is sure about, it proves it in its sandbox first: a new test must fail today and pass with the fix, and all of HOOD’s other tests must still pass.',
+      'Nothing changes until you approve the exact change. If HOOD isn’t sure, it says so instead of guessing.'],
+    'Investigate', async () => {
+      const body = { text: text.value.trim(), confirm: true };
+      if (body.text.length < 10) return { error: 'Describe the problem in a sentence or two.' };
+      if (shot) {
+        if (!consent.checked) return { error: 'Tick “Send this screenshot to the AI provider”, or remove the screenshot.' };
+        Object.assign(body, { screenshot_b64: shot.b64, screenshot_mime: shot.mime, screenshot_consent: true });
+      }
+      const r = await api.post('/api/selfrepair/report', body);
+      if (!r.ok) return r;
+      repairPage.selected = r.data.id;
+      toast('HOOD is looking into it.');
+      app.render('Repair');
+      return r;
+    }, h('div', { class: 'form' }, h('label', {}, 'What is wrong', text), h('label', {}, 'Screenshot (optional)', file), preview, consentLine));
+  }
+
+  // A unified diff as coloured lines (text nodes only).
+  const diffView = (diff) => h('pre', { class: 'file-view diff-view' }, String(diff).split('\n').map((l) =>
+    h('span', { class: /^(\+\+\+|---)/.test(l) ? 'd-file' : l.startsWith('@@') ? 'd-hunk' : l.startsWith('+') ? 'd-add' : l.startsWith('-') ? 'd-del' : null }, l + '\n')));
+
+  function repairDetail(x, reload) {
+    const d = x.diagnosis || {};
+    const root = session.role === 'ROOT_OWNER';
+    const post = (path, body, okText) => async () => {
+      const r = await api.post('/api/selfrepair/' + x.id + path, body);
+      if (!r.ok) { toast(r.error); return r; }
+      if (okText) toast(okText);
+      reload();
+      return r;
+    };
+    const running = ['INVESTIGATING', 'VERIFYING'].includes(x.state);
+    const files = x.diff ? (x.diff.match(/^\+\+\+ (?!b\/tests\/selfrepair\/).*/gm) || []).length : 0;   // the new test is extra
+    const actions = h('div', { class: 'form-actions' });
+    if (root && x.state === 'NEEDS_DECISION') actions.append(h('button', { class: 'btn primary', type: 'button', onclick: () => confirmDialog('Apply this fix?', [
+      'HOOD changes ' + files + ' file(s) exactly as shown under “The change”, and adds the new test. A restore point is kept; you can undo it.',
+      'Python changes take effect after HOOD restarts; console changes after you reload the page.'],
+    'Apply fix', post('/apply', { proposal_sha: x.proposal_sha, confirm: true }, 'Fix applied.')) }, '✓ Apply fix'));
+    if (root && x.state === 'AWAITING_LOCAL_RUN') actions.append(h('button', { class: 'btn primary', type: 'button', onclick: () => confirmDialog('Run the checks on this computer?', [
+      'HOOD’s sandbox isn’t available here, so the fix could not be tested in isolation.',
+      'HOOD can run its tests with the fix on this computer, in a temporary copy of its code (your HOOD files are not changed). The tests run without the sandbox’s isolation.',
+      'This needs “Run on my PC” to be on (Settings › Agents).'],
+    'Run checks here', post('/run_checks_here', { confirm: true }, 'Running the checks…')) }, '▶ Run checks on this PC'));
+    if (root && ['APPLIED', 'UNDONE'].includes(x.state) && x.needs_restart) actions.append(h('button', { class: 'btn primary', type: 'button', onclick: () => confirmDialog('Restart HOOD now?', [
+      'HOOD stops for a few seconds and starts again with its code as it is now. Anything running right now (missions, installs) is interrupted.',
+      'Reload this page after about 10 seconds.'],
+    'Restart HOOD', async () => { const r = await api.post('/api/selfrepair/restart', { confirm: true }); if (r.ok) toast(r.data.message); return r; }) }, '↻ Restart HOOD'));
+    if (root && x.state === 'APPLIED') actions.append(h('button', { class: 'btn', type: 'button', onclick: () => confirmDialog('Undo this fix?', [
+      'HOOD puts back its code exactly as it was before this fix and removes the test it added.'], 'Undo fix', post('/undo', { confirm: true }, 'Fix undone.')) }, '↶ Undo'));
+    if (root && ['NEEDS_DECISION', 'AWAITING_LOCAL_RUN', 'NO_RELIABLE_FIX', 'FAILED'].includes(x.state)) actions.append(
+      h('button', { class: 'btn', type: 'button', onclick: post('/discard', {}, 'Report discarded.') }, 'Discard'));
+    return h('div', {},
+      h('p', {}, repairBadge(x.state), ' ', h('small', {}, 'Reported ' + fmtTime(x.created) + ' by ' + x.owner)),
+      h('h3', { class: 'eyebrow' }, 'YOUR REPORT'), h('p', { class: 'pre-wrap' }, x.report),
+      x.has_screenshot ? h('details', {}, h('summary', {}, 'Your screenshot' + (x.screenshot_note ? ' and what HOOD saw in it' : '')),
+        h('img', { src: '/api/selfrepair/' + x.id + '/screenshot', alt: 'The screenshot you sent', class: 'repair-shot' }),
+        x.screenshot_note ? h('p', { class: 'pre-wrap small-note' }, x.screenshot_note) : null) : null,
+      running ? h('div', { class: 'callout' }, h('b', {}, x.state === 'VERIFYING' ? 'Proving the fix in the sandbox…' : 'Looking for the cause…'),
+        h('p', { class: 'small-note' }, 'This takes one to a few minutes (the whole test suite runs). You can leave this page.')) : null,
+      x.state === 'NO_RELIABLE_FIX' ? h('div', { class: 'callout warn' }, h('b', {}, 'HOOD couldn’t find a reliable fix'), h('p', {}, d.why_not || 'No reason recorded.'),
+        h('p', { class: 'small-note' }, 'Nothing was changed. The exact error text or a screenshot can help; deeper problems need a stronger AI model or a developer.')) : null,
+      x.state === 'FAILED' ? h('div', { class: 'callout warn' }, h('b', {}, 'The investigation stopped'), h('p', {}, x.error || 'Unknown error.'), h('p', { class: 'small-note' }, 'Nothing was changed.')) : null,
+      x.state === 'AWAITING_LOCAL_RUN' ? h('div', { class: 'callout warn' }, h('b', {}, 'HOOD has a fix but couldn’t prove it in its sandbox'), h('p', {}, x.error || 'The sandbox isn’t available here.'),
+        h('p', { class: 'small-note' }, 'You choose: run the checks on this PC, or discard. Nothing was changed.')) : null,
+      x.state === 'APPLIED' ? h('div', { class: 'callout good' }, h('b', {}, 'Applied'), h('p', {}, x.needs_restart ? 'Restart HOOD so the fix takes effect.' : 'Reload the page to see the change.')) : null,
+      x.state === 'UNDONE' && x.needs_restart ? h('div', { class: 'callout' }, 'Undone. Restart HOOD so its previous code is loaded again.') : null,
+      d.summary_for_owner || d.understood_problem ? h('div', {}, h('h3', { class: 'eyebrow' }, 'WHAT HOOD FOUND'),
+        d.summary_for_owner ? h('p', {}, d.summary_for_owner) : null,
+        h('dl', { class: 'kv' }, d.understood_problem ? [h('dt', {}, 'The problem'), h('dd', {}, d.understood_problem)] : null,
+          d.root_cause ? [h('dt', {}, 'Cause'), h('dd', {}, d.root_cause)] : null,
+          d.confidence ? [h('dt', {}, 'Confidence'), h('dd', {}, d.confidence)] : null)) : null,
+      (x.checks || []).length ? h('div', {}, h('h3', { class: 'eyebrow' }, 'PROOF'), x.checks.map((c) => h('details', { class: 'check-row' },
+        h('summary', {}, badge(c.passed ? 'PASS' : 'FAILED', c.passed ? 'passed' : 'failed'), ' ', REPAIR_CHECK[c.name] || c.name,
+          c.duration_s ? h('small', {}, ' · ' + c.duration_s + ' s') : null),
+        c.output ? h('pre', { class: 'file-view' }, c.output) : h('p', { class: 'small-note' }, c.why || 'No details recorded.')))) : null,
+      x.diff ? h('details', { open: x.state === 'NEEDS_DECISION' || null }, h('summary', {}, 'The change (' + files + ' file(s) and a new test)'), diffView(x.diff)) : null,
+      x.applied ? h('p', { class: 'small-note' }, 'Applied ' + fmtTime(x.applied.at) + ' by ' + x.applied.by + '. Restore point and patch file kept on this computer.') : null,
+      actions,
+      (x.log || []).length ? h('details', { open: running || null }, h('summary', {}, 'What HOOD did'), h('pre', { class: 'file-view wrap' }, x.log.join('\n'))) : null);
+  }
+
+  function repairView() {
+    const list = h('div', { class: 'repair-list' });
+    const detail = h('div', {}, loading('reports'));
+    let timer = null;
+    const load = async () => {
+      clearTimeout(timer);
+      const r = await api.get('/api/selfrepair');
+      if (!r.ok) { clear(list).append(unavailable(r, 'Self-repair')); clear(detail); return; }
+      const items = r.data.reports;
+      if (!items.some((x) => x.id === repairPage.selected)) repairPage.selected = items.length ? items[0].id : null;
+      clear(list).append(...(items.length ? items.map((x) => h('button', { class: 'list-row repair-item' + (x.id === repairPage.selected ? ' active' : ''), type: 'button',
+        'aria-current': x.id === repairPage.selected ? 'true' : null, onclick: () => { repairPage.selected = x.id; load(); } },
+        h('div', { class: 'row-main' }, h('b', {}, clip(x.report, 90)), h('small', {}, fmtTime(x.created))),
+        h('div', { class: 'row-meta' }, repairBadge(x.state)))) : [emptyBox('No problems reported yet. Use “Report a problem”, or tell HOOD in chat what is wrong.')]));
+      const cur = items.find((x) => x.id === repairPage.selected);
+      clear(detail).append(cur ? repairDetail(cur, load) : emptyBox('Select a report.'));
+      if (items.some((x) => ['INVESTIGATING', 'VERIFYING'].includes(x.state))) timer = setTimeout(load, 3000);
+    };
+    app.onCleanup(() => clearTimeout(timer));
+    load();
+    return h('div', {}, head('Self-repair', 'Tell HOOD what is wrong with it. HOOD finds the cause in its own code, proves a fix in its sandbox, and changes nothing until you approve. If it isn’t sure, it says so.',
+      session.role === 'ROOT_OWNER' ? h('button', { class: 'btn primary', type: 'button', onclick: () => reportProblemDialog('') }, '✚ Report a problem') : null),
+    h('div', { class: 'repair-layout' }, card('Reports', list), card('Details', detail)));
   }
 
   // ------------------------------------------------------------------ Integrations / capabilities
@@ -1945,7 +2152,7 @@
 
   const VIEWS = { Command: commandView, Missions: missionsView, Agents: agentsView, Intelligence: intelligenceView,
     Integrations: integrationsView, Sentinel: sentinelView, Memory: memoryView, Commerce: commerceView,
-    Desktop: desktopView, Voice: voiceView, Settings: settingsView };
+    Desktop: desktopView, Voice: voiceView, Repair: repairView, Settings: settingsView };
 
   // ------------------------------------------------------------------ global search (missions, agents, capabilities)
   async function runSearch(q) {

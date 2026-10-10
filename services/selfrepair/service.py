@@ -622,6 +622,11 @@ class SelfRepairService:
             files = self.check_proposal(proposal)
         except SelfRepairError as exc:
             raise SelfRepairConflict(f"HOOD's code changed since this fix was prepared ({exc}); report it again") from None
+        blocked = [rel for rel in [*files, proposal["test_path"]] if not self._writable(self.repo / rel)]
+        if blocked:
+            raise SelfRepairConflict("HOOD's code is read-only on this machine (for example inside the container), so "
+                                     "this fix can't be applied here: " + ", ".join(blocked) +
+                                     ". Apply the change shown on your development copy instead.")
         restore = self.root / rid / "restore"
         restore.mkdir(parents=True, exist_ok=True)
         written: List[str] = []
@@ -686,6 +691,14 @@ class SelfRepairService:
             raise SelfRepairConflict("Restart HOOD yourself (this HOOD wasn't started with hood_cli.py ui)")
         self.restart_hook()
         return f"HOOD restarts in a few seconds (requested by {actor}); reload the page then."
+
+    @staticmethod
+    def _writable(path: Path) -> bool:
+        """The file (or, for a new file, its nearest existing folder) can be replaced in place."""
+        folder = path.parent
+        while not folder.exists() and folder != folder.parent:
+            folder = folder.parent
+        return os.access(folder, os.W_OK) and (not path.exists() or os.access(path, os.W_OK))
 
     @staticmethod
     def _write(path: Path, text: str) -> None:

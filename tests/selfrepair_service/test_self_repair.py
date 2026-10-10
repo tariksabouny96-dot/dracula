@@ -169,3 +169,17 @@ def test_the_right_files_are_found_from_the_owners_words(tmp_path, repo):
     assert svc.relevant_files("something completely unrelated xyzzy") == []
     with pytest.raises(ValueError):
         svc.report("owner", "short")
+
+
+def test_read_only_code_is_never_half_changed(tmp_path, repo, monkeypatch):
+    """Inside the container HOOD's code is read-only on purpose: applying says so and changes nothing."""
+    monkeypatch.setattr(sandbox_mod, "sandbox_problem", lambda *a: "no sandbox")
+    svc = service(tmp_path, repo, Model(proposal()), local_run_allowed=lambda: True)
+    rid = svc.report("owner", REPORT)["id"]
+    r = svc.approve_local_run(rid, "owner")
+    assert r["state"] == "NEEDS_DECISION", (r["error"], r["checks"])
+    monkeypatch.setattr(SelfRepairService, "_writable", staticmethod(lambda path: False))
+    with pytest.raises(SelfRepairConflict, match="read-only"):
+        svc.apply(rid, r["proposal_sha"], "owner", is_root_owner=True)
+    assert svc.get(rid)["state"] == "NEEDS_DECISION" and (repo / "services/demo/greeting.py").read_text() == BUGGY
+    assert not (repo / "tests/selfrepair").exists()

@@ -118,6 +118,7 @@ def test_intelligence_live_data_comes_from_hoods_own_ledger(server, tmp_path):
     live = json.loads(body)
     spend = live["spend"]
     assert spend["available"] and len(spend["recent"]) == 1
+    assert spend["ledger"] is True and str(tmp_path) not in body.decode()     # no server paths
     assert spend["recent"][0]["kind"] == "chat" and spend["recent"][0]["cost_usd"] == pytest.approx(0.0025)
     assert sum(d["calls"] for d in spend["days"]) == 1
     assert spend["by_model"][0]["model"] == "gemini-3.8-flash" and spend["by_model"][0]["prompt_tokens"] == 100
