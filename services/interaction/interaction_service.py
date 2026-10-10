@@ -538,6 +538,9 @@ class InteractionService:
     HISTORY_TURNS = 12          # recent messages sent to the model with each request
     HISTORY_CHARS = 1500        # per message
     CHAT_MAX_TOKENS = 8192
+    # Chat must answer in seconds: the fast tier replies in ~1s, the standard tier took ~2 minutes
+    # per reply on the owner's free key (measured). Missions keep the standard tier for planning.
+    CHAT_CLASS = ModelClass.FAST
 
     _BUILD_VERB = (r"(create|build|make|develop|code|write|generate|design|set\s*up|implement|cr[ée]er|"
                    r"construire|d[ée]velopper|faire)")
@@ -661,7 +664,8 @@ class InteractionService:
             "Continue the conversation naturally: don't open every reply with a greeting.\n\n"
             "Honesty rules (strict):\n"
             "1. State facts about HOOD only from LIVE STATUS below. If something is not listed, say you "
-            "don't know or can't check it from chat. Never invent monitoring, scans, protections or results.\n"
+            "don't know or can't check it from chat. Never invent monitoring, scans, protections or results, "
+            "and don't call systems \"green\", \"nominal\" or \"secure\": mention status only when asked.\n"
             "2. Never claim you ran, built, changed, tested or verified anything. From chat you can only talk.\n"
             f"3. If {owner} wants something built or done (a website, an app, a script...), help shape the "
             "requirements, then say a mission plan is offered below the reply: pressing \"Plan this as a mission\" "
@@ -676,7 +680,7 @@ class InteractionService:
                        else f"{system_instruction}\n") + f"{owner}: {prompt}\nHOOD:"
 
         try:
-            req = ModelRequest(prompt=full_prompt, model_class=ModelClass.STANDARD,
+            req = ModelRequest(prompt=full_prompt, model_class=self.CHAT_CLASS,
                                max_tokens=self.CHAT_MAX_TOKENS, allow_partial=True,
                                task_id=f"conv_{uuid.uuid4().hex[:8]}")
             resp = self.commander.model_router.invoke(req)

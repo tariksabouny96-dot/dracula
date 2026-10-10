@@ -133,8 +133,10 @@ class GeminiProviderAdapter(BaseModelProvider):
         for model_index, model_name in enumerate(models):
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
             # Fewer retries when another model is listed: an overloaded model rarely recovers in seconds.
-            retries = self.MAX_RETRIES if model_index == len(models) - 1 else 2
-            data = self._post_with_retries(url, payload_bytes, headers, model_name, retries)
+            has_fallback = model_index < len(models) - 1
+            retries = 2 if has_fallback else self.MAX_RETRIES
+            data = self._post_with_retries(url, payload_bytes, headers, model_name, retries,
+                                           fail_fast_on_quota=has_fallback)
             if isinstance(data, Exception):
                 last_error = data
                 continue  # overloaded / rate-limited: try the next listed model
@@ -142,8 +144,12 @@ class GeminiProviderAdapter(BaseModelProvider):
                                is_fallback=model_index > 0)
         raise last_error or ProviderError("Gemini invocation failed")
 
-    def _post_with_retries(self, url, payload_bytes, headers, model_name, retries):
-        """Return parsed JSON, or a retryable error once retries are exhausted."""
+    def _post_with_retries(self, url, payload_bytes, headers, model_name, retries, fail_fast_on_quota=False):
+        """Return parsed JSON, or a retryable error once retries are exhausted.
+
+        A quota error (429) is not waited out when another model can take the request, or when
+        the exhausted quota is a daily one: waiting cannot help, and the owner sees a stalled reply.
+        """
         last_error = None
         for attempt in range(retries + 1):
             http_req = urllib.request.Request(url, data=payload_bytes, headers=headers)
@@ -160,6 +166,8 @@ class GeminiProviderAdapter(BaseModelProvider):
                 err_body = e.read().decode("utf-8", errors="ignore")
                 if e.code == 429:
                     last_error = ProviderRateLimitError(f"Gemini quota/rate limit ({model_name}): {err_body[:300]}")
+                    if fail_fast_on_quota or "PerDay" in err_body:
+                        return last_error
                 elif e.code in (500, 502, 503, 504):
                     last_error = ProviderError(f"Gemini server error ({e.code}, {model_name}): {err_body[:300]}")
                 elif e.code in (401, 403):

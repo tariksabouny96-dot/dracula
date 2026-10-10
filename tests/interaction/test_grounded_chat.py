@@ -30,11 +30,12 @@ def _chat(router):
     return svc
 
 
-def test_prompt_is_grounded_in_live_facts_with_strong_model():
+def test_prompt_is_grounded_in_live_facts_with_fast_model():
     router = Router()
     _chat(router).handle_text_input("What's your status?")
     req = router.requests[0]
-    assert req.model_class == ModelClass.STANDARD and req.max_tokens >= 8192 and req.allow_partial
+    # Fast tier: chat must answer in seconds (the standard tier took ~2 minutes per reply).
+    assert req.model_class == ModelClass.FAST and req.max_tokens >= 8192 and req.allow_partial
     assert "LIVE STATUS" in req.prompt and "Agent missions: 2 COMPLETED" in req.prompt
     assert "Level 3 (HOOD's own trained model): does not exist yet" in req.prompt
     for invented in ("Project Sentinel is", "self-healing", "vulnerability monitoring"):

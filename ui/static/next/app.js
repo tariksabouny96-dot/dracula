@@ -354,9 +354,26 @@
       planMissionDialog(text.replace(/^\/mission\s+/i, ''));
       return;
     }
+    if (runCommand.busy) { toast('HOOD is still answering your previous message.'); return; }
+    runCommand.busy = true;
     setAvatar('thinking');
-    logEl.textContent = 'Sending to Hood…';
-    const r = await api.post('/api/chat', { text });
+    const started = Date.now();
+    const tick = () => {
+      const secs = Math.round((Date.now() - started) / 1000);
+      logEl.textContent = 'HOOD is thinking… ' + secs + 's' +
+        (secs >= 20 ? ' (the AI model is slow right now; it may be busy or rate-limited)' : '');
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+    let r;
+    try {
+      r = await Promise.race([api.post('/api/chat', { text }),
+        new Promise((resolve) => setTimeout(() => resolve({ ok: false, status: 0,
+          error: 'no answer after 2 minutes; the AI model may be overloaded or out of free quota. Try again in a moment.' }), 120000))]);
+    } finally {
+      clearInterval(timer);
+      runCommand.busy = false;
+    }
     setAvatar('idle');
     if (!r.ok) { logEl.textContent = 'Hood could not answer: ' + r.error; return; }
     clear(logEl).append(h('b', {}, (r.data.sender || 'Hood') + ': '), richText(r.data.text));

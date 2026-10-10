@@ -89,6 +89,7 @@ def test_truncated_output_is_an_error(monkeypatch):
 
 
 def test_rate_limit_retries_with_server_delay(monkeypatch):
+    monkeypatch.setenv('HOOD_GEMINI_FALLBACK_MODELS', '')   # last model available: waiting is the only option
     calls, sleeps = [], []
     def urlopen(req, timeout):
         calls.append(1)
@@ -100,6 +101,36 @@ def test_rate_limit_retries_with_server_delay(monkeypatch):
     monkeypatch.setattr('time.sleep', lambda s: sleeps.append(s))
     assert GeminiProviderAdapter(vault=StubVault()).invoke(ModelRequest(prompt='hi')).text == 'ok'
     assert sleeps == [7.0, 7.0] and len(calls) == 3
+
+
+def test_quota_on_primary_switches_to_fallback_without_waiting(monkeypatch):
+    """Owner's run: chat stalled ~2 minutes waiting out an exhausted quota."""
+    monkeypatch.setenv('HOOD_GEMINI_FALLBACK_MODELS', 'gemini-lite-test')
+    sleeps, urls = [], []
+    def urlopen(req, timeout):
+        urls.append(req.full_url)
+        if 'gemini-lite-test' not in req.full_url:
+            body = b'{"error": {"message": "You exceeded your current quota", "details": [{"retryDelay": "40s"}]}}'
+            raise HTTPError(req.full_url, 429, 'quota', {}, io.BytesIO(body))
+        return Response({'candidates': [{'content': {'parts': [{'text': 'ok'}]}, 'finishReason': 'STOP'}]})
+    monkeypatch.setattr('urllib.request.urlopen', urlopen)
+    monkeypatch.setattr('time.sleep', lambda s: sleeps.append(s))
+    result = GeminiProviderAdapter(vault=StubVault()).invoke(ModelRequest(prompt='hi'))
+    assert result.model_name == 'gemini-lite-test' and result.is_fallback
+    assert sleeps == [] and sum('gemini-lite-test' not in u for u in urls) == 1
+
+
+def test_daily_quota_is_not_waited_out(monkeypatch):
+    monkeypatch.setenv('HOOD_GEMINI_FALLBACK_MODELS', '')
+    sleeps = []
+    def urlopen(req, timeout):
+        body = b'{"error": {"details": [{"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}, {"retryDelay": "30s"}]}}'
+        raise HTTPError(req.full_url, 429, 'quota', {}, io.BytesIO(body))
+    monkeypatch.setattr('urllib.request.urlopen', urlopen)
+    monkeypatch.setattr('time.sleep', lambda s: sleeps.append(s))
+    with pytest.raises(Exception, match='quota'):
+        GeminiProviderAdapter(vault=StubVault()).invoke(ModelRequest(prompt='hi'))
+    assert sleeps == []
 
 
 def test_overloaded_primary_falls_back_to_listed_model(monkeypatch):
