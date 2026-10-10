@@ -53,14 +53,16 @@ class EvolutionEngine:
     def _init_default_models_and_hardware(self):
         # 1. Level 1 External
         self.registry.register_model(ModelIdentity(
-            model_id="gemini-2.5-flash",
-            version="2026.1",
+            model_id="gemini-3.8-flash",   # gemini-2.5-* is closed to new API users (HTTP 404)
+            version="2026.10",
             provider_runtime="gemini_api",
             level=ModelLevel.LEVEL_1_EXTERNAL,
             capabilities=[CapabilityDomain.CODING, CapabilityDomain.RESEARCH, CapabilityDomain.GENERAL_REASONING, CapabilityDomain.COMMERCE],
             context_window=1000000,
-            cost_per_1k_input=0.0001,
-            cost_per_1k_output=0.0004,
+            # Published paid-tier price on 2026-10-09 (planning figure only; billing uses the
+            # owner's price file). Was a stale gemini-2.5-flash price.
+            cost_per_1k_input=0.00075,
+            cost_per_1k_output=0.00375,
             is_privacy_compliant=False,
             promotion_state=PromotionState.PRIMARY
         ))

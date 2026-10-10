@@ -19,28 +19,57 @@ from packages.contracts import (
 )
 from packages.auth.vault import SecretVault
 from .base import BaseModelProvider, ProviderNotConfiguredError, ProviderRateLimitError, ProviderError
+from .gemini_usage import usage_from_metadata
+
+
+BUILTIN_MODELS = {ModelClass.FAST: "gemini-3.5-flash-lite", ModelClass.STANDARD: "gemini-3.8-flash",
+                  ModelClass.DEEP: "gemini-3.8-flash"}
+MODEL_ENV = {ModelClass.FAST: "HOOD_GEMINI_FAST_MODEL", ModelClass.STANDARD: "HOOD_GEMINI_STANDARD_MODEL",
+             ModelClass.DEEP: "HOOD_GEMINI_DEEP_MODEL"}
+
+
+def _clean_key(value: Optional[str]) -> Optional[str]:
+    """A key copied with spaces, a newline or quotes around it still works; empty -> None."""
+    key = (value or "").strip().strip('"').strip("'").strip()
+    return key or None
+
+
+def _valid_model(name: str) -> bool:
+    return bool(name) and all(c.isalnum() or c in ".-_" for c in name)
 
 
 class GeminiProviderAdapter(BaseModelProvider):
+    """Gemini over its REST API.
+
+    Credentials (first found wins): the key saved in Settings (HOOD's vault, the SAME vault the
+    runtime uses), then GEMINI_API_KEY / GOOGLE_API_KEY, then an injecting egress proxy
+    (HOOD_GEMINI_CREDENTIAL=proxy, honoured only when an HTTPS proxy is configured).
+    Models per class: HOOD_GEMINI_*_MODEL, else hood.config.yaml (providers.gemini.default_*_model),
+    else the built-in defaults."""
+
     def __init__(
         self,
         vault: Optional[SecretVault] = None,
         enabled: bool = True,
         api_key_secret_ref: str = "SECRET://gemini/api_key",
-        timeout_sec: int = 180
+        timeout_sec: int = 180,
+        models: Optional[dict] = None,
     ):
         super().__init__(ProviderName.GEMINI, enabled=enabled)
         self.vault = vault or SecretVault()
-        self.api_key_secret_ref = api_key_secret_ref
+        self.api_key_secret_ref = api_key_secret_ref or "SECRET://gemini/api_key"
         self.timeout_sec = timeout_sec
+        # Config-file models; placeholders ("default-fast"...) from an incomplete config are ignored.
+        self.configured_models = {cls: name for cls, name in (models or {}).items()
+                                  if name and not str(name).startswith("default-")}
 
     def _get_api_key(self) -> Optional[str]:
-        # 1. Check vault reference
-        key = self.vault.get_secret(self.api_key_secret_ref)
+        # 1. The key saved in Settings (vault)
+        key = _clean_key(self.vault.get_secret(self.api_key_secret_ref))
         if key:
             return key
-        # 2. Check environment variable fallback
-        return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        # 2. Environment / .env
+        return _clean_key(os.environ.get("GEMINI_API_KEY")) or _clean_key(os.environ.get("GOOGLE_API_KEY"))
 
     @staticmethod
     def _proxy_credential() -> bool:
@@ -48,8 +77,12 @@ class GeminiProviderAdapter(BaseModelProvider):
 
         Hood never sees the key in this mode; it sends the request without one and
         the proxy adds ``x-goog-api-key`` for generativelanguage.googleapis.com only.
+        Without an HTTPS proxy configured nothing could add the key, so the mode is ignored
+        (it used to make a production container send every request with no key at all).
         """
-        return os.environ.get("HOOD_GEMINI_CREDENTIAL", "").strip().lower() == "proxy"
+        if os.environ.get("HOOD_GEMINI_CREDENTIAL", "").strip().lower() != "proxy":
+            return False
+        return any(os.environ.get(v) for v in ("HTTPS_PROXY", "https_proxy"))
 
     def is_healthy(self) -> bool:
         # Configuration presence, not a live probe (see probe()).
@@ -63,16 +96,12 @@ class GeminiProviderAdapter(BaseModelProvider):
         Defaults remain conservative and can be overridden without source edits.
         Model availability depends on the API account and can change over time.
         """
-        env_name = {
-            ModelClass.FAST: 'HOOD_GEMINI_FAST_MODEL',
-            ModelClass.STANDARD: 'HOOD_GEMINI_STANDARD_MODEL',
-            ModelClass.DEEP: 'HOOD_GEMINI_DEEP_MODEL',
-        }.get(model_class, 'HOOD_GEMINI_STANDARD_MODEL')
+        cls = model_class if model_class in MODEL_ENV else ModelClass.STANDARD
         # gemini-2.5-* is closed to new API users (HTTP 404 on 2026-10-09); defaults follow the live list.
-        default = {ModelClass.FAST: 'gemini-3.5-flash-lite', ModelClass.DEEP: 'gemini-3.8-flash'}.get(
-            model_class, 'gemini-3.8-flash')
-        model = (os.getenv(env_name) or "").strip() or default  # blank setting -> default
-        if not model or not all(c.isalnum() or c in '.-_' for c in model):
+        model = ((os.getenv(MODEL_ENV[cls]) or "").strip()            # blank setting -> next source
+                 or str(self.configured_models.get(cls) or "").strip()
+                 or BUILTIN_MODELS[cls])
+        if not _valid_model(model):
             raise ProviderNotConfiguredError('Invalid Gemini model configuration')
         return [model]
 
@@ -86,7 +115,7 @@ class GeminiProviderAdapter(BaseModelProvider):
         raw = os.getenv("HOOD_GEMINI_FALLBACK_MODELS", "gemini-3.5-flash-lite")
         out = [primary]
         for name in (m.strip() for m in raw.split(",")):
-            if name and name != primary and all(c.isalnum() or c in ".-_" for c in name):
+            if name and name != primary and _valid_model(name) and name not in out:
                 out.append(name)
         return out
 
@@ -201,20 +230,17 @@ class GeminiProviderAdapter(BaseModelProvider):
             raise ProviderError(f"Gemini stopped with finishReason={finish}")
         if not text_result.strip():
             raise ProviderError("Gemini response contained no text")
-        usage_meta = data.get("usageMetadata", {})
-        prompt_tokens = int(usage_meta.get("promptTokenCount", 0) or 0)
-        # Thinking tokens are billed as output tokens.
-        completion_tokens = int(usage_meta.get("candidatesTokenCount", 0) or 0) + \
-            int(usage_meta.get("thoughtsTokenCount", 0) or 0)
+        # Thinking tokens are billed as output tokens; priced by the router, not here.
+        usage, audio_tokens = usage_from_metadata(data.get("usageMetadata", {}))
         return ModelResponse(
             text=text_result,
             provider=self.provider_name,
             model_name=data.get("modelVersion") or model_name,
-            usage=ModelUsage(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
-                             total_tokens=prompt_tokens + completion_tokens,
-                             estimated_cost_usd=0.0),  # priced by the router, not here
+            usage=usage,
             latency_ms=elapsed_ms,
             is_mock=False,
             is_fallback=is_fallback,
             truncated=truncated,
+            requested_model=model_name,
+            audio_prompt_tokens=audio_tokens,
         )

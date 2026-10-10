@@ -30,6 +30,16 @@ PROFILES = {
 }
 
 
+def pytest_configure(config):
+    """Session-wide isolation, before any fixture runs: module- and session-scoped fixtures run
+    before the per-test data dir below, and since security batch 1 every relative store resolves
+    under HOOD_DATA_DIR (default ~/.hood). Without this they would write into the real ~/.hood."""
+    import tempfile
+    if os.environ.get("HOOD_TEST_KEEP_DATA_DIR") != "1":
+        os.environ["HOOD_DATA_DIR"] = tempfile.mkdtemp(prefix="hood-test-session-")
+    os.environ["HOOD_SKIP_LEGACY_MIGRATION"] = "1"
+
+
 def pytest_collection_modifyitems(config, items):
     for item in items:
         for marker, (env, reason) in PROFILES.items():

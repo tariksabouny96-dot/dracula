@@ -101,18 +101,23 @@ Listening (speech-to-text) stays on Gemini. Removing the key switches back to Ge
 A production image and reverse-proxy topology ship in the repo (`Dockerfile`,
 `docker-compose.yml`, `deploy/Caddyfile`). HOOD still binds `127.0.0.1` inside
 its container; Caddy shares that network namespace (`network_mode: service:hood`)
-and terminates TLS for the public hostname, so the loopback-only security model
-and the loopback-only first-run setup are preserved.
+and terminates TLS for the public hostname. Because Caddy reaches HOOD over loopback too, HOOD treats
+every request carrying proxy headers as remote (`HOOD_TRUSTED_PROXY=1`): no first-run setup and no
+anonymous emergency stop through the proxy, and per-client login limits use the address Caddy adds.
+**Do not expose this stack to the internet before the security GO** (see the batch-1 report); use a
+VPN or SSH tunnel meanwhile.
 
 ```bash
 export HOOD_PUBLIC_HOST=hood.example.com      # the TLS hostname Caddy serves
-export HOOD_GEMINI_CREDENTIAL=proxy           # or inject provider keys/pricing
+export GEMINI_API_KEY=...                     # or save the key later in Settings > Model provider
+export HOOD_MODEL_PRICING=/path/prices.json   # a price for every model HOOD calls (or Settings)
 docker compose up -d --build                  # builds hood:latest, starts hood + caddy
-# First-run owner setup must come from loopback (do it inside the container):
-docker compose exec hood curl -fsS -X POST -H "Host: 127.0.0.1:8990" \
-    -H "Content-Type: application/json" http://127.0.0.1:8990/api/auth/init \
-    -d '{"username":"zak","display_name":"Zak","password":"<chosen-password>"}'
+# First-run owner setup, from the server's terminal only:
+docker compose exec -it hood python hood_cli.py init-owner
 ```
+Spend (daily/monthly caps and every call) is recorded in `<data>/spend_ledger.sqlite3`, so a restart
+does not reset the caps. Prices: `config/model_pricing.free-tier.json` for a free key,
+`config/model_pricing.paid.example.json` (check against Google's price page) for a billed key.
 
 Notes:
 - The image healthcheck polls `/api/auth/status` over loopback; `docker ps` shows

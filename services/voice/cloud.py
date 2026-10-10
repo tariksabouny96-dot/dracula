@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from packages.contracts import ModelUsage, ProviderName
+from services.model_gateway.gemini_usage import price_note, usage_from_metadata
 
 from . import elevenlabs as eleven
 
@@ -164,7 +165,7 @@ class GeminiVoice:
 
     def _post(self, g, model: str, body: Dict[str, Any], est_in: int, est_out: int, price) -> Dict[str, Any]:
         cc = self.router.cost_controller
-        estimate = est_in / 1000.0 * price.input_per_1k_usd + est_out / 1000.0 * price.output_per_1k_usd
+        estimate = price.cost(est_in, est_out, est_in)   # input may be audio: reserve at the dearer rate
         reservation = cc.reserve(None, estimate)
         headers = {"Content-Type": "application/json"}
         key = g._get_api_key()
@@ -193,17 +194,14 @@ class GeminiVoice:
             cc.settle(reservation, ModelUsage(), cost_measured=False, provider="gemini", model=model)
             self.last_error = last
             raise RuntimeError(f"Voice call failed ({last})")
-        meta = data.get("usageMetadata") or {}
-        usage = ModelUsage(prompt_tokens=int(meta.get("promptTokenCount", 0)),
-                           completion_tokens=int(meta.get("candidatesTokenCount", 0)),
-                           total_tokens=int(meta.get("totalTokenCount", 0)))
+        # Thinking tokens billed as output, audio input at its own rate (services/model_gateway/gemini_usage.py).
+        usage, audio_tokens = usage_from_metadata(data.get("usageMetadata") or {})
         measured = usage.total_tokens > 0
         if measured:
-            usage.estimated_cost_usd = (usage.prompt_tokens / 1000.0 * price.input_per_1k_usd +
-                                        usage.completion_tokens / 1000.0 * price.output_per_1k_usd)
+            usage.estimated_cost_usd = price.cost(usage.prompt_tokens, usage.completion_tokens, audio_tokens)
         cc.settle(reservation, usage, cost_measured=measured, provider="gemini", model=model,
                   latency_ms=int((time.monotonic() - started) * 1000),
-                  price_source=f"{price.source} ({price.as_of})")
+                  price_source=price_note(price, audio_tokens))
         self.last_error = None
         return data
 

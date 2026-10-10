@@ -27,8 +27,11 @@ services:
       # Caddy is the only proxy in front of HOOD: believe the client address it adds
       # (per-client login limits), and never treat proxied requests as local.
       HOOD_TRUSTED_PROXY: "1"
-      # Provider + secrets come from the host environment / secret manager.
-      HOOD_GEMINI_CREDENTIAL: "${HOOD_GEMINI_CREDENTIAL:-}"
+      # Provider + secrets come from the host environment / secret manager. The Gemini key can also
+      # be saved in Settings > Model provider (encrypted vault on the /data volume). The former
+      # HOOD_GEMINI_CREDENTIAL=proxy setting only works behind a key-injecting egress proxy (a
+      # development cloud), so a production container used to send every request with no key.
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
       HOOD_MODEL_PRICING: "${HOOD_MODEL_PRICING:-}"
       HOOD_VAULT_KEY: "${HOOD_VAULT_KEY:-}"
       HOOD_RECEIPT_KEY: "${HOOD_RECEIPT_KEY:-}"

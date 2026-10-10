@@ -1,0 +1,23 @@
+{
+  "_comment": "EXAMPLE for a billed (paid tier) Gemini key. Prices from ai.google.dev/gemini-api/docs/pricing as read on 2026-10-10 (page updated 2026-10-09), USD per 1,000 tokens. VERIFY against the live page before use: Google announced that the gemini-3.8 prices double on 2027-01-01. Output prices include thinking tokens. Copy to your own file and point HOOD_MODEL_PRICING at it, or enter prices in Settings > Model provider.",
+  "gemini": {
+    "gemini-3.8-flash": {
+      "input_per_1k_usd": 0.00075,
+      "output_per_1k_usd": 0.00375,
+      "as_of": "2026-10-09",
+      "source": "ai.google.dev/gemini-api/docs/pricing (verify)"
+    },
+    "gemini-3.5-flash-lite": {
+      "input_per_1k_usd": 0.0003,
+      "output_per_1k_usd": 0.0025,
+      "as_of": "2026-10-09",
+      "source": "ai.google.dev/gemini-api/docs/pricing (verify)"
+    },
+    "gemini-3.1-pro-preview": {
+      "input_per_1k_usd": 0.002,
+      "output_per_1k_usd": 0.012,
+      "as_of": "2026-10-09",
+      "source": "ai.google.dev/gemini-api/docs/pricing (verify; <=200k-token prompts)"
+    }
+  }
+}

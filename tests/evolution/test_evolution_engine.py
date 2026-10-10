@@ -63,7 +63,7 @@ def test_model_level_registry_and_lineage(evolution_workspace):
     registry = evolution_workspace.registry
 
     # Level 1 External
-    l1 = registry.get_model("gemini-2.5-flash")
+    l1 = registry.get_model("gemini-3.8-flash")
     assert l1 is not None
     assert l1.level == ModelLevel.LEVEL_1_EXTERNAL
     assert l1.promotion_state == PromotionState.PRIMARY

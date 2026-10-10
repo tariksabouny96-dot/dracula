@@ -30,7 +30,7 @@ from services.auth.auth_service import AuthenticationService
 
 
 @pytest.fixture(scope="module")
-def cinematic_server():
+def cinematic_server(tmp_path_factory):
     cfg = load_config(Path("hood.config.yaml"))
     audit = AuditService(Path(cfg.storage.sqlite_path))
     memory = MemoryService(Path(cfg.storage.sqlite_path))
@@ -42,14 +42,13 @@ def cinematic_server():
     interaction = InteractionService(commander, approvals, memory, voice, cfg)
     emergency = EmergencyStopController(tools, audit)
     
-    test_db = Path("artifacts/test_auth_cinematic.db")
-    if test_db.exists():
-        test_db.unlink()
+    isolated = tmp_path_factory.mktemp("cinematic")       # stores resolve under HOOD_DATA_DIR now
+    test_db = isolated / "test_auth_cinematic.db"
     auth = AuthenticationService(db_path=test_db)
     auth.initialize_root_owner(username="zack", display_name="Zakaria", password="TestMasterPass123!")
     sess = auth.authenticate("zack", "TestMasterPass123!")
 
-    sentinel = SecuritySentinelService(registry_path=Path("artifacts/test_sentinel_cinematic.json"))
+    sentinel = SecuritySentinelService(registry_path=isolated / "test_sentinel_cinematic.json")
 
     # Bind port 8997 for isolated test
     server = JarvisServer(

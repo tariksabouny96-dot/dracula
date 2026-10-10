@@ -7,11 +7,17 @@ without an entry is *unknown cost* and the router refuses to call it.
 Configure with the ``HOOD_MODEL_PRICING`` environment variable pointing at a
 JSON file shaped like::
 
-    {"gemini": {"gemini-3.8-flash": {"input_per_1k_usd": 0.0003,
-                                      "output_per_1k_usd": 0.0025,
-                                      "as_of": "2026-10-01", "source": "provider price page"}}}
+    {"gemini": {"gemini-3.8-flash": {"input_per_1k_usd": 0.00075,
+                                      "output_per_1k_usd": 0.00375,
+                                      "as_of": "2026-10-09", "source": "ai.google.dev/gemini-api/docs/pricing"}}}
 
-(``config/model_pricing.free-tier.json`` is a ready file for a free-tier key.)
+Optional ``audio_input_per_1k_usd``: Google bills audio input (voice transcription) at a higher
+rate than text; without it audio is priced at the text input rate and the call record says so.
+Output prices include "thinking" tokens, which Google bills as output.
+
+(``config/model_pricing.free-tier.json`` is a ready file for a free-tier key;
+``config/model_pricing.paid.example.json`` lists published prices for a billed key: check them
+against the price page before use.)
 """
 from __future__ import annotations
 
@@ -31,6 +37,15 @@ class ModelPrice:
     output_per_1k_usd: float
     as_of: str
     source: str
+    audio_input_per_1k_usd: Optional[float] = None
+
+    def cost(self, prompt_tokens: int, completion_tokens: int, audio_prompt_tokens: int = 0) -> float:
+        """USD for a call: audio input at its own rate when known, everything else at text rates."""
+        audio = min(max(audio_prompt_tokens, 0), max(prompt_tokens, 0))
+        audio_rate = self.audio_input_per_1k_usd if self.audio_input_per_1k_usd is not None \
+            else self.input_per_1k_usd
+        return ((prompt_tokens - audio) / 1000.0 * self.input_per_1k_usd + audio / 1000.0 * audio_rate
+                + completion_tokens / 1000.0 * self.output_per_1k_usd)
 
 
 def settings_pricing_file() -> Path:
@@ -58,9 +73,11 @@ def load_price_table(path: Optional[str] = None) -> Dict[str, Dict[str, ModelPri
         if not isinstance(models, dict):
             raise ValueError(f"Pricing for provider {provider!r} must be an object")
         for model, entry in models.items():
+            audio = entry.get("audio_input_per_1k_usd")
             price = ModelPrice(float(entry["input_per_1k_usd"]), float(entry["output_per_1k_usd"]),
-                               str(entry.get("as_of", "unknown")), str(entry.get("source", "unspecified")))
-            if price.input_per_1k_usd < 0 or price.output_per_1k_usd < 0:
+                               str(entry.get("as_of", "unknown")), str(entry.get("source", "unspecified")),
+                               None if audio is None else float(audio))
+            if price.input_per_1k_usd < 0 or price.output_per_1k_usd < 0 or (audio is not None and float(audio) < 0):
                 raise ValueError(f"Negative price for {provider}/{model}")
             table.setdefault(provider, {})[model] = price
     return table

@@ -254,6 +254,10 @@ class ModelResponse(BaseModel):
     is_mock: bool = False
     is_fallback: bool = False
     truncated: bool = False
+    # The configured model id that answered (the price-table key); model_name may be the
+    # provider's version string. Lets the router bill the model actually used.
+    requested_model: Optional[str] = None
+    audio_prompt_tokens: int = 0
 
 
 class TaskNode(BaseModel):

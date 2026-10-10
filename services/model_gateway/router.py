@@ -19,6 +19,7 @@ from .gemini_adapter import GeminiProviderAdapter
 from .openai_adapter import OpenAIProviderAdapter
 from .local_adapter import LocalProviderAdapter
 from .cost_controller import CostController, BudgetExceededError
+from .gemini_usage import price_note
 from packages.config.pricing import load_price_table, estimate_tokens, NON_BILLING_PROVIDERS, ModelPrice
 
 
@@ -33,8 +34,11 @@ class ModelRouter:
     }
 
     def __init__(self, config: Optional[SystemConfig] = None, cost_controller: Optional[CostController] = None,
-                 price_table: Optional[Dict[str, Dict[str, ModelPrice]]] = None, firewall: Optional[object] = None):
+                 price_table: Optional[Dict[str, Dict[str, ModelPrice]]] = None, firewall: Optional[object] = None,
+                 vault: Optional[object] = None):
         self.config = config or SystemConfig()
+        # The runtime's vault: the key saved in Settings and the one the adapter reads are the same.
+        self.vault = vault
         self.cost_controller = cost_controller or CostController(self.config.budgets)
         self.price_table = price_table if price_table is not None else load_price_table()
         # Optional egress firewall. When set, a live provider call is refused
@@ -76,7 +80,13 @@ class ModelRouter:
             enabled=mock_cfg.enabled if mock_cfg else True
         )
         self.providers[ProviderName.GEMINI] = GeminiProviderAdapter(
-            enabled=gemini_cfg.enabled if gemini_cfg else True
+            vault=self.vault,
+            enabled=gemini_cfg.enabled if gemini_cfg else True,
+            api_key_secret_ref=(gemini_cfg.api_key_secret_ref if gemini_cfg else None) or "SECRET://gemini/api_key",
+            timeout_sec=max(60, int(gemini_cfg.timeout_sec)) if gemini_cfg else 180,
+            models=({ModelClass.FAST: gemini_cfg.default_fast_model,
+                     ModelClass.STANDARD: gemini_cfg.default_standard_model,
+                     ModelClass.DEEP: gemini_cfg.default_deep_model} if gemini_cfg else None),
         )
         self.providers[ProviderName.OPENAI] = OpenAIProviderAdapter(
             enabled=openai_cfg.enabled if openai_cfg else False
@@ -243,17 +253,23 @@ class ModelRouter:
                 resp.is_fallback = True
 
             measured = True
+            billed = price
             if price is not None:
+                # Bill the model that actually answered (a fallback is often cheaper); the dearest
+                # candidate's price was only for the pre-flight reservation.
+                table = self.price_table.get(provider_name.value, {})
+                billed = table.get(resp.requested_model or "") or table.get(resp.model_name or "") or price
                 if resp.usage.total_tokens > 0:
-                    resp.usage.estimated_cost_usd = (
-                        resp.usage.prompt_tokens / 1000.0 * price.input_per_1k_usd +
-                        resp.usage.completion_tokens / 1000.0 * price.output_per_1k_usd)
+                    resp.usage.estimated_cost_usd = billed.cost(resp.usage.prompt_tokens, resp.usage.completion_tokens,
+                                                                getattr(resp, "audio_prompt_tokens", 0))
                 else:
                     measured = False  # provider omitted usage: charge the full reservation
             self.cost_controller.settle(
                 reservation, resp.usage, cost_measured=measured, provider=resp.provider.value,
-                model=resp.model_name, latency_ms=resp.latency_ms, is_fallback=resp.is_fallback,
-                price_source=(f"{price.source} ({price.as_of})" if price else "non-billing provider"))
+                model=resp.requested_model or resp.model_name, latency_ms=resp.latency_ms,
+                is_fallback=resp.is_fallback,
+                price_source=(price_note(billed, getattr(resp, "audio_prompt_tokens", 0)) if billed
+                              else "non-billing provider"))
             if not resp.is_mock:
                 self._observe(provider_name, True, model=resp.model_name)
             return resp

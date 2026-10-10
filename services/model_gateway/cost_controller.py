@@ -4,8 +4,11 @@ Enforces per-task, daily, and monthly spend thresholds and usage accounting.
 Governed by Master System Specification Section 8.5 & Build Instructions Section 10.
 """
 
+import contextlib
+import sqlite3
 import threading
 import uuid
+from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
 from packages.config import BudgetSettings
@@ -18,7 +21,13 @@ class BudgetExceededError(Exception):
 
 
 class CostController:
-    def __init__(self, budgets: Optional[BudgetSettings] = None):
+    """Spend caps and usage accounting.
+
+    With ``ledger_path`` every settled call is written to a SQLite ledger and today's/this month's
+    spend are reloaded from it at start-up: restarting HOOD no longer resets the daily and monthly
+    caps to zero (security batch 1), and the usage history survives for the owner to check."""
+
+    def __init__(self, budgets: Optional[BudgetSettings] = None, ledger_path: Optional[Path] = None):
         self.budgets = budgets or BudgetSettings()
         self.task_spend: Dict[str, float] = {}
         self.task_calls: Dict[str, int] = {}
@@ -32,6 +41,47 @@ class CostController:
         self._lock = threading.RLock()
         # reservation_id -> {task_id, amount, is_deep}
         self._reservations: Dict[str, Dict[str, Any]] = {}
+        self.ledger_path = Path(ledger_path) if ledger_path else None
+        if self.ledger_path is not None:
+            self._open_ledger()
+
+    # ------------------------------------------------------------------ durable ledger
+    @contextlib.contextmanager
+    def _ledger(self):
+        db = sqlite3.connect(str(self.ledger_path), timeout=30)
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
+
+    def _open_ledger(self) -> None:
+        self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._ledger() as db:
+            db.execute("""CREATE TABLE IF NOT EXISTS calls (
+                ts TEXT NOT NULL, day TEXT NOT NULL, month TEXT NOT NULL, task_id TEXT, provider TEXT,
+                model TEXT, prompt_tokens INTEGER, completion_tokens INTEGER, total_tokens INTEGER,
+                cost_usd REAL NOT NULL, reserved_usd REAL, cost_measured INTEGER, price_source TEXT,
+                is_fallback INTEGER)""")
+            today = self._last_reset_date
+            month = f"{today.year:04d}-{today.month:02d}"
+            self.daily_spend_usd = db.execute("SELECT COALESCE(SUM(cost_usd),0) FROM calls WHERE day=?",
+                                              (today.isoformat(),)).fetchone()[0]
+            self.monthly_spend_usd = db.execute("SELECT COALESCE(SUM(cost_usd),0) FROM calls WHERE month=?",
+                                                (month,)).fetchone()[0]
+            self.total_tokens_consumed = db.execute("SELECT COALESCE(SUM(total_tokens),0) FROM calls").fetchone()[0]
+
+    def _persist(self, record: Dict[str, Any]) -> None:
+        if self.ledger_path is None:
+            return
+        now = datetime.now(timezone.utc)
+        with self._ledger() as db:
+            db.execute("INSERT INTO calls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                       (record["timestamp"], now.date().isoformat(), f"{now.year:04d}-{now.month:02d}",
+                        record.get("task_id"), record.get("provider"), record.get("model"),
+                        record.get("prompt_tokens"), record.get("completion_tokens"), record.get("total_tokens"),
+                        record["cost_usd"], record.get("reserved_usd"), int(bool(record.get("cost_measured", True))),
+                        record.get("price_source"), int(bool(record.get("is_fallback")))))
 
     def _check_and_reset_daily(self):
         current_date = datetime.now(timezone.utc).date()
@@ -107,13 +157,16 @@ class CostController:
             task_id = r["task_id"]
             if task_id:
                 self.task_spend[task_id] = self.task_spend.get(task_id, 0.0) + cost
-            self.call_history.append({
+            record = {
                 "timestamp": datetime.now(timezone.utc).isoformat(), "task_id": task_id,
                 "provider": provider, "model": model, "prompt_tokens": usage.prompt_tokens,
                 "completion_tokens": usage.completion_tokens, "total_tokens": usage.total_tokens,
                 "cost_usd": cost, "reserved_usd": r["amount"], "cost_measured": cost_measured,
                 "price_source": price_source, "is_free_tier": False, "billing_verified": False,
-                "latency_ms": latency_ms, "is_deep_model": r["is_deep"], "is_fallback": is_fallback})
+                "latency_ms": latency_ms, "is_deep_model": r["is_deep"], "is_fallback": is_fallback}
+            self.call_history.append(record)
+            del self.call_history[:-1000]          # bounded in memory; the ledger keeps everything
+            self._persist(record)
             return cost
 
     def can_execute(
@@ -188,6 +241,8 @@ class CostController:
             "is_fallback": is_fallback
         }
         self.call_history.append(call_record)
+        del self.call_history[:-1000]
+        self._persist(call_record)
 
         if task_id:
             self.task_spend[task_id] = self.task_spend.get(task_id, 0.0) + cost

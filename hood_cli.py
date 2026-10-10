@@ -140,8 +140,11 @@ class HoodSystemRuntime:
         self.vault = SecretVault(Path(self.config.security.secret_vault_file))
         self.audit_service = AuditService(Path(self.config.storage.sqlite_path))
         self.memory_service = MemoryService(Path(self.config.storage.sqlite_path))
-        self.cost_controller = CostController(self.config.budgets)
-        self.model_router = ModelRouter(self.config, self.cost_controller)
+        # Spend survives restarts (daily/monthly caps), and the adapter uses THIS vault for the key.
+        from packages.config.paths import data_dir as _hood_data_dir
+        self.cost_controller = CostController(self.config.budgets,
+                                              ledger_path=_hood_data_dir() / "spend_ledger.sqlite3")
+        self.model_router = ModelRouter(self.config, self.cost_controller, vault=self.vault)
         self.approval_service = ApprovalService()
         self.browser_service = BrowserService(self.config)
         self.dev_executor = DevelopmentExecutor(
@@ -190,7 +193,10 @@ class HoodSystemRuntime:
         _embedder = None
         if os.environ.get("HOOD_LEARNING_EMBEDDINGS") == "1":
             from services.learning.embeddings import GeminiEmbeddingProvider
-            _embedder = GeminiEmbeddingProvider(firewall=self.firewall)
+            from packages.contracts import ProviderName as _PN
+            _gem = self.model_router.providers[_PN.GEMINI]
+            _embedder = GeminiEmbeddingProvider(firewall=self.firewall, key_source=_gem._get_api_key,
+                                                proxy_source=_gem._proxy_credential, router=self.model_router)
         self.learning = LearningService(
             self.memory_service, approval_service=self.approval_service,
             stop_latch=self.stop_latch, data_dir=self.data_dir / "learning", embedder=_embedder)
