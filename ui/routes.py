@@ -126,4 +126,5 @@ def load_modules() -> List[str]:
 # Feature API modules. Append new modules here (one line each).
 API_MODULES: List[str] = [
     "services.console.api",
+    "services.exports.api",
 ]

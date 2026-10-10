@@ -27,7 +27,7 @@ CAPABILITIES = (
     ("marketing", "Campaign automation", "Business", None, "tab-economic", "No connected mailing or CRM integration"),
     ("calendar", "Calendar and meetings", "Integrations", None, "tab-systems", "Not connected to a calendar service"),
     ("email", "Email operations", "Integrations", None, "tab-systems", "Not connected to a mail provider"),
-    ("artifacts", "File and document exports", "Integrations", None, "tab-systems", "No verified UI-connected PDF/XLSX artifact pipeline"),
+    ("artifacts", "File and document exports", "Integrations", "services/exports/service.py", "tab-systems", "md/html/pdf/docx/xlsx/csv/zip export with independent validation and an owner-scoped registry (single-use download tokens)"),
     ("nodes", "Multi-node runtime", "Infrastructure", "services/nodes/manager.py", "tab-systems", "Node primitives; distributed live cluster unverified"),
     ("economics", "Cost governance", "Business", "services/model_gateway/cost_controller.py", "tab-economic", "Budget-control primitives; real expenditure not attested"),
     ("evolution", "Learning and evolution", "Models", "services/evolution/arena.py", "tab-intelligence", "Shadow evaluation, not automatic model improvement"),

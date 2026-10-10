@@ -69,7 +69,7 @@ def test_every_page_renders_cleanly(stack, viewport):  # noqa: F811
                 page.screenshot(path=str(Path(shots) / f"next-{name.lower()}-{viewport['width']}.png"), full_page=False)
         assert page.evaluate("window.__pwned === undefined"), "server text was executed as HTML"
         browser.close()
-    real = [e for e in errors if "401" not in e and "404" not in e and "503" not in e and "403" not in e]
+    real = [e for e in errors if all(s not in e for s in ("401", "403", "404", "429", "503"))]
     assert not real, real
 
 
@@ -99,7 +99,7 @@ def test_mission_flow_from_new_console(stack):  # noqa: F811
         page.click("#nav [data-page=Command]")
         page.wait_for_selector(".feed div b")
         browser.close()
-    real = [e for e in errors if "401" not in e and "404" not in e and "503" not in e and "403" not in e]
+    real = [e for e in errors if all(s not in e for s in ("401", "403", "404", "429", "503"))]
     assert not real, real
 
 

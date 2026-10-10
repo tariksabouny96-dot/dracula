@@ -1377,6 +1377,11 @@ class JarvisServer:
             else:
                 feature_routes.SERVICES.pop(name, None)
         JarvisUIHandler._agent_runs = {}
+        # Reset the per-user SSE stream counter on every server start so a stream
+        # that was not cleanly torn down in a previous lifecycle cannot leak into
+        # this one and spuriously trip MAX_STREAMS_PER_USER (observed across
+        # in-process test servers that reuse the fixed root-owner user id).
+        JarvisUIHandler._streams_per_user = {}
         if engine is not None:
             engine.recover()  # reconcile work interrupted by a previous crash before serving
         JarvisUIHandler.auth_service = self.auth_service

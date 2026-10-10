@@ -578,23 +578,30 @@
       "priority": "P1",
       "owner": "Hood owner (Zak)",
       "source_paths": [
+        "services/exports/",
+        "services/artifacts/registry.py",
         "services/agents/engine.py"
       ],
       "implementation_status": "IMPLEMENTED_UNVERIFIED",
       "local_evidence_level": "VERIFIED_LOCAL",
       "required_level": "VERIFIED_STAGING",
       "test_ids": [
+        "tests/exports/test_exports_unit.py",
+        "tests/exports/test_exports_http.py",
         "tests/agents/test_agent_engine.py::test_tampered_receipt_or_artifact_withholds_download",
         "tests/agents/test_agent_http.py::test_owner_http_journey_to_verified_download"
       ],
-      "negative_tests": [],
+      "negative_tests": [
+        "tests/exports/test_exports_unit.py::test_registry_token_binding_and_expiry",
+        "tests/exports/test_exports_http.py::test_full_export_download_flow_and_cross_tenant"
+      ],
       "execution_environment": "local + staging",
       "test_command": "python scripts/preproduction_gate.py",
       "blockers": [
-        "Only ZIP code artifacts are produced; PDF/DOCX/XLSX exporters not implemented"
+        "No staging environment: staging-level (VERIFIED_STAGING) evidence not yet produced"
       ],
       "independent_reviewer": null,
-      "decision_reason": "Hashed, receipt-checked ZIP download verified."
+      "decision_reason": "Full md/html/pdf/docx/xlsx/csv/zip export pipeline with independent validators and an owner-scoped artifact registry (hashed files, single-use HMAC download tokens, cross-tenant isolation) verified locally over HTTP; staging run still required for acceptance."
     },
     {
       "id": "nodes",
