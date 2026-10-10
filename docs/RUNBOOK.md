@@ -41,6 +41,7 @@ account; if billing is enabled on your Google project, put the real prices in it
 |---|---|---|
 | `HOOD cannot start: required packages are missing` | requirements not installed in *this* Python | run the `pip install` command it prints (activate the venv first) |
 | `pip` error `Cannot uninstall PyYAML ... installed by debian` | installing into the system Python | use the venv from the install steps |
+| Windows: `.venv\Scripts\activate` fails with "running scripts is disabled" / "l'exécution de scripts est désactivée" (PSSecurityException) | PowerShell's default execution policy blocks `Activate.ps1` | run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` (this window only), then activate again; or skip activation and call `.\.venv\Scripts\python.exe` directly |
 | `status` shows `gemini: CONFIGURED_PENDING_KEY` | no API key reached Hood | set `GEMINI_API_KEY` in `.env` (repo root) or the environment |
 | `status` shows `gemini: KEY_SET_BUT_NO_PRICING` / "refusing paid call with unknown cost" | `HOOD_MODEL_PRICING` not set, or the model isn't in that file | set `HOOD_MODEL_PRICING=config/model_pricing.free-tier.json` |
 | Gemini HTTP 404 | a retired model was configured (e.g. `gemini-2.5-flash`) | leave `HOOD_GEMINI_*_MODEL` blank to use the defaults |
