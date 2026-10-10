@@ -158,7 +158,8 @@
       const username = $('authUser').value.trim();
       const password = $('authPass').value;
       if (mode === 'setup') {
-        const r = await api.post('/api/auth/init', { username, password, display_name: $('authDisplay').value || username });
+        const r = await api.post('/api/auth/init', { username, password, display_name: $('authDisplay').value || username,
+          setup_code: $('authSetupCode').value.trim() });
         if (!r.ok) { err.textContent = r.error; err.classList.remove('hidden'); return; }
         modal('Recovery key (shown once)', h('div', {}, h('p', {}, 'Write this down and keep it offline. It resets the owner password.'),
           h('p', { class: 'mono' }, r.data.one_time_recovery_key)));

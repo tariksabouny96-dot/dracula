@@ -27,6 +27,7 @@ from services.sentinel.sentinel_service import SecuritySentinelService
 from services.x_control.x_session_manager import XSessionManager, XOperationalState
 from services.agents.engine import MissionConflict as AgentMissionConflict, MissionBudgetExceeded
 from packages.security import EmergencyStopActive
+from packages.security.client import classify as classify_client, host_matches
 from ui import routes as feature_routes
 
 AGENT_MISSION_ID = re.compile(r"agm_[0-9a-f]{32}")
@@ -71,13 +72,24 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
     allowed_hosts: Optional[set] = None
 
     def _host_allowed(self):
-        """Block DNS-rebinding: only loopback host names (plus explicit config) may reach the API."""
+        """Block DNS-rebinding: only loopback host names (plus explicit config) may reach the API.
+
+        Configured public names (HOOD_ALLOWED_HOSTS) match with or without the default port: the
+        browser sends ``Host: name`` through the TLS proxy, the documented setting is ``name:443``."""
         host = (self.headers.get("Host") or "").strip().lower()
         port = self.server.server_address[1] if getattr(self, "server", None) else None
-        allowed = set(self.allowed_hosts or ())
-        if port is not None:
-            allowed |= {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
-        return host in allowed
+        if port is not None and host in {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}:
+            return True
+        return any(host_matches(host, entry) for entry in (self.allowed_hosts or ()))
+
+    def _client(self):
+        """Direct local client, or a client behind HOOD's reverse proxy (see packages/security/client.py)."""
+        peer = self.client_address[0] if getattr(self, "client_address", None) else "127.0.0.1"
+        return classify_client(str(peer), self.headers)
+
+    def _session_cookie(self, token: str) -> str:
+        secure = "; Secure" if self._client().secure else ""     # HTTPS at the proxy: never send it over HTTP
+        return f"hood_session={token}; Path=/; HttpOnly; SameSite=Strict{secure}"
 
     def _csrf_ok(self, session):
         """Cookie-authenticated state changes must echo the per-session CSRF token.
@@ -105,7 +117,8 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             return True
         target = urlsplit(origin)
         host = self.headers.get("Host", "")
-        return target.scheme in ("http", "https") and target.netloc == host
+        # Same host; "https://name" and Host "name:443" (default port written or not) match.
+        return target.scheme in ("http", "https") and bool(target.netloc) and host_matches(host, target.netloc)
 
     def _require_permission(self, session, permission):
         if not session:
@@ -159,6 +172,8 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             curr_session = self._get_authenticated_session()
             self._send_json({
                 "initialized": is_init,
+                # First run needs the one-time code printed where HOOD started (never sent here).
+                "setup_code_required": not is_init,
                 "authenticated": curr_session is not None,
                 "username": curr_session.username if curr_session else None,
                 "role": curr_session.role.value if curr_session else None,
@@ -171,10 +186,26 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
                 self._send_json({"error": "Auth service unavailable"}, status=503)
                 return
 
-            # Security requirement: bind initial setup to trusted local process
-            client_ip = self.client_address[0] if hasattr(self, "client_address") else "127.0.0.1"
-            if client_ip not in ("127.0.0.1", "::1", "localhost"):
-                self._send_json({"error": "Forbidden: First-run setup can only be executed locally from the host machine."}, status=403)
+            # First-run setup: only from this machine directly (never through a proxy, where every
+            # internet client also looks like loopback), and only with the one-time setup code shown
+            # in the window where HOOD started.
+            if self.auth_service.is_initialized():
+                self._send_json({"error": "HOOD is already initialized with a Root Owner."}, status=400)
+                return
+            client = self._client()
+            if not client.direct_local:
+                self._send_json({"error": "Forbidden: First-run setup can only be executed locally from the host machine "
+                                          "(not through a proxy or the network)."}, status=403)
+                return
+            try:
+                code_ok = self.auth_service.check_setup_code(payload.get("setup_code"), ip_address=client.ip)
+            except ValueError as ve:
+                self._send_json({"error": str(ve)}, status=429)
+                return
+            if not code_ok:
+                self._send_json({"error": "Setup code missing or wrong. It is shown in the window where HOOD started "
+                                          "(also saved in " + str(self.auth_service.setup_code_path()) + ")."},
+                                status=403)
                 return
 
             try:
@@ -203,7 +234,7 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
                 self._send_json({"error": "Auth service unavailable"}, status=503)
                 return
 
-            client_ip = self.client_address[0] if hasattr(self, "client_address") else "127.0.0.1"
+            client_ip = self._client().ip      # behind the proxy: the real client, not the proxy's 127.0.0.1
             user_agent = self.headers.get("User-Agent", "HOOD Web Client")
 
             try:
@@ -224,7 +255,7 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
-            self.send_header("Set-Cookie", f"hood_session={session.session_token}; Path=/; HttpOnly; SameSite=Strict")
+            self.send_header("Set-Cookie", self._session_cookie(session.session_token))
             self.end_headers()
             self.wfile.write(json.dumps({
                 "status": "AUTHENTICATED",
@@ -258,7 +289,7 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
                 self._send_json({"error": "Auth service unavailable"}, status=503)
                 return
 
-            client_ip = self.client_address[0] if hasattr(self, "client_address") else "127.0.0.1"
+            client_ip = self._client().ip
             try:
                 success = self.auth_service.recover_root_owner_password(
                     one_time_recovery_key=payload.get("recovery_key", ""),
@@ -276,12 +307,17 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
 
         # Emergency Stop safety path is ALWAYS reachable without session blockage
         elif self.path == "/api/emergency_stop":
-            # Deliberately reachable without a session (safety direction only: it can stop,
-            # never start, work). Host, Origin and JSON checks above still apply.
+            # Reachable without a session from this machine (safety direction only: it can stop,
+            # never start, work). Through a proxy it needs a signed-in user: otherwise anyone on the
+            # internet could halt HOOD at will. Host, Origin and JSON checks above still apply.
+            stopper = self._get_authenticated_session()
+            if not stopper and not self._client().direct_local:
+                self._send_json({"error": "Sign in to use the emergency stop remotely (on the HOOD machine itself "
+                                          "it works without signing in)."}, status=401)
+                return
             if self.emergency_stop:
                 if self.x_session_manager:
                     self.x_session_manager.stand_down(reason="EMERGENCY_STOP", actor="SYSTEM")
-                stopper = self._get_authenticated_session()
                 res = self.emergency_stop.trigger_stop(
                     "Emergency Stop from HOOD Interactive Surface by "
                     + (stopper.username if stopper else "unauthenticated loopback client"))
@@ -309,7 +345,7 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             if self._dispatch_feature_route("POST", curr_session, payload):
                 return
 
-            client_ip = self.client_address[0] if hasattr(self, "client_address") else "127.0.0.1"
+            client_ip = self._client().ip
 
             if self.path == "/api/emergency_stop/reset":
                 if curr_session.role != UserRole.ROOT_OWNER:
@@ -676,6 +712,7 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             self._send_json({
                 "enabled": auth_enabled,
                 "initialized": is_init,
+                "setup_code_required": not is_init,
                 # Without an identity provider nobody is authenticated; operational APIs return 503.
                 "authenticated": curr_session is not None,
                 "username": curr_session.username if curr_session else None,

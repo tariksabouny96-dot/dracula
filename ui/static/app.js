@@ -920,7 +920,8 @@ if (setupForm) {
       const res = await fetch('/api/auth/init', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, display_name: displayName, password })
+        body: JSON.stringify({ username, display_name: displayName, password,
+          setup_code: (document.getElementById('setup-code') || { value: '' }).value.trim() })
       });
       const data = await res.json();
       if (res.ok && data.status === 'INITIALIZED') {

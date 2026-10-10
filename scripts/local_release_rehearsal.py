@@ -85,8 +85,12 @@ def main() -> int:
             checks["static_index"] = "PASS" if call(base, "/")[0] == 200 else "FAIL"
             checks["rebinding_refused"] = "PASS" if call(base, "/api/auth/status", host="evil.example")[0] == 421 else "FAIL"
             checks["unauthenticated_api_refused"] = "PASS" if call(base, "/api/telemetry")[0] == 503 else "FAIL"
+            code_file = data / "owner_setup_code.txt"          # printed at start, saved in the data dir
+            setup_code = code_file.read_text().strip() if code_file.is_file() else ""
+            checks["setup_needs_code"] = "PASS" if call(base, "/api/auth/init", {
+                "username": "owner", "display_name": "Owner", "password": "RehearsalPassword123!"})[0] == 403 else "FAIL"
             ok = call(base, "/api/auth/init", {"username": "owner", "display_name": "Owner",
-                                               "password": "RehearsalPassword123!"})[0] == 200
+                                               "password": "RehearsalPassword123!", "setup_code": setup_code})[0] == 200
             checks["owner_setup"] = "PASS" if ok else "FAIL"
             status, body, headers = call(base, "/api/auth/login", {"username": "owner", "password": "RehearsalPassword123!"})
             cookie = headers.get("Set-Cookie", "").split(";")[0]

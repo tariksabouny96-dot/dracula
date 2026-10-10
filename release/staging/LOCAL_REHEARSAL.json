@@ -1,7 +1,7 @@
 {
   "kind": "LOCAL_REHEARSAL_NOT_STAGING",
-  "commit": "b35609c70ea31d82e8534b3b7970ac950ba1aca6",
-  "generated_at": "2026-10-09T22:51:43.271045+00:00",
+  "commit": "9d2a5a7651daf5d35b1dd9cfa475392f4e3a3c0b",
+  "generated_at": "2026-10-10T18:18:59.643682+00:00",
   "host": "linux",
   "checks": {
     "clean_export": "PASS",
@@ -9,7 +9,8 @@
     "static_index": "PASS",
     "rebinding_refused": "PASS",
     "unauthenticated_api_refused": "PASS",
-    "owner_setup": "PASS",
+    "setup_needs_code": "FAIL",
+    "owner_setup": "FAIL",
     "login": "PASS",
     "csrf_enforced": "PASS",
     "chat": "PASS",
@@ -21,7 +22,7 @@
     "restored_instance_login": "PASS",
     "restored_chat_history": "PASS"
   },
-  "overall": "PASS",
+  "overall": "FAIL",
   "not_covered": [
     "isolated staging host",
     "TLS/reverse proxy",

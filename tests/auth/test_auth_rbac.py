@@ -210,7 +210,8 @@ def test_server_http_auth_and_emergency_stop_lifecycle(temp_auth_db):
         init_payload = json.dumps({
             "username": "zack",
             "display_name": "Zakaria",
-            "password": "MasterOwnerPassword123!"
+            "password": "MasterOwnerPassword123!",
+            "setup_code": service.setup_code(),        # printed where HOOD started
         }).encode()
         req = urllib.request.Request(f"{base_url}/api/auth/init", data=init_payload, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req) as resp:
@@ -444,7 +445,8 @@ def test_server_security_endpoints_http(temp_auth_db):
         init_payload = json.dumps({
             "username": "zack",
             "display_name": "Zakaria",
-            "password": "MasterOwnerPassword123!"
+            "password": "MasterOwnerPassword123!",
+            "setup_code": service.setup_code(),        # printed where HOOD started
         }).encode()
         req = urllib.request.Request(f"{base_url}/api/auth/init", data=init_payload, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req) as resp:

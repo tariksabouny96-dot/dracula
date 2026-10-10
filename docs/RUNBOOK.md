@@ -26,7 +26,10 @@ ask for a restart the first time, if WSL isn't installed yet: see [WSL2.md](WSL2
   (**Settings › Agents › Run on my PC**, no isolation, asked per mission).
 - **WordPress missions**: PHP and WordPress are installed inside the sandbox (one approval covers both).
 
-First run: open http://127.0.0.1:8999, create the Root Owner, store the one-time recovery key offline.
+First run: open http://127.0.0.1:8999 on the same PC and create the Root Owner with the **one-time setup
+code** printed in the window where HOOD started (also saved as `owner_setup_code.txt` in HOOD's data
+folder). Store the recovery key you receive offline. Setup is refused from any other machine or through a
+proxy. On a server: `docker compose exec -it hood python hood_cli.py init-owner`.
 
 ## Connect the model (needed for live chat, agents and voice)
 

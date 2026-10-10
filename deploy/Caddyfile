@@ -17,5 +17,12 @@
 	# Host header so HOOD's allowlist and CSRF origin checks line up.
 	reverse_proxy 127.0.0.1:8990 {
 		header_up Host {host}
+		# Overwrite (never append to) what the client sent: HOOD rate-limits per client
+		# address and must never see a forged one. HOOD treats every request carrying
+		# these headers as remote (no first-run setup, no anonymous emergency stop).
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up -X-Real-IP
+		header_up -Forwarded
 	}
 }

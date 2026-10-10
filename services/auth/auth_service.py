@@ -291,6 +291,61 @@ class AuthenticationService:
             row = conn.execute("SELECT 1 FROM users WHERE role = 'ROOT_OWNER'").fetchone()
             return row is not None
 
+    # ------------------------------------------------------------ first-run setup code
+    # First-run setup needs this one-time code, printed in the window where HOOD starts (and saved
+    # next to the identity database, readable only by HOOD's account). Being "on loopback" is not
+    # proof of being the owner: behind a reverse proxy every internet client is on loopback too.
+    _SETUP_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"     # no 0/O, 1/I: read off a console
+
+    def setup_code_path(self) -> Path:
+        return self.db_path.parent / "owner_setup_code.txt"
+
+    def setup_code(self) -> Optional[str]:
+        """The one-time first-run code (created on demand); None once a Root Owner exists."""
+        path = self.setup_code_path()
+        if self.is_initialized():
+            self._discard_setup_code()
+            return None
+        try:
+            existing = path.read_text(encoding="ascii").strip()
+            if re.fullmatch(r"[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}", existing):
+                return existing
+        except (OSError, UnicodeError):
+            pass
+        raw = "".join(secrets.choice(self._SETUP_ALPHABET) for _ in range(12))
+        code = f"{raw[:4]}-{raw[4:8]}-{raw[8:]}"
+        tmp = path.with_name(path.name + ".tmp")
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="ascii") as fh:
+            fh.write(code + "\n")
+        os.replace(tmp, path)
+        return code
+
+    def check_setup_code(self, supplied: Any, ip_address: Optional[str] = None) -> bool:
+        """Rate-limited, constant-time check of the first-run code."""
+        rate_key = f"setup:{ip_address or 'local'}"
+        is_limited, remaining = self.rate_limiter.is_rate_limited(rate_key)
+        if is_limited:
+            raise ValueError(f"Too many wrong setup codes. Please wait {remaining} seconds.")
+        expected = self.setup_code()
+        given = re.sub(r"[\s-]", "", str(supplied or "")).upper()
+        ok = bool(expected) and hmac.compare_digest(given.encode(), expected.replace("-", "").encode())
+        if not ok:
+            self.rate_limiter.record_failure(rate_key)
+            self._log_access(None, "ROOT_SETUP", "SETUP_CODE_REJECTED", success=False,
+                             details="Wrong or missing first-run setup code", ip_address=ip_address)
+        return ok
+
+    def _discard_setup_code(self) -> None:
+        try:
+            self.setup_code_path().unlink()
+        except OSError:
+            pass
+
     def initialize_root_owner(
         self,
         username: str,
@@ -300,6 +355,9 @@ class AuthenticationService:
         """
         First-run setup: creates permanent Root Owner (Zakaria) and generates
         a single-use, protected recovery key.
+
+        Callers exposed to the network must first verify the one-time setup code
+        (``check_setup_code``); the HTTP server does.
         """
         if self.is_initialized():
             raise PermissionError("HOOD is already initialized with a Root Owner. Unauthenticated takeover blocked.")
@@ -332,6 +390,11 @@ class AuthenticationService:
         )
 
         with self._get_connection() as conn:
+            # Atomic: two concurrent first-run requests can never both become Root Owner.
+            conn.execute("BEGIN IMMEDIATE")
+            if conn.execute("SELECT 1 FROM users WHERE role = 'ROOT_OWNER'").fetchone():
+                conn.execute("ROLLBACK")
+                raise PermissionError("HOOD is already initialized with a Root Owner. Unauthenticated takeover blocked.")
             conn.execute("""
             INSERT INTO users (
                 user_id, username, display_name, role, is_active,
@@ -353,6 +416,7 @@ class AuthenticationService:
                 user.recovery_salt_hex
             ))
 
+        self._discard_setup_code()
         self._log_access(user.user_id, user.username, "ROOT_OWNER_INITIALIZED", success=True, details="First-run Root Owner setup complete")
         return {
             "user_id": user.user_id,

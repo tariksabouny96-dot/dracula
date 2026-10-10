@@ -9,10 +9,13 @@
 # Set HOOD_PUBLIC_HOST to the hostname you serve on; Caddy obtains a TLS cert
 # for it and HOOD's Host allowlist is pinned to it (HOOD_ALLOWED_HOSTS).
 #
-# First-run owner setup must come from loopback. Do it through the proxy (it
-# connects to HOOD over loopback) or with:
-#   docker compose exec hood curl -X POST -H "Host: 127.0.0.1:8990" \
-#       -H "Content-Type: application/json" http://127.0.0.1:8990/api/auth/init -d '{"username":"zak","password":"..."}'
+# First-run owner setup is NEVER possible through the proxy: Caddy reaches HOOD over
+# loopback too, so HOOD treats any request carrying proxy headers as remote, and the
+# setup also needs the one-time code printed in HOOD's log. Create the owner from the
+# server's terminal instead (nothing to expose):
+#   docker compose exec -it hood python hood_cli.py init-owner
+# Keep this stack off the public internet until the security GO (see
+# docs/SECURITY_REMEDIATION_BATCH1.md); reach it over a VPN/SSH tunnel meanwhile.
 
 services:
   hood:
@@ -21,6 +24,9 @@ services:
     environment:
       # Caddy forwards the public Host header; HOOD only answers for it.
       HOOD_ALLOWED_HOSTS: "${HOOD_PUBLIC_HOST:-hood.local}:443"
+      # Caddy is the only proxy in front of HOOD: believe the client address it adds
+      # (per-client login limits), and never treat proxied requests as local.
+      HOOD_TRUSTED_PROXY: "1"
       # Provider + secrets come from the host environment / secret manager.
       HOOD_GEMINI_CREDENTIAL: "${HOOD_GEMINI_CREDENTIAL:-}"
       HOOD_MODEL_PRICING: "${HOOD_MODEL_PRICING:-}"

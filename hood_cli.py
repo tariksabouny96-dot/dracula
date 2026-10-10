@@ -122,6 +122,15 @@ from services.nodes.health import NodeHealthMonitor
 from services.nodes.migration import NodeMigrationBundle
 
 
+def _auth_db_path(runtime) -> Path:
+    """Identity lives in HOOD_DATA_DIR; an existing legacy artifacts/auth.db keeps being used so an
+    upgrade never silently drops the Root Owner."""
+    legacy_auth = Path("artifacts/auth.db")
+    if legacy_auth.exists() and not (runtime.data_dir / "auth.db").exists():
+        return legacy_auth
+    return runtime.data_dir / "auth.db"
+
+
 class HoodSystemRuntime:
     """Initializes and holds active instances of all Hood Core V0 services."""
 
@@ -553,6 +562,9 @@ def main():
     # HOOD Interactive Surface commands
     ui_parser = subparsers.add_parser("ui", help="Launch HOOD interactive surface")
     ui_parser.add_argument("--port", type=int, default=8990, help="Port to bind HOOD Interactive Surface GUI")
+    owner_parser = subparsers.add_parser(
+        "init-owner", help="First run: create the Root Owner from this machine's terminal (e.g. inside the container)")
+    owner_parser.add_argument("--username", default=None)
 
     # Multi-Node Commands
     subparsers.add_parser("node-list", help="List all enrolled and trusted cluster nodes")
@@ -665,12 +677,15 @@ def main():
             print("  Live chat, missions and voice will fail until this says ONLINE: set the key and "
                   "prices in the UI under Settings > Model provider (docs/RUNBOOK.md 'Connect the model').")
         from services.auth.auth_service import AuthenticationService
-        # Identity lives in HOOD_DATA_DIR; an existing legacy artifacts/auth.db keeps being used
-        # so an upgrade never silently drops the Root Owner.
-        legacy_auth = Path("artifacts/auth.db")
-        auth_db = legacy_auth if legacy_auth.exists() and not (runtime.data_dir / "auth.db").exists() \
-            else runtime.data_dir / "auth.db"
-        auth_svc = getattr(runtime, "auth_service", None) or AuthenticationService(db_path=auth_db)
+        auth_svc = getattr(runtime, "auth_service", None) or AuthenticationService(db_path=_auth_db_path(runtime))
+        setup_code = auth_svc.setup_code()
+        if setup_code:
+            # Only someone who can see this window (or HOOD's data folder) can create the Root Owner.
+            print("=" * 72)
+            print(f"  FIRST RUN: create the Root Owner at http://127.0.0.1:{args.port} on this machine.")
+            print(f"  One-time setup code: {setup_code}")
+            print(f"  (also saved in {auth_svc.setup_code_path()}; it stops working once the owner exists)")
+            print("=" * 72)
         server = JarvisServer(
             interaction_service=runtime.interaction_service,
             emergency_stop=runtime.emergency_stop,
@@ -722,6 +737,30 @@ def main():
             print(f"  {name:14} {outcome['status']}" + (f"  {outcome.get('error')}" if outcome.get("error") else ""))
         if res["incomplete"]:
             print("  NOT CONFIRMED HALTED: " + ", ".join(res["incomplete"]))
+
+    elif args.command == "init-owner":
+        # Whoever can run commands on this machine (or `docker compose exec` into HOOD's container) owns
+        # HOOD's files anyway; the network can never reach this path.
+        import getpass
+        from services.auth.auth_service import AuthenticationService
+        auth_svc = AuthenticationService(db_path=_auth_db_path(runtime))
+        if auth_svc.is_initialized():
+            print("A Root Owner already exists; nothing changed.")
+            sys.exit(1)
+        username = (args.username or input("Root Owner username: ")).strip()
+        display = input(f"Display name [{username}]: ").strip() or username
+        password = getpass.getpass("Password (10+ characters, upper, lower, digit/symbol): ")
+        if password != getpass.getpass("Repeat the password: "):
+            print("The two passwords differ; nothing changed.")
+            sys.exit(2)
+        try:
+            created = auth_svc.initialize_root_owner(username, display, password)
+        except (ValueError, PermissionError) as exc:
+            print(f"Not created: {exc}")
+            sys.exit(2)
+        print(f"Root Owner '{created['username']}' created.")
+        print("One-time recovery key (write it down and keep it offline; it is shown only now):")
+        print("  " + created["one_time_recovery_key"])
 
     elif args.command == "stop-reset":
         if not args.confirm:
