@@ -6,9 +6,22 @@ A skip is never a pass: scripts/preproduction_gate.py counts every skipped
 live test as missing evidence (BLOCKED), so it cannot turn a release GO.
 """
 import os
+import socket
 import sys
 
 import pytest
+
+# On the Windows CI runner, pytest-timeout can only use the `thread` method,
+# which cannot interrupt a thread blocked inside a native socket call. Several
+# tests talk to a loopback HTTP server with urllib, which has no default
+# timeout, so a single stalled connection would hang the whole job until the
+# runner ceiling (observed on windows-2022). Bounding every socket operation
+# turns any such stall into a prompt, named failure instead of a 30-minute
+# hang. Loopback operations complete in milliseconds, so this never trips in
+# normal runs. Left untouched on Linux/macOS, where the signal-based timeout
+# works and this is the gating platform.
+if sys.platform == "win32" and os.environ.get("HOOD_NO_SOCKET_TIMEOUT") != "1":
+    socket.setdefaulttimeout(60)
 
 PROFILES = {
     "live_provider": ("HOOD_RUN_LIVE_PROVIDER", "live provider test: set HOOD_RUN_LIVE_PROVIDER=1 with an approved key, "
