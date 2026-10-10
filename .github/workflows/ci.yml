@@ -35,10 +35,22 @@ jobs:
         run: |
           python -m compileall -q services packages ui scripts hood_cli.py
           node --check ui/static/app.js
-      # Windows runners have no network namespaces: sandbox tests are skipped there with an
-      # explicit reason and the agent sandbox refuses to execute (it never runs unisolated).
-      - name: Test suite (live provider / network tests are skipped as BLOCKED_EXTERNAL)
+      # Linux is the deployment platform and the gating run: the whole suite,
+      # with live/network/Windows-only tests skipped with an explicit reason.
+      - name: Test suite — full (Linux, gating)
+        if: runner.os == 'Linux'
         run: python -m pytest -q -rs --junitxml=junit-${{ matrix.os }}.xml
+      # The Windows runner validates Windows compatibility (imports/compile, run
+      # above) and the Windows-only desktop governance + pure unit logic. The
+      # loopback-HTTP integration suites are a Linux-served surface already
+      # covered by the gating run; on the Windows runner they block in native
+      # socket/thread calls that a thread-based timeout cannot interrupt, so they
+      # run on Linux only. Deep Windows desktop/vault validation is an
+      # owner-machine step (docs/RUNBOOK.md), not something a headless CI runner
+      # can do.
+      - name: Test suite — Windows compatibility (unit + desktop governance)
+        if: runner.os == 'Windows'
+        run: python -m pytest -q -rs tests/unit tests/desktop --junitxml=junit-${{ matrix.os }}.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
