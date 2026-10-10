@@ -980,11 +980,18 @@
           h('label', { class: 'switchline' }, auto, ' Read Hood’s chat replies aloud'))))));
   }
 
+  // API-key field: masked, but not a password field, so the browser does not offer to "save a password".
+  function secretInput(label, placeholder) {
+    const masked = window.CSS && CSS.supports && CSS.supports('-webkit-text-security', 'disc');
+    return h('input', { type: masked ? 'text' : 'password', autocomplete: 'off', spellcheck: 'false',
+      'data-lpignore': 'true', 'data-1p-ignore': 'true', placeholder, 'aria-label': label,
+      style: masked ? { webkitTextSecurity: 'disc' } : null });
+  }
+
   // ------------------------------------------------------------------ Settings › Model provider (owner only)
   function modelProviderCard() {
     const box = h('div', {});
-    const keyInput = h('input', { type: 'password', autocomplete: 'off', spellcheck: 'false',
-      placeholder: 'Paste your Gemini API key', 'aria-label': 'Gemini API key' });
+    const keyInput = secretInput('Gemini API key', 'Paste your Gemini API key');
     const testOut = h('p', {});
     const done = async (r, okText) => {
       if (r.ok) { toast(okText); load(); app.refreshOverview(); }
@@ -1063,7 +1070,7 @@
       const provider = h('select', { 'aria-label': 'Voice provider' },
         h('option', { value: 'gemini' }, 'Google Gemini voice'), h('option', { value: 'elevenlabs' }, 'ElevenLabs (my voice)'));
       provider.value = v.tts_provider;
-      const key = h('input', { type: 'password', autocomplete: 'off', spellcheck: 'false', placeholder: 'Paste your ElevenLabs API key', 'aria-label': 'ElevenLabs API key' });
+      const key = secretInput('ElevenLabs API key', 'Paste your ElevenLabs API key (starts with sk_)');
       const vid = h('input', { value: v.voice_id || '', placeholder: 'e.g. 21m00Tcm4TlvDq8ikWAM', 'aria-label': 'HOOD voice ID' });
       const xvid = h('input', { value: v.x_voice_id || '', placeholder: 'optional: a different voice for X', 'aria-label': 'X voice ID' });
       const model = h('input', { value: v.model_id || v.default_model, 'aria-label': 'ElevenLabs model' });
@@ -1072,7 +1079,7 @@
         h('dl', { class: 'kv' }, h('dt', {}, 'Speaking voice'), h('dd', {}, v.tts_provider === 'elevenlabs' ? 'ElevenLabs' : 'Google Gemini'),
           h('dt', {}, 'ElevenLabs key'), h('dd', {}, v.key.set ? 'Set (' + v.key.hint + ')' : 'Not set')),
         h('div', { class: 'form' },
-          h('label', {}, v.key.set ? 'Replace ElevenLabs API key' : 'ElevenLabs API key', key),
+          h('label', {}, (v.key.set ? 'Replace ElevenLabs API key' : 'ElevenLabs API key') + ' (the secret value starting with sk_, not the key ID)', key),
           h('div', { class: 'form-actions' },
             h('button', { class: 'btn small primary', type: 'button', onclick: async () => {
               if (!key.value.trim()) { toast('Paste a key first.'); return; }

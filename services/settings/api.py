@@ -190,6 +190,11 @@ def set_voice_key(ctx):
     key = ctx.payload.get("api_key")
     if not isinstance(key, str) or not KEY_RE.match(key.strip()):
         raise ValueError("That doesn't look like an API key (20-200 letters, digits, - _ .)")
+    if not key.strip().startswith("sk_"):
+        # ElevenLabs secret keys start with sk_; the key ID shown in the key list does not.
+        raise ValueError("That looks like the key's ID, not the key itself. ElevenLabs API keys start "
+                         "with 'sk_' and are shown only once, when the key is created: create a new key "
+                         "in ElevenLabs and paste the value that starts with sk_.")
     _gemini().vault.set_secret(eleven.SECRET_PROVIDER, eleven.SECRET_NAME, key.strip(),
                                description="ElevenLabs voice, set in Settings > Voice")
     fw = SERVICES.get("firewall")

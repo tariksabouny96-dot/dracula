@@ -189,7 +189,7 @@ def test_elevenlabs_voice_from_settings(stack, monkeypatch):
         request(base, "/api/settings/model/key", owner, {"api_key": KEY, "confirm": True})
         request(base, "/api/settings/model/pricing", owner, {"mode": "free", "confirm": True})
         calls, real_urlopen, mode = [], cloud.urllib.request.urlopen, {"status": 200}
-        el_key = "elevenlabs-test-key-not-real-0001"
+        el_key = "sk_not_a_real_elevenlabs_key_0001"
 
         def fake_urlopen(req, timeout=0):
             if eleven.HOST not in getattr(req, "full_url", str(req)):
@@ -206,6 +206,10 @@ def test_elevenlabs_voice_from_settings(stack, monkeypatch):
         assert request(base, "/api/settings/voice", viewer)[0] == 403
         assert request(base, "/api/settings/voice", owner, {"tts_provider": "elevenlabs", "confirm": True})[0] == 400
 
+        r = request(base, "/api/settings/voice/key", owner,              # the key ID, not the key
+                    {"api_key": "abcdefghijklmnopqrstuvwxyz0123", "confirm": True})
+        assert r[0] == 400 and b"start with 'sk_'" in r[1]
+        assert j(request(base, "/api/settings/voice", owner))["key"]["set"] is False
         r = request(base, "/api/settings/voice/key", owner, {"api_key": el_key, "confirm": True})
         assert r[0] == 200 and el_key.encode() not in r[1] and j(r)["key"]["hint"] == "…0001"
         assert any(rule["host"] == eleven.HOST for rule in routes.SERVICES["firewall"].list_rules())
