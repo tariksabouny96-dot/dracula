@@ -22,9 +22,9 @@ def get_default_config() -> SystemConfig:
                 enabled=True,
                 is_paid=False,
                 api_key_secret_ref="SECRET://gemini/api_key",
-                default_fast_model="gemini-2.5-flash",
-                default_standard_model="gemini-2.5-flash",
-                default_deep_model="gemini-2.5-pro",
+                default_fast_model="gemini-3.5-flash-lite",
+                default_standard_model="gemini-3.8-flash",
+                default_deep_model="gemini-3.8-flash",
             ),
             "openai": ModelProviderConfig(
                 enabled=False,  # Disabled by default as OpenAI is not authorized/configured

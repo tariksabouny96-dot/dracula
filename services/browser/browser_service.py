@@ -3,6 +3,10 @@ HOOD Browser Service & Deterministic Interaction Engine
 Governed by Master System Specification Section 9, 15 & V0.2 Browser Automation Spec.
 Provides safe, deterministic, capability-gated Playwright automation.
 """
+# Deferred annotations: Playwright is optional, so its types (Page, Browser...)
+# must not be evaluated at import time, or a missing Playwright crashes all of
+# HOOD instead of just disabling browser automation.
+from __future__ import annotations
 
 import os
 import re

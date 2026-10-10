@@ -6,7 +6,62 @@ Governed by Master System Specification Sections 1, 10, 16 & Build Instructions 
 import sys
 import os
 import argparse
+import importlib.util
 from pathlib import Path
+
+
+def _preflight_dependencies():
+    """Fail fast with the fix, not a traceback, when requirements aren't installed."""
+    required = {"pydantic": "pydantic", "yaml": "PyYAML", "cryptography": "cryptography",
+                "psutil": "psutil", "fpdf": "fpdf2", "docx": "python-docx",
+                "openpyxl": "openpyxl", "pypdf": "pypdf"}
+    missing = [pkg for mod, pkg in required.items() if importlib.util.find_spec(mod) is None]
+    if missing:
+        sys.stderr.write(
+            "HOOD cannot start: required packages are missing from this Python "
+            f"({sys.executable}):\n  " + ", ".join(missing) + "\n\n"
+            "Install them into the same Python you run HOOD with:\n"
+            f"  \"{sys.executable}\" -m pip install -r requirements.txt\n"
+            "(Browser automation additionally needs: python -m playwright install chromium)\n")
+        sys.exit(2)
+
+
+_preflight_dependencies()
+
+
+def _load_dotenv(path: Path) -> int:
+    """Load KEY=VALUE settings from a .env file (env.example says to create one).
+
+    Variables already set in the real environment always win. Blank values and
+    comments are ignored; a leading ``~`` is expanded. Values are never printed.
+    """
+    import re
+    if not path.is_file():
+        return 0
+    loaded = 0
+    for raw in path.read_text(encoding="utf-8-sig").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        key, sep, value = line.partition("=")
+        key, value = key.strip(), value.strip()
+        if not sep or not key.isidentifier():
+            continue
+        if value[:1] in ("'", '"') and value.count(value[0]) >= 2:
+            value = value[1:value.index(value[0], 1)]
+        else:
+            value = re.split(r"(?:^|\s)#", value, maxsplit=1)[0].strip()
+        if not value or key in os.environ:
+            continue
+        if value.startswith("~"):
+            value = os.path.expanduser(value)
+        os.environ[key] = value
+        loaded += 1
+    return loaded
+
+
 from packages.config import load_config
 from packages.contracts import SystemState, RiskLevel, TaskNode
 from packages.auth.vault import SecretVault
@@ -269,9 +324,18 @@ class HoodSystemRuntime:
         self.tool_gateway.register_tool(DesktopControlTool(self.tool_gateway, self.desktop_service))
 
     def health_check(self) -> dict:
-        gemini_ok = self.model_router.providers.get("gemini").is_healthy()
+        gemini = self.model_router.providers.get("gemini")
+        gemini_ok = gemini.is_healthy()
         mock_ok = self.model_router.providers.get("mock").is_healthy()
         openai_enabled = self.config.providers.get("openai").enabled
+        gemini_status = "CONFIGURED_PENDING_KEY"
+        if gemini_ok:
+            # A key alone is not enough: the router refuses a paid call with unknown cost.
+            from packages.contracts import ModelRequest, ProviderName
+            _, price, _ = self.model_router._price_for(
+                ProviderName.GEMINI, gemini, ModelRequest(prompt="status"))
+            gemini_status = "ONLINE" if price is not None else \
+                "KEY_SET_BUT_NO_PRICING (set HOOD_MODEL_PRICING; live calls are refused)"
 
         return {
             "status": "HEALTHY",
@@ -279,7 +343,7 @@ class HoodSystemRuntime:
             "node_role": self.config.node_role,
             "emergency_stop_active": self.emergency_stop.is_active,
             "providers": {
-                "gemini": "ONLINE" if gemini_ok else "CONFIGURED_PENDING_KEY",
+                "gemini": gemini_status,
                 "mock": "ONLINE" if mock_ok else "OFFLINE",
                 "openai": "ENABLED" if openai_enabled else "DISABLED_PENDING_AUTH"
             },
@@ -407,6 +471,10 @@ def main():
     subparsers.add_parser("finance-history", help="Audit history of financial decisions")
 
     args = parser.parse_args()
+    env_file = Path(os.environ.get("HOOD_ENV_FILE") or Path(__file__).resolve().parent / ".env")
+    loaded = _load_dotenv(env_file)
+    if loaded:
+        sys.stderr.write(f"Loaded {loaded} setting(s) from {env_file}\n")
     runtime = HoodSystemRuntime()
 
     if args.command == "status" or not args.command:

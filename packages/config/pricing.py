@@ -7,9 +7,11 @@ without an entry is *unknown cost* and the router refuses to call it.
 Configure with the ``HOOD_MODEL_PRICING`` environment variable pointing at a
 JSON file shaped like::
 
-    {"gemini": {"gemini-2.5-flash": {"input_per_1k_usd": 0.0003,
+    {"gemini": {"gemini-3.8-flash": {"input_per_1k_usd": 0.0003,
                                       "output_per_1k_usd": 0.0025,
                                       "as_of": "2026-10-01", "source": "provider price page"}}}
+
+(``config/model_pricing.free-tier.json`` is a ready file for a free-tier key.)
 """
 from __future__ import annotations
 
@@ -35,7 +37,12 @@ def load_price_table(path: Optional[str] = None) -> Dict[str, Dict[str, ModelPri
     path = path or os.environ.get("HOOD_MODEL_PRICING")
     if not path:
         return {}
-    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    file = Path(path).expanduser()
+    if not file.is_absolute() and not file.exists():
+        # Relative paths (e.g. config/model_pricing.free-tier.json in .env) also
+        # resolve against the repo root, so Hood works when started elsewhere.
+        file = Path(__file__).resolve().parents[2] / file
+    raw = json.loads(file.read_text(encoding="utf-8"))
     table: Dict[str, Dict[str, ModelPrice]] = {}
     for provider, models in raw.items():
         if provider.startswith("_"):  # "_comment" and other annotations

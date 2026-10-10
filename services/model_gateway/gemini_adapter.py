@@ -71,7 +71,7 @@ class GeminiProviderAdapter(BaseModelProvider):
         # gemini-2.5-* is closed to new API users (HTTP 404 on 2026-10-09); defaults follow the live list.
         default = {ModelClass.FAST: 'gemini-3.5-flash-lite', ModelClass.DEEP: 'gemini-3.8-flash'}.get(
             model_class, 'gemini-3.8-flash')
-        model = os.getenv(env_name, default).strip()
+        model = (os.getenv(env_name) or "").strip() or default  # blank setting -> default
         if not model or not all(c.isalnum() or c in '.-_' for c in model):
             raise ProviderNotConfiguredError('Invalid Gemini model configuration')
         return [model]

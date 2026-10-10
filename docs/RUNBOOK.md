@@ -15,11 +15,38 @@ Windows (PowerShell):
 py -3.13 -m venv .venv; .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe -m playwright install chromium
 .\.venv\Scripts\python.exe -m pytest -q -rs
+.\.venv\Scripts\python.exe hood_cli.py ui --port 8999
 ```
 On Windows the agent sandbox has no network namespace, so agent execution **refuses to run**
 (missions end UNVERIFIED). Run agent missions on Linux (or WSL2) until a Windows sandbox exists.
 
-First run: open the UI, create the Root Owner, store the one-time recovery key offline.
+First run: open http://127.0.0.1:8999, create the Root Owner, store the one-time recovery key offline.
+
+## Connect the model (needed for live chat and agents)
+
+Without this, Hood starts and the UI works, but every model call is refused.
+```bash
+cp env.example .env        # Windows: copy env.example .env
+# edit .env: set GEMINI_API_KEY=<your key>; HOOD_MODEL_PRICING is already set
+python hood_cli.py status  # expect "gemini: ONLINE"
+```
+`hood_cli.py` loads `.env` from the repo root on start (real environment variables win).
+A model is only called if it has a price on file (`HOOD_MODEL_PRICING`). The shipped
+`config/model_pricing.free-tier.json` declares $0 for a free-tier key with no billing
+account; if billing is enabled on your Google project, put the real prices in it first.
+
+## Troubleshooting: "it's not working"
+
+| What you see | Cause | Fix |
+|---|---|---|
+| `HOOD cannot start: required packages are missing` | requirements not installed in *this* Python | run the `pip install` command it prints (activate the venv first) |
+| `pip` error `Cannot uninstall PyYAML ... installed by debian` | installing into the system Python | use the venv from the install steps |
+| `status` shows `gemini: CONFIGURED_PENDING_KEY` | no API key reached Hood | set `GEMINI_API_KEY` in `.env` (repo root) or the environment |
+| `status` shows `gemini: KEY_SET_BUT_NO_PRICING` / "refusing paid call with unknown cost" | `HOOD_MODEL_PRICING` not set, or the model isn't in that file | set `HOOD_MODEL_PRICING=config/model_pricing.free-tier.json` |
+| Gemini HTTP 404 | a retired model was configured (e.g. `gemini-2.5-flash`) | leave `HOOD_GEMINI_*_MODEL` blank to use the defaults |
+| Browser page from another device / `421 Misdirected` | Hood binds 127.0.0.1 and checks the Host header | open it on the same machine at `http://127.0.0.1:<port>`; remote access goes through the Docker + Caddy setup below |
+| Agent missions end `UNVERIFIED` on Windows | no sandbox on Windows | run missions on Linux or WSL2 |
+| Voice does nothing | voice is not implemented yet (it refuses rather than pretending) | — |
 
 ## Container deployment (Docker)
 
@@ -35,7 +62,7 @@ export HOOD_GEMINI_CREDENTIAL=proxy           # or inject provider keys/pricing
 docker compose up -d --build                  # builds hood:latest, starts hood + caddy
 # First-run owner setup must come from loopback (do it inside the container):
 docker compose exec hood curl -fsS -X POST -H "Host: 127.0.0.1:8990" \
-    http://127.0.0.1:8990/api/auth/init \
+    -H "Content-Type: application/json" http://127.0.0.1:8990/api/auth/init \
     -d '{"username":"zak","display_name":"Zak","password":"<chosen-password>"}'
 ```
 

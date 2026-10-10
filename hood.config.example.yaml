@@ -19,9 +19,9 @@ providers:
     enabled: true
     is_paid: false
     api_key_secret_ref: "SECRET://gemini/api_key"
-    default_fast_model: "gemini-2.5-flash"
-    default_standard_model: "gemini-2.5-flash"
-    default_deep_model: "gemini-2.5-pro"
+    default_fast_model: "gemini-3.5-flash-lite"
+    default_standard_model: "gemini-3.8-flash"
+    default_deep_model: "gemini-3.8-flash"
     timeout_sec: 30
     max_retries: 3
   openai:

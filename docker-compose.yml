@@ -12,7 +12,7 @@
 # First-run owner setup must come from loopback. Do it through the proxy (it
 # connects to HOOD over loopback) or with:
 #   docker compose exec hood curl -X POST -H "Host: 127.0.0.1:8990" \
-#       http://127.0.0.1:8990/api/auth/init -d '{"username":"zak","password":"..."}'
+#       -H "Content-Type: application/json" http://127.0.0.1:8990/api/auth/init -d '{"username":"zak","password":"..."}'
 
 services:
   hood:

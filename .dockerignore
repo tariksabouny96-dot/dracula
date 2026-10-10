@@ -12,3 +12,7 @@ artifacts/*.enc
 artifacts/*.json
 *.log
 .pytest_cache
+# Secrets never enter the image; compose injects them at run time.
+.env
+.env.*
+!env.example
