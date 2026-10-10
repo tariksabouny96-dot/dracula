@@ -20,7 +20,7 @@ from .openai_adapter import OpenAIProviderAdapter
 from .local_adapter import LocalProviderAdapter
 from .cost_controller import CostController, BudgetExceededError
 from .gemini_usage import price_note
-from packages.config.pricing import load_price_table, estimate_tokens, NON_BILLING_PROVIDERS, ModelPrice
+from packages.config.pricing import load_price_table, estimate_tokens, estimate_request_tokens, NON_BILLING_PROVIDERS, ModelPrice
 
 
 class ModelRouter:
@@ -67,7 +67,7 @@ class ModelRouter:
             return model, None, True
         # Reserve with the candidate that would cost the most for THIS request (a fallback with a
         # higher output price can cost more than a "dearer" primary on a short prompt).
-        prompt_tokens = estimate_tokens((request.system_prompt or "") + request.prompt)
+        prompt_tokens = estimate_request_tokens(request)
         price = max((table[n] for n in names),
                     key=lambda p: prompt_tokens * p.input_per_1k_usd + request.max_tokens * p.output_per_1k_usd)
         return model, price, True
@@ -135,7 +135,7 @@ class ModelRouter:
             if billing and price is None:
                 return float("inf")
             if price is not None:
-                prompt_tokens = estimate_tokens((request.system_prompt or "") + request.prompt)
+                prompt_tokens = estimate_request_tokens(request)
                 worst = max(worst, prompt_tokens / 1000.0 * price.input_per_1k_usd
                             + request.max_tokens / 1000.0 * price.output_per_1k_usd)
         return worst
@@ -209,7 +209,7 @@ class ModelRouter:
                 continue
             estimate = 0.0
             if price is not None:
-                prompt_tokens = estimate_tokens((request.system_prompt or "") + request.prompt)
+                prompt_tokens = estimate_request_tokens(request)
                 estimate = (prompt_tokens / 1000.0) * price.input_per_1k_usd + \
                            (request.max_tokens / 1000.0) * price.output_per_1k_usd
             # Egress firewall: a live provider call must be allowed by policy

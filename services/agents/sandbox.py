@@ -21,6 +21,7 @@ filesystem isolation. The engine only uses it after that recorded approval.
 from __future__ import annotations
 
 import hashlib
+import functools
 import os
 import shutil
 import signal
@@ -59,10 +60,17 @@ def network_isolation_available() -> bool:
         return False
 
 
-def _limits():  # runs in the child before exec (POSIX only)
+DEFAULT_CPU_SECONDS = 120
+DEFAULT_MEMORY_BYTES = 2 * 1024 ** 3
+
+
+def _limits(cpu_seconds: int = DEFAULT_CPU_SECONDS, memory_bytes: int = DEFAULT_MEMORY_BYTES):
+    """Runs in the child before exec (POSIX only). Same isolation for every run; only the CPU-time
+    and address-space budget can be raised by the engine for a known long job (HOOD's own test
+    suite for a self-repair), never by agent-written code."""
     import resource
-    resource.setrlimit(resource.RLIMIT_CPU, (120, 120))
-    resource.setrlimit(resource.RLIMIT_AS, (2 * 1024 ** 3, 2 * 1024 ** 3))
+    resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds))
+    resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
     resource.setrlimit(resource.RLIMIT_FSIZE, (32 * 1024 ** 2, 32 * 1024 ** 2))
     resource.setrlimit(resource.RLIMIT_NOFILE, (256, 256))
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
@@ -188,15 +196,18 @@ class Workspace:
         return env
 
     def run(self, name: str, argv: List[str], timeout: int = 120, *, unisolated: bool = False,
-            extra_writable: Sequence[str] = (), extra_readonly: Sequence[str] = ()) -> CheckResult:
+            extra_writable: Sequence[str] = (), extra_readonly: Sequence[str] = (),
+            cpu_seconds: int = DEFAULT_CPU_SECONDS, memory_bytes: int = DEFAULT_MEMORY_BYTES) -> CheckResult:
         """Run an engine-built command; the agent never supplies argv.
 
         ``unisolated`` runs it directly on this computer (owner-approved "Run on my PC"):
         scrubbed environment and time limit, but no network or filesystem isolation.
         """
         self.stop_latch.check()
+        cpu_seconds = max(1, min(int(cpu_seconds), 3600))
+        memory_bytes = max(256 * 1024 ** 2, min(int(memory_bytes), 8 * 1024 ** 3))
         if not unisolated and windows_sandbox_ready():
-            return self._run_in_wsl(name, argv, timeout, extra_writable, extra_readonly)
+            return self._run_in_wsl(name, argv, timeout, extra_writable, extra_readonly, cpu_seconds, memory_bytes)
         if unisolated:
             cmd = list(argv)
             env = self._env_unisolated()
@@ -210,7 +221,8 @@ class Workspace:
             env = self._env()
         started = time.monotonic()
         if os.name == "posix":
-            platform_kw = {"start_new_session": True, "preexec_fn": _limits}
+            platform_kw = {"start_new_session": True,
+                           "preexec_fn": functools.partial(_limits, cpu_seconds, memory_bytes)}
         else:  # Windows: own process group, no console window; killed as a tree on timeout/cancel
             platform_kw = {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
                            | getattr(subprocess, "CREATE_NO_WINDOW", 0)}
@@ -233,7 +245,8 @@ class Workspace:
                            output_tail=text[-4000:], duration_ms=int((time.monotonic() - started) * 1000))
 
     def _run_in_wsl(self, name: str, argv: List[str], timeout: int, extra_writable: Sequence[str],
-                    extra_readonly: Sequence[str]) -> CheckResult:
+                    extra_readonly: Sequence[str], cpu_seconds: int = DEFAULT_CPU_SECONDS,
+                    memory_bytes: int = DEFAULT_MEMORY_BYTES) -> CheckResult:
         """Windows: run inside HOOD's own Linux sandbox. Only the mission folder (and any extra folders
         the engine names) are visible; Windows drives are hidden; no network; resource limits."""
         inner = list(argv)
@@ -246,7 +259,8 @@ class Workspace:
         try:
             code, out = _WINDOWS_SANDBOX.run_isolated(
                 inner, str(self.root), [str(self.root), *extra_writable],
-                [str(Path(launcher).parent), *extra_readonly], launcher, timeout)
+                [str(Path(launcher).parent), *extra_readonly], launcher, timeout,
+                cpu=cpu_seconds, memory_bytes=memory_bytes)
         finally:
             with self._lock:
                 self._wsl_runs -= 1

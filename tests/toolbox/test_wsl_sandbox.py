@@ -228,7 +228,7 @@ class FakeSandbox:
     def problem(self):
         return None
 
-    def run_isolated(self, argv, cwd, writable, readonly, launcher, timeout):
+    def run_isolated(self, argv, cwd, writable, readonly, launcher, timeout, cpu=120, memory_bytes=2 * 1024 ** 3):
         self.runs.append((argv, cwd, writable, readonly, launcher, timeout))
         return 0, b"1 passed"
 
@@ -286,7 +286,7 @@ def test_isolation_wrapper_really_hides_files_and_network(tmp_path):
         "l = socket.socket(); l.bind(('127.0.0.1', 0)); print('loopback True')\n")
     (work / "probe.py").write_text(probe)
     env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOOD_BINDS": f"{work}|/run/hood/b0|rw\n{code}|/run/hood/b1|ro",
-           "HOOD_CWD": "/run/hood/b0", "HOOD_TIMEOUT": "30", "HOOD_CPU": "30"}
+           "HOOD_CWD": "/run/hood/b0", "HOOD_TIMEOUT": "30", "HOOD_CPU": "30", "HOOD_AS": str(2 * 1024 ** 3)}
     proc = subprocess.run(["sh", "-c", RUN_WRAPPER, "hood", sys.executable, "-I", "/run/hood/b1/netns_launcher.py",
                            sys.executable, "probe.py"], env=env, capture_output=True, text=True, timeout=60)
     out = proc.stdout

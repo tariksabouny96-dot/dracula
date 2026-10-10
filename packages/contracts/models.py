@@ -243,6 +243,8 @@ class ModelRequest(BaseModel):
     response_schema: Optional[Dict[str, Any]] = None
     # Chat may accept a reply cut off at max_tokens (marked truncated); plans and code never do.
     allow_partial: bool = False
+    # Images sent with the prompt (self-repair screenshots): [{"mime_type": "image/png", "data_b64": "..."}].
+    images: List[Dict[str, str]] = Field(default_factory=list)
 
 
 class ModelResponse(BaseModel):

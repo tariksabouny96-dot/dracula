@@ -155,8 +155,10 @@ class GeminiProviderAdapter(BaseModelProvider):
         if request.response_schema:
             generation["responseMimeType"] = "application/json"
             generation["responseJsonSchema"] = request.response_schema
-        payload_dict = {"contents": [{"role": "user", "parts": [{"text": request.prompt}]}],
-                        "generationConfig": generation}
+        parts = [{"text": request.prompt}]
+        for image in request.images or []:
+            parts.append({"inlineData": {"mimeType": image["mime_type"], "data": image["data_b64"]}})
+        payload_dict = {"contents": [{"role": "user", "parts": parts}], "generationConfig": generation}
         if request.system_prompt:
             payload_dict["systemInstruction"] = {"parts": [{"text": request.system_prompt}]}
         payload_bytes = json.dumps(payload_dict).encode("utf-8")

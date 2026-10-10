@@ -86,3 +86,13 @@ def load_price_table(path: Optional[str] = None) -> Dict[str, Dict[str, ModelPri
 def estimate_tokens(text: str) -> int:
     """Conservative token estimate (~3 characters per token) for pre-flight reservations."""
     return max(1, len(text or "") // 3 + 1)
+
+
+# Conservative per-image input estimate for reservations (Gemini bills a few hundred to ~1,100
+# tokens per image depending on resolution); actual usage is charged after the call.
+IMAGE_TOKEN_ESTIMATE = 1800
+
+
+def estimate_request_tokens(request) -> int:
+    return estimate_tokens((request.system_prompt or "") + request.prompt) + \
+        IMAGE_TOKEN_ESTIMATE * len(getattr(request, "images", None) or [])

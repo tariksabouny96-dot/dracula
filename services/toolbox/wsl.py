@@ -56,7 +56,7 @@ $HOOD_BINDS
 HOODBINDS
 mount -t tmpfs -o size=1m,mode=755 hood-hidden /mnt
 cd "$HOOD_CWD"
-exec prlimit --cpu=$HOOD_CPU --as=2147483648 --fsize=33554432 --nofile=256 -- timeout -k 5 $HOOD_TIMEOUT "$@"
+exec prlimit --cpu=$HOOD_CPU --as=$HOOD_AS --fsize=33554432 --nofile=256 -- timeout -k 5 $HOOD_TIMEOUT "$@"
 ' hood-run "$@"
 """
 APPROVAL_TEXT = [
@@ -370,7 +370,7 @@ class WslSandbox:
 
     # ------------------------------------------------------------------ isolated runs
     def isolated_argv(self, argv: List[str], cwd: str, writable: List[str], readonly: List[str],
-                      launcher: str, timeout: int, cpu: int = 120) -> List[str]:
+                      launcher: str, timeout: int, cpu: int = 120, memory_bytes: int = 2 * 1024 ** 3) -> List[str]:
         """wsl.exe command running ``argv`` in a fresh namespace inside HOOD's distro.
 
         Windows paths in argv/cwd under the bound folders are translated; anything else stays."""
@@ -393,7 +393,8 @@ class WslSandbox:
             raise ValueError(f"{value} is outside the folders bound into the sandbox")
         inner = [tr(a) for a in argv]
         env = {"HOOD_BINDS": "\n".join(binds),        # one per line: folder names may contain spaces
-               "HOOD_CWD": tr(cwd), "HOOD_TIMEOUT": str(int(timeout)), "HOOD_CPU": str(int(cpu))}
+               "HOOD_CWD": tr(cwd), "HOOD_TIMEOUT": str(int(timeout)), "HOOD_CPU": str(int(cpu)),
+               "HOOD_AS": str(int(memory_bytes))}
         env_args = [f"{k}={v}" for k, v in env.items()]
         return ["-d", DISTRO, "-u", "root", "-e", "env", "-i", "PATH=/usr/local/bin:/usr/bin:/bin",
                 "HOME=/tmp", "LANG=C.UTF-8", "PYTHONDONTWRITEBYTECODE=1", "PYTHONNOUSERSITE=1",
@@ -401,12 +402,12 @@ class WslSandbox:
                 "sh", "-c", RUN_WRAPPER, "hood", "python3", "-I", tr(launcher), *inner]
 
     def run_isolated(self, argv: List[str], cwd: str, writable: List[str], readonly: List[str], launcher: str,
-                     timeout: int) -> Tuple[Optional[int], bytes]:
+                     timeout: int, cpu: int = 120, memory_bytes: int = 2 * 1024 ** 3) -> Tuple[Optional[int], bytes]:
         """Run inside HOOD's distro (see isolated_argv). Exit code None = it ran out of time."""
         exe = self.wsl_exe()
         if not exe:
             return 127, b"wsl.exe not found"
-        cmd = [exe, *self.isolated_argv(argv, cwd, writable, readonly, launcher, timeout)]
+        cmd = [exe, *self.isolated_argv(argv, cwd, writable, readonly, launcher, timeout, cpu, memory_bytes)]
         try:
             proc = subprocess.run(cmd, cwd=cwd, capture_output=True, timeout=timeout + 60,
                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
