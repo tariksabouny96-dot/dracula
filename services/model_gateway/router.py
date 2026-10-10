@@ -23,11 +23,22 @@ from packages.config.pricing import load_price_table, estimate_tokens, NON_BILLI
 class ModelRouter:
     """Provider-neutral model router with fallback support and cost enforcement."""
 
+    # Known outbound host per provider; consulted by the egress firewall before
+    # a live call. MOCK makes no outbound connection, so it has no entry.
+    _PROVIDER_EGRESS_HOST = {
+        ProviderName.GEMINI: "generativelanguage.googleapis.com",
+        ProviderName.OPENAI: "api.openai.com",
+    }
+
     def __init__(self, config: Optional[SystemConfig] = None, cost_controller: Optional[CostController] = None,
-                 price_table: Optional[Dict[str, Dict[str, ModelPrice]]] = None):
+                 price_table: Optional[Dict[str, Dict[str, ModelPrice]]] = None, firewall: Optional[object] = None):
         self.config = config or SystemConfig()
         self.cost_controller = cost_controller or CostController(self.config.budgets)
         self.price_table = price_table if price_table is not None else load_price_table()
+        # Optional egress firewall. When set, a live provider call is refused
+        # unless the provider's host is allowed (default deny). None keeps the
+        # legacy behaviour for callers that have not wired a firewall yet.
+        self.firewall = firewall
         self.providers: Dict[ProviderName, BaseModelProvider] = {}
         self._init_providers()
 
@@ -165,6 +176,17 @@ class ModelRouter:
                 prompt_tokens = estimate_tokens((request.system_prompt or "") + request.prompt)
                 estimate = (prompt_tokens / 1000.0) * price.input_per_1k_usd + \
                            (request.max_tokens / 1000.0) * price.output_per_1k_usd
+            # Egress firewall: a live provider call must be allowed by policy
+            # (default deny). Refused before any spend, so no reservation is made.
+            egress_host = self._PROVIDER_EGRESS_HOST.get(provider_name)
+            if self.firewall is not None and egress_host is not None:
+                decision = self.firewall.authorize(egress_host, 443, purpose=f"model:{provider_name.value}")
+                if not decision.allowed:
+                    last_error = ProviderNotConfiguredError(
+                        f"Egress to {egress_host} for {provider_name.value} is blocked by the "
+                        f"HOOD firewall: {decision.reason}. Allow it as the Root Owner to enable this provider.")
+                    continue
+
             reservation = self.cost_controller.reserve(request.task_id, estimate, is_deep_model=is_deep)
 
             try:

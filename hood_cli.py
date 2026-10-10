@@ -85,6 +85,22 @@ class HoodSystemRuntime:
         from packages.security import StopLatch
         self.data_dir = Path(os.environ.get("HOOD_DATA_DIR") or (Path.home() / ".hood"))
         self.stop_latch = StopLatch(self.data_dir / "emergency_stop.json")
+
+        # Egress firewall: default-deny outbound policy the model gateway consults
+        # before any live provider call. Enabled providers' hosts are seeded so a
+        # configured system works out of the box; the Root Owner can revoke them.
+        from services.firewall.policy import NetworkFirewall
+        self.firewall = NetworkFirewall(self.data_dir / "firewall", stop_latch=self.stop_latch,
+                                        audit_service=self.audit_service)
+        _seed = []
+        for _pname, _host in (("gemini", "generativelanguage.googleapis.com"),
+                              ("openai", "api.openai.com")):
+            _pcfg = self.config.providers.get(_pname)
+            if _pcfg and getattr(_pcfg, "enabled", False):
+                _seed.append(_host)
+        if _seed:
+            self.firewall.seed_defaults(_seed)
+        self.model_router.firewall = self.firewall
         self.tool_gateway = ToolGateway(self.config, self.approval_service, self.audit_service,
                                         stop_latch=self.stop_latch)
 

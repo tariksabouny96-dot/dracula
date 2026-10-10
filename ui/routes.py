@@ -127,4 +127,5 @@ def load_modules() -> List[str]:
 API_MODULES: List[str] = [
     "services.console.api",
     "services.exports.api",
+    "services.firewall.api",
 ]

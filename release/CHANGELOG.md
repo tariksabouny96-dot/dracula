@@ -29,3 +29,11 @@ approvals expire (default 15 min); paid model calls require a pricing file.
 | G2 | Live-provider golden journey run end-to-end on free-tier Gemini via the environment proxy — COMPLETED, verifier PASS, receipts valid, $0. Evidence under `release/evidence/live/`. |
 
 Offline suite after this work: 390 passed, 0 failed, 6 live-only deselected.
+
+### Egress firewall + exports (branch `claude/eager-dirac-xxzqst`, continued)
+
+| Area | Summary |
+|------|---------|
+| F21 | Document export pipeline (md/html/pdf/docx/xlsx/csv/zip) with independent validators, formula-injection defence, and an owner-scoped artifact registry (write-once files, single-use HMAC download tokens, cross-tenant isolation). |
+| Firewall | New `services/firewall`: default-deny egress policy, owner-only rule management, fail-closed, emergency-stop-aware, audited, enforced in the model gateway before any live provider call. Verified against real Gemini (blocked by default; allowed only when the owner permits the host). |
+| CI | pytest-timeout + job ceilings; Windows socket-timeout guard; docker-build job verifies the container image. |
