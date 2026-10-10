@@ -274,6 +274,7 @@ class HoodSystemRuntime:
         )
         from services.interaction.conversation_store import ConversationStore
         self.interaction_service.conversation_store = ConversationStore(self.data_dir / "conversations.sqlite3")
+        self.interaction_service.status_facts = self._chat_status_facts
         self.x_controller = XExecutiveController(self.memory_service, self.audit_service)
         self.x_session_manager = XSessionManager(
             approval_service=self.approval_service,
@@ -325,6 +326,30 @@ class HoodSystemRuntime:
         # Register desktop tools
         from services.tool_gateway.tools import DesktopControlTool
         self.tool_gateway.register_tool(DesktopControlTool(self.tool_gateway, self.desktop_service))
+
+    def _chat_status_facts(self) -> list:
+        """Live facts chat may state about HOOD (observed, cheap, never assumed)."""
+        import sqlite3
+        facts = []
+        engine = getattr(self, "agent_engine", None)
+        if engine is not None:
+            with sqlite3.connect(engine.db_path) as db:
+                rows = db.execute("SELECT state, COUNT(*) FROM missions GROUP BY state").fetchall()
+            facts.append("Agent missions: " + (", ".join(f"{n} {st}" for st, n in rows) if rows else "none yet"))
+            from services.agents.sandbox import network_isolation_available
+            if not getattr(self, "_sandbox_ok_cached", None):
+                self._sandbox_ok_cached = ("yes" if network_isolation_available() else "no")
+            facts.append("Missions can execute here (sandbox available): " + self._sandbox_ok_cached +
+                         ("" if self._sandbox_ok_cached == "yes" else
+                          " - on Windows they plan but need Linux/WSL2 to build"))
+        if getattr(self, "firewall", None) is not None:
+            facts.append(f"Egress firewall: default deny, {len(self.firewall.list_rules())} owner-allowed destination(s)")
+        if getattr(self, "learning", None) is not None:
+            facts.append("Self-learning: lessons are recorded from finished missions")
+        if getattr(self, "self_dev", None) is not None:
+            waiting = sum(1 for x in self.self_dev.list() if x.get("state") == "AWAITING_APPROVAL")
+            facts.append(f"Self-development proposals waiting for approval: {waiting}")
+        return facts
 
     def health_check(self) -> dict:
         gemini = self.model_router.providers.get("gemini")

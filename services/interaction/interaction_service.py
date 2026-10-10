@@ -53,6 +53,8 @@ class ConversationMessage(BaseModel):
     approval_ref: Optional[str] = None
     interrupted: bool = False
     speaker_id: str = "hood"  # "hood", "x", "zak", "system"
+    # Objective HOOD offers to plan as an agent mission (owner approves in the UI).
+    suggested_mission: Optional[str] = None
 
 
 class TaskProgressItem(BaseModel):
@@ -97,6 +99,8 @@ class InteractionService:
         self.sessions: Dict[str, InteractionSession] = {}
         # Optional durable history (ConversationStore); attached by the runtime.
         self.conversation_store: Optional[Any] = None
+        # Optional callable returning live, observed status lines (set by the runtime).
+        self.status_facts: Optional[Callable[[], List[str]]] = None
         self.active_session_id = "default_session"
         self._get_or_create_session(self.active_session_id)
 
@@ -177,6 +181,8 @@ class InteractionService:
             speaker_id=speaker_id,
             approval_ref=approval_ref
         )
+        if speaker_id == "hood" and not approval_ref:
+            reply_msg.suggested_mission = self._mission_suggestion(text, session)
         self._append(session, reply_msg)
         if session.ui_state != UIState.EMERGENCY_STOP:
             # If X is active, preserve X_ACTIVE ui_state
@@ -332,7 +338,6 @@ class InteractionService:
                         )
                     session.ui_state = UIState.WAITING_FOR_APPROVAL
                     return (
-                        f"Root Owner authentication verified. Project Sentinel integrity baseline confirmed.\n\n"
                         f"I have registered a governed activation request for Executive X:\n"
                         f"• Approval ID: {req.approval_id}\n"
                         f"• Action: {req.action_type}\n"
@@ -379,15 +384,10 @@ class InteractionService:
             "okay", "ok", "yes please", "do that", "affirmative", "agreed"
         }
         cleaned_affirm = prompt_lower.strip().rstrip(".! ")
-        if cleaned_affirm in casual_affirmations:
+        if cleaned_affirm in casual_affirmations and self.approval_service.list_pending():
             pending = self.approval_service.list_pending()
             session.ui_state = UIState.IDLE
-            if not pending:
-                return (
-                    "There are no pending operational or administrative approvals requiring confirmation. "
-                    "If you would like to run an inspection or execute a specific task, please state the directive explicitly."
-                )
-            else:
+            if True:
                 top_pending = pending[0]
                 return (
                     f"There is an active pending approval for '{top_pending.action_type}' (Target: {top_pending.target}). "
@@ -492,58 +492,11 @@ class InteractionService:
             session.ui_state = UIState.IDLE
             return self._build_grounded_introduction()
 
-        # Check for Session Conversation Continuity (e.g., follow-up questions)
-        continuity_match = self._check_conversation_continuity(prompt, session)
-        if continuity_match:
-            session.ui_state = UIState.IDLE
-            return continuity_match
-
-        # 4. Check if prompt is Conversational / Personal / Q&A / Brainstorming
-        if self._is_conversational_intent(prompt, prompt_lower):
-            session.ui_state = UIState.IDLE
-            return self._handle_conversational_response(prompt, session)
-
-        # 5. Actionable Intent Analysis via ObjectiveAnalyzer
-        from services.core.objective_analyzer import ObjectiveAnalyzer, ObjectiveCategory
-        parsed = ObjectiveAnalyzer.analyze(prompt)
-
-        # 5. Dynamic Task Graph Planning & Execution
-        session.ui_state = UIState.EXECUTING
-        tasks = self.commander.plan_objective(prompt)
-
-        # Update UI active tasks in session
-        session.active_tasks = [
-            TaskProgressItem(
-                task_id=t.task_id,
-                title=t.title,
-                assigned_agent=t.assigned_agent,
-                status="RUNNING",
-                progress_pct=25
-            )
-            for t in tasks
-        ]
-
-        try:
-            # Execute plan through orchestrator with verified lead agents & diagnostics
-            results = self.commander.execute_plan(tasks)
-            # Mark active tasks as COMPLETED
-            for item in session.active_tasks:
-                if item.task_id in results and results[item.task_id].status == TaskStatus.COMPLETED:
-                    item.status = "COMPLETED"
-                    item.progress_pct = 100
-                elif item.task_id in results and results[item.task_id].status == TaskStatus.FAILED:
-                    item.status = "FAILED"
-
-            synthesis = self.commander.synthesize_objective_result(results)
-            formatted_text = synthesis.get("formatted_text", "")
-            if not formatted_text:
-                formatted_text = f"Objective executed successfully across {len(tasks)} tasks."
-            return formatted_text
-        except Exception as e:
-            for item in session.active_tasks:
-                if item.status == "RUNNING":
-                    item.status = "FAILED"
-            return f"Task execution encountered an issue: {str(e)}"
+        # Everything else: a real model answer grounded in live status and this
+        # conversation. Chat never executes work or reports work it did not do;
+        # build requests are offered as agent missions the owner approves.
+        session.ui_state = UIState.IDLE
+        return self._handle_conversational_response(prompt, session)
 
     def _synthesize_response_with_speaker(self, prompt: str, session: InteractionSession) -> Tuple[str, str, Optional[str]]:
         """
@@ -581,244 +534,163 @@ class InteractionService:
         text = self._synthesize_response(prompt, session)
         return (text, "hood", None)
 
-    def _build_grounded_introduction(self) -> str:
-        """Constructs an authoritative, grounded self-introduction reflecting true HOOD architecture."""
-        from services.core.system_diagnostics import SystemDiagnosticsCollector
-        diag = SystemDiagnosticsCollector.collect(self.config)
+    # ------------------------------------------------------------------ grounding
+    HISTORY_TURNS = 12          # recent messages sent to the model with each request
+    HISTORY_CHARS = 1500        # per message
+    CHAT_MAX_TOKENS = 8192
 
-        intro = (
-            "I am HOOD, your provider-independent personal AI operating system.\n\n"
-            "1. Authority Model:\n"
-            "Zak is the sole and final human authority. Silence is never taken as approval. "
-            "All consequential or destructive actions require explicit approval under strict governance.\n\n"
-            "2. Current Capabilities:\n"
-            "- Multi-modal interaction (unified low-latency Voice & Text with barge-in interruption)\n"
-            "- Natural language dynamic planning and DAG orchestration across domain lead agents\n"
-            "- Local software development execution, test running, and safe reversible code changes\n"
-            "- Native Windows desktop observation and governed interaction\n"
-            "- Headless browser automation and evidence collection\n"
-            "- Cryptographically enrolled multi-node cluster coordination\n"
-            "- Verified self-learning, arena benchmarking, and experience collection\n\n"
-            "3. Operational Constraints (What I Cannot Do):\n"
-            "- I cannot spend money autonomously (strict $0.00 incremental spend policy)\n"
-            "- I cannot execute unapproved consequential actions (L3+ risk requires explicit approval)\n"
-            "- I cannot modify your system or execute destructive tasks without backup/rollback verification\n"
-            "- I cannot communicate externally or activate dormant systems without permission\n\n"
-            "4. AI Levels Available:\n"
-            "- Level 1 (External): Gemini 2.5 Flash (Primary reasoner, zero-cost quota)\n"
-            "- Level 2 (Self-Hosted): LLaMA 3.1 8B Instruct (Secondary local offline engine via Ollama/vLLM)\n"
-            "- Level 3 (HOOD Specialized): Hood-Code-v1 (Candidate model strictly maintained in Shadow mode)\n\n"
-            "5. Domain Lead Agents Available:\n"
-            "- Engineering_Lead (Architecture, software, dev execution, QA)\n"
-            "- Cybersecurity_Lead (AppSec, secret isolation, sandbox boundaries)\n"
-            "- Commerce_Lead (Business opportunity, unit economics, margin analysis)\n"
-            "- Research_Lead (Primary source discovery, web intelligence)\n"
-            "- Data_Lead (Validation, conflict detection, empirical confidence)\n"
-            "- Operations_Lead (System telemetry, environment inspection, hardware governance)\n\n"
-            "6. Executive X Status:\n"
-            "Executive X is currently strictly DORMANT. It will not be awakened without your explicit directive."
-        )
-        return intro
+    _BUILD_VERB = (r"(create|build|make|develop|code|write|generate|design|set\s*up|implement|cr[ée]er|"
+                   r"construire|d[ée]velopper|faire)")
+    _BUILD_NOUN = (r"(website|site|web\s*app|app|application|landing|page|api|script|program|tool|bot|game|"
+                   r"dashboard|store|shop|backend|frontend|database|plugin|extension|project|service|projet|boutique)")
+    # Either order: "create a website ..." or "... a website ... can you create it?"
+    _BUILD_RE = re.compile(rf"\b{_BUILD_VERB}\b.{{0,120}}\b{_BUILD_NOUN}\b|\b{_BUILD_NOUN}\b.{{0,160}}\b{_BUILD_VERB}\b",
+                           re.IGNORECASE | re.DOTALL)
+    _AFFIRM = {"yes", "yep", "yeah", "sure", "ok", "okay", "go ahead", "do it", "proceed", "please do",
+               "yes please", "oui", "vas-y", "go", "start", "let's go", "lets go"}
 
-    def _check_conversation_continuity(self, prompt: str, session: InteractionSession) -> Optional[str]:
-        """Provides natural conversational continuity grounded in previous messages in the session."""
-        p_lower = prompt.lower()
-        # Look for references to previous recommendations or statements
-        if any(k in p_lower for k in ["number one recommendation", "top recommendation", "first recommendation", "#1 recommendation"]):
-            # Search recent assistant messages for recommendations
+    def _owner_name(self, session: InteractionSession) -> str:
+        sid = session.session_id
+        if sid.startswith("user:") and self.auth_service and hasattr(self.auth_service, "get_user_by_id"):
+            user = self.auth_service.get_user_by_id(sid[5:]) or {}
+            name = (user.get("display_name") or user.get("username") or "").strip()
+            if name:
+                return name
+        return "Zak"
+
+    def _live_facts(self) -> List[str]:
+        """Observed facts about HOOD right now. Nothing here is assumed or aspirational."""
+        facts: List[str] = []
+        try:
+            router = getattr(self.commander, "model_router", None)
+            if router is not None:
+                from packages.contracts import ProviderName
+                g = router.providers.get(ProviderName.GEMINI)
+                if g is not None and g.enabled and g.is_healthy():
+                    model = g.resolve_model(ModelRequest(prompt="", model_class=ModelClass.STANDARD))
+                    facts.append(f"AI model (Level 1): Google Gemini, chat model {model}")
+                else:
+                    facts.append("AI model (Level 1): no Gemini API key configured")
+                local = router.providers.get(ProviderName.LOCAL)
+                facts.append("Level 2 (local model on this PC): " +
+                             ("enabled" if local is not None and local.enabled else "not installed/enabled"))
+                facts.append("Level 3 (HOOD's own trained model): does not exist yet")
+        except Exception as exc:
+            facts.append(f"AI model status unavailable ({type(exc).__name__})")
+        try:
+            facts.append(f"Approvals waiting for the owner: {len(self.approval_service.list_pending())}")
+        except Exception:
+            pass
+        if self.x_session_manager is not None:
+            try:
+                facts.append("Executive X: " + str(self.x_session_manager.get_status().get("badge", "unknown")))
+            except Exception:
+                pass
+        stop = getattr(self, "emergency_stop", None)
+        if stop is not None:
+            facts.append("Emergency stop: " + ("ENGAGED" if getattr(stop, "is_active", False) else "not engaged"))
+        if callable(self.status_facts):
+            try:
+                facts.extend(self.status_facts())
+            except Exception as exc:
+                facts.append(f"Some live status could not be read ({type(exc).__name__})")
+        facts.append("From chat HOOD cannot run any action: chat only talks. "
+                     "Real work runs as agent missions the owner approves.")
+        return facts
+
+    def _mission_suggestion(self, text: str, session: InteractionSession) -> Optional[str]:
+        """Objective to offer as an agent mission, or None. Never starts anything."""
+        cleaned = text.strip()
+        if self._BUILD_RE.search(cleaned):
+            return cleaned[:8000]
+        if cleaned.lower().rstrip(".! ") in self._AFFIRM:
             for msg in reversed(session.messages):
-                if msg.sender == "Hood" and "Top 3 High-Value Zero-Cost Improvements:" in msg.text:
-                    from services.core.system_diagnostics import SystemDiagnosticsCollector
-                    diag = SystemDiagnosticsCollector.collect(self.config)
-                    top_imp = diag.get("improvements", [{}])[0]
-                    title = top_imp.get("title", "Local LLM Acceleration via Ollama / llama.cpp")
-                    impact = top_imp.get("impact", "Enables completely private, offline model execution at $0 incremental cost.")
-                    cost = top_imp.get("cost", "$0.00")
-                    return (
-                        f"My number one recommendation is:\n\n"
-                        f"1. {title} (Cost: {cost})\n"
-                        f"Impact: {impact}\n\n"
-                        f"This unlocks private, offline, provider-independent model execution at zero incremental spend."
-                    )
-    def _is_conversational_intent(self, prompt: str, prompt_lower: str) -> bool:
-        """
-        Determines whether a user prompt represents Conversational Mode vs Operational Mode.
-        Conversational: questions, discussion, explanations, brainstorming, personal memory, greetings, advice.
-        Operational: execution requests, system diagnostics/inspections, file changes, code execution, automation.
-        """
-        # Explicit Operational Directives (imperative commands authorizing changes or execution)
-        explicit_action_directives = [
-            "inspect my current hood environment",
-            "inspect my environment",
-            "system-status",
-            "inspect host",
-            "run test", "execute task", "git commit", "create file", "modify file",
-            "deploy ", "repair environment"
+                if msg.speaker_id == "hood" and msg.suggested_mission:
+                    return msg.suggested_mission
+                if msg.speaker_id == "hood":
+                    break
+        return None
+
+    def _build_grounded_introduction(self) -> str:
+        """Self-introduction built only from live, observed facts."""
+        lines = [
+            "I am HOOD, your personal AI system. You are the Root Owner and the final authority: "
+            "nothing consequential happens without your explicit approval.",
+            "",
+            "What is true right now:",
         ]
-        
-        # Check if user is asking a question rather than issuing an imperative command
-        cleaned_prompt = prompt_lower.strip()
-        is_question = (
-            cleaned_prompt.endswith("?") or
-            any(cleaned_prompt.startswith(qw) for qw in [
-                "why", "how", "what", "who", "when", "where", "can you", "could you", "would you",
-                "is it", "are you", "do you", "explain", "tell me"
-            ])
-        )
-
-        # If it's a question, do NOT treat words like "fix", "build", "develop" as operational authorization
-        if is_question:
-            # Only treat as operational if specifically asking to run an inspection or run tasks right now
-            if any(k in cleaned_prompt for k in ["inspect my current hood environment", "inspect my environment"]):
-                return False
-            return True
-
-        # Non-questions with explicit operational directives are operational
-        if any(op in prompt_lower for op in explicit_action_directives):
-            return False
-
-        # Non-questions with imperative action verbs at start
-        if any(cleaned_prompt.startswith(v) for v in ["fix ", "build ", "refactor ", "repair ", "execute "]):
-            return False
-
-        # Conversational Triggers
-        conversational_triggers = [
-            "what do you know about me",
-            "what do u know about me",
-            "who am i",
-            "remember about me",
-            "my memory",
-            "hello", "hi", "hey",
-            "explain what project sentinel does",
-            "what is project sentinel",
-            "what does project sentinel do",
-            "help me plan a website",
-            "plan a website",
-            "what can you do",
-            "status of x",
-            "what is the status of x",
-            "how are you",
-            "thank you", "thanks",
-            "tell me about",
-            "brainstorm",
-            "suggest",
-            "explain"
+        lines += [f"- {f}" for f in self._live_facts()]
+        lines += [
+            "",
+            "My agents (they work inside approved missions): Planner, Engineer, QA, Reviewer, "
+            "and an independent Verifier that checks the work with real tests.",
         ]
-        if any(cv in prompt_lower for cv in conversational_triggers):
-            return True
+        return "\n".join(lines)
 
-        return True
+    def _history_for_model(self, session: InteractionSession, owner: str) -> str:
+        # The current user message is already appended; send the turns before it.
+        prior = session.messages[:-1][-self.HISTORY_TURNS:]
+        rows = []
+        for m in prior:
+            who = owner if m.speaker_id == "zak" else ("X" if m.speaker_id == "x" else "HOOD")
+            rows.append(f"{who}: {m.text[:self.HISTORY_CHARS]}")
+        return "\n".join(rows)
 
     def _handle_conversational_response(self, prompt: str, session: InteractionSession) -> str:
-        """
-        Generates grounded, truthful conversational responses using L1 Gemini / ModelRouter
-        augmented with long-term memory retrieval and real system status.
-        """
-        p_lower = prompt.lower()
+        """A real model answer, grounded in live facts, owner-declared memory and this conversation.
 
-        # 1. Memory Retrieval for Personal Questions
-        is_personal_memory = any(k in p_lower for k in [
-            "what do you know about me", "what do u know about me", "who am i", "remember about me", "my profile"
-        ])
-
-        retrieved_memories: List[str] = []
-        if is_personal_memory and self.memory_service:
+        If the model can't be reached, say so plainly; never substitute a pre-written answer.
+        """
+        owner = self._owner_name(session)
+        memories: List[str] = []
+        if self.memory_service:
             try:
-                # Query personal and general memories safely, scoped to this principal
                 principal = self._principal_username(session.session_id)
-                p_mems = self.memory_service.query_memories(project="personal", principal=principal)
-                c_mems = self.memory_service.query_memories(project="conversation", principal=principal)
-                for m in p_mems + c_mems:
-                    if m.content and m.content not in retrieved_memories:
-                        retrieved_memories.append(m.content)
+                for m in self.memory_service.query_memories(project="personal", principal=principal)[:10]:
+                    if m.content and m.content not in memories:
+                        memories.append(m.content)
             except Exception:
                 pass
 
-        # 2. Check X Status Questions
-        if "status of x" in p_lower or "what is the status of x" in p_lower:
-            x_status = "DORMANT"
-            if hasattr(self.commander, "sentinel_service") and self.commander.sentinel_service:
-                x_status = "DORMANT" if self.commander.sentinel_service.x_red_team.is_dormant else "ACTIVE_EXERCISE"
-            return (
-                f"Executive X is currently strictly {x_status}.\n\n"
-                f"It remains completely dormant by default under sovereign governance. "
-                f"It can only be awakened by your explicit cryptographic authorization for governed red-team assessments."
-            )
-
-        # 3. Assemble Truthful Context Prompt for ModelRouter / Gemini
-        memory_context = ""
-        if is_personal_memory:
-            if retrieved_memories:
-                memory_context = "Grounded Personal Memories retrieved from authorized database:\n" + "\n".join(f"- {m}" for m in retrieved_memories[:5])
-            else:
-                memory_context = (
-                    "Grounded Personal Memories retrieved from authorized database: NONE.\n"
-                    "Memory database currently has a clean slate for personal profile facts."
-                )
-
-        sentinel_info = "Project Sentinel is HOOD's sovereign cybersecurity architecture (continuous vulnerability monitoring, dynamic firewall rules, automated self-healing, integrity verification, and dormant X red-team engine)."
-
+        facts = "\n".join(f"- {f}" for f in self._live_facts())
+        memory_block = "\n".join(f"- {m}" for m in memories) or "- (nothing recorded yet)"
+        history = self._history_for_model(session, owner)
         system_instruction = (
-            "You are HOOD, a provider-independent personal AI operating system created for Zack (Zakaria), your Root Owner.\n"
-            "Persona: Intelligent, loyal, concise, futuristic, cinematic, and truthful.\n"
-            f"Governance: Zak is the sole and final human authority. Project Sentinel status: {sentinel_info}\n"
-            f"{memory_context}\n"
-            "Rules:\n"
-            "1. Answer naturally, warmly, and directly as a personal AI assistant.\n"
-            "2. If asked what you know about Zak, explain truthfully that he is Zack (Zakaria), your Root Owner, and report honestly what is in memory (if clean slate, explicitly state that you remember no other personal details yet without inventing any).\n"
-            "3. Do NOT display raw task graphs, internal governance matrices, or technical telemetry dumps unless explicitly asked.\n"
-            "4. Keep answers engaging, helpful, and grounded.\n"
-            "5. NEVER offer, suggest, or promise to create, generate, or grant user accounts, credentials, or administrative roles in conversation. Always direct user creation and credential management to the authenticated User Administration portal.\n"
-            "6. If Zak asks about a friend, colleague, pet, or third party, answer strictly grounded in memory. Do not assume any entity is an authorized user unless verified in the user registry."
+            f"You are HOOD, {owner}'s personal AI system. {owner} is the Root Owner and the final authority.\n"
+            f"Talk like a capable, warm, direct human assistant. Reply in the language {owner} writes in. "
+            "Continue the conversation naturally: don't open every reply with a greeting.\n\n"
+            "Honesty rules (strict):\n"
+            "1. State facts about HOOD only from LIVE STATUS below. If something is not listed, say you "
+            "don't know or can't check it from chat. Never invent monitoring, scans, protections or results.\n"
+            "2. Never claim you ran, built, changed, tested or verified anything. From chat you can only talk.\n"
+            f"3. If {owner} wants something built or done (a website, an app, a script...), help shape the "
+            "requirements, then say a mission plan is offered below the reply: pressing \"Plan this as a mission\" "
+            "lets the agents build it after the owner approves the plan.\n"
+            f"4. Personal facts about {owner} or other people come only from MEMORY; otherwise say you don't "
+            "know yet.\n"
+            "5. Never create or offer accounts, passwords or roles in chat: the owner does that in Settings.\n\n"
+            f"LIVE STATUS (observed now):\n{facts}\n\n"
+            f"MEMORY (declared by the owner):\n{memory_block}\n"
         )
+        full_prompt = (f"{system_instruction}\nConversation so far:\n{history}\n\n" if history
+                       else f"{system_instruction}\n") + f"{owner}: {prompt}\nHOOD:"
 
-        full_prompt = f"{system_instruction}\n\nUser: {prompt}\n\nHOOD:"
-
-        # 4. Invoke ModelRouter (Gemini primary with deterministic fallback)
         try:
-            req = ModelRequest(
-                prompt=full_prompt,
-                model_class=ModelClass.FAST,
-                task_id=f"conv_{uuid.uuid4().hex[:8]}"
-            )
-            model_resp = self.commander.model_router.invoke(req)
-            if model_resp and model_resp.text and not getattr(model_resp, "is_mock", False) and not model_resp.text.startswith("Mock response from"):
-                return model_resp.text.strip()
-        except Exception:
-            pass
-
-        # 5. Deterministic Honest Fallback if Model Provider is unreachable
-        if is_personal_memory:
-            if not retrieved_memories:
-                return (
-                    "I know that you are Zack (Zakaria), my Root Owner and the sole human authority of HOOD. "
-                    "Beyond your identity and governance authority, my personal memory bank currently holds no recorded profile data or preferences—we have a clean slate. "
-                    "I only remember what you explicitly share and authorize."
-                )
-            else:
-                return f"According to my memory bank, I remember:\n" + "\n".join(f"• {m}" for m in retrieved_memories[:3])
-
-        if "hello" in p_lower or "hi" in p_lower:
-            return "Greetings, Zack. HOOD is online and standing by. What are we focusing on today?"
-
-        if "sentinel" in p_lower:
-            return (
-                "Project Sentinel is HOOD's unified cybersecurity hub. It provides continuous vulnerability monitoring, "
-                "read-only firewall inspection, system file integrity checks, automated self-healing, and maintains the X red-team in a strict dormant state."
-            )
-
-        if "what can you do" in p_lower:
-            return (
-                "As your personal AI operating system, I assist with:\n\n"
-                "• Conversational intelligence, memory, and everyday problem solving\n"
-                "• Software development, test execution, and safe self-evolution\n"
-                "• Project Sentinel cybersecurity, vulnerability auditing, and self-healing\n"
-                "• Economic Engine tracking and zero-cost resource optimization\n"
-                "• Governed Windows desktop supervision and browser tasks\n"
-                "• Governed multi-agent orchestration under your strict approval"
-            )
-
-        return "Understood, Zack. I am standing by to assist you in conversational or operational mode. How shall we proceed?"
+            req = ModelRequest(prompt=full_prompt, model_class=ModelClass.STANDARD,
+                               max_tokens=self.CHAT_MAX_TOKENS, allow_partial=True,
+                               task_id=f"conv_{uuid.uuid4().hex[:8]}")
+            resp = self.commander.model_router.invoke(req)
+        except Exception as exc:
+            return (f"I couldn't reach the AI model, so I can't answer properly right now.\n"
+                    f"Reason: {str(exc)[:300]}\n"
+                    "Check Settings › Model provider (key, prices, Test connection).")
+        if getattr(resp, "is_mock", False) or resp.text.startswith("Mock response from"):
+            return ("No live AI model is connected, so I can't give you a real answer. "
+                    "Add your API key and prices in Settings › Model provider.")
+        text = resp.text.strip()
+        if getattr(resp, "truncated", False):
+            text += "\n\n[My reply was cut off at the length limit. Say \"continue\" and I'll go on.]"
+        return text
 
     def _handle_x_active_conversation(self, prompt: str, session: InteractionSession, x_status: Dict[str, Any]) -> str:
         """

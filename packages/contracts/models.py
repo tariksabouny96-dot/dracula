@@ -241,6 +241,8 @@ class ModelRequest(BaseModel):
     response_mime_type: Optional[str] = None
     # JSON Schema the provider should constrain decoding to (output is still validated by Hood).
     response_schema: Optional[Dict[str, Any]] = None
+    # Chat may accept a reply cut off at max_tokens (marked truncated); plans and code never do.
+    allow_partial: bool = False
 
 
 class ModelResponse(BaseModel):
@@ -251,6 +253,7 @@ class ModelResponse(BaseModel):
     latency_ms: int
     is_mock: bool = False
     is_fallback: bool = False
+    truncated: bool = False
 
 
 class TaskNode(BaseModel):

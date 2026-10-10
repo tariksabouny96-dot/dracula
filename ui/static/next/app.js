@@ -334,6 +334,19 @@
   }
 
   // ------------------------------------------------------------------ command input (chat or agent mission)
+  // Minimal, safe formatting for model replies: line breaks, **bold**, `code`. DOM nodes only, never HTML.
+  function richText(text) {
+    const frag = document.createDocumentFragment();
+    String(text).split('\n').forEach((line, i) => {
+      if (i) frag.append(h('br'));
+      line.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).forEach((part) => {
+        if (/^\*\*[^*]+\*\*$/.test(part)) frag.append(h('b', {}, part.slice(2, -2)));
+        else if (/^`[^`]+`$/.test(part)) frag.append(h('code', {}, part.slice(1, -1)));
+        else if (part) frag.append(document.createTextNode(part));
+      });
+    });
+    return frag;
+  }
   async function runCommand(text, logEl) {
     text = text.trim();
     if (!text) return;
@@ -346,8 +359,15 @@
     const r = await api.post('/api/chat', { text });
     setAvatar('idle');
     if (!r.ok) { logEl.textContent = 'Hood could not answer: ' + r.error; return; }
-    logEl.textContent = (r.data.sender || 'Hood') + ': ' + r.data.text;
-    if (voice.autoSpeak) voice.speak(r.data.text);
+    clear(logEl).append(h('b', {}, (r.data.sender || 'Hood') + ': '), richText(r.data.text));
+    app.debouncedOverview();  // the reply was a live model call: refresh the provider badge
+    if (r.data.suggested_mission) {
+      // HOOD never starts work from chat: it offers a plan the owner approves.
+      const objective = r.data.suggested_mission;
+      logEl.append(h('div', { class: 'form-actions' }, h('button', { class: 'btn small primary', type: 'button',
+        onclick: () => planMissionDialog(objective) }, 'Plan this as a mission')));
+    }
+    if (voice.autoSpeak) voice.speak(String(r.data.text).replace(/[*`#_]/g, ''));
   }
   function planMissionDialog(objective) {
     const obj = h('textarea', { class: 'big', 'aria-label': 'Objective', maxlength: '8000' });
@@ -1029,6 +1049,67 @@
     return card('Model provider (Gemini)', box);
   }
 
+  // ------------------------------------------------------------------ Settings › Security and Users
+  function securityCard() {
+    const cur = h('input', { type: 'password', autocomplete: 'current-password', 'aria-label': 'Current password' });
+    const nw = h('input', { type: 'password', autocomplete: 'new-password', 'aria-label': 'New password' });
+    const again = h('input', { type: 'password', autocomplete: 'new-password', 'aria-label': 'Repeat new password' });
+    const change = async () => {
+      if (nw.value !== again.value) { toast('The new passwords do not match.'); return; }
+      const r = await api.post('/api/auth/change_password', { current_password: cur.value, new_password: nw.value });
+      toast(r.ok ? 'Password changed.' : 'Password not changed: ' + r.error);
+      if (r.ok) { cur.value = ''; nw.value = ''; again.value = ''; }
+    };
+    const recovery = () => {
+      const pw = h('input', { type: 'password', autocomplete: 'current-password', 'aria-label': 'Current password' });
+      confirmDialog('New recovery key', ['A new one-time recovery key replaces the old one. It is shown only once: store it offline.'],
+        'Generate key', async () => {
+          const r = await api.post('/api/auth/rotate_recovery_key', { current_password: pw.value });
+          if (!r.ok) return r;
+          setTimeout(() => modal('Your new recovery key', h('div', {}, h('p', {}, 'Write this down and keep it offline. It will not be shown again.'),
+            h('p', { class: 'mono' }, r.data.one_time_recovery_key),
+            h('div', { class: 'form-actions' }, h('button', { class: 'btn', type: 'button', onclick: closeModal }, 'I stored it')))), 0);
+          return r;
+        }, h('label', {}, 'Current password', pw));
+    };
+    return card('Security', h('div', { class: 'form' },
+      h('label', {}, 'Current password', cur), h('label', {}, 'New password', nw), h('label', {}, 'Repeat new password', again),
+      h('div', { class: 'form-actions' }, h('button', { class: 'btn small primary', type: 'button', onclick: change }, 'Change password'),
+        session.role === 'ROOT_OWNER' ? h('button', { class: 'btn small', type: 'button', onclick: recovery }, 'New recovery key') : null)));
+  }
+
+  function usersCard() {
+    const box = h('div', {});
+    const ROLES = ['VIEWER', 'OPERATOR', 'MANAGER', 'ADMINISTRATOR'];
+    const load = () => fill(box, async () => {
+      const r = await api.get('/api/admin/users');
+      if (!r.ok) return unavailable(r, 'Users');
+      const u = h('input', { autocomplete: 'off', 'aria-label': 'Username' });
+      const dn = h('input', { autocomplete: 'off', 'aria-label': 'Display name' });
+      const pw = h('input', { type: 'password', autocomplete: 'new-password', 'aria-label': 'Password' });
+      const role = h('select', { 'aria-label': 'Role' }, ROLES.map((x) => h('option', { value: x }, x)));
+      return h('div', {},
+        r.data.map((x) => h('div', { class: 'list-row' },
+          h('div', { class: 'row-main' }, h('b', {}, x.display_name + ' (' + x.username + ')'),
+            h('small', {}, x.role + ' · ' + (x.is_active ? 'active' : 'disabled') + (x.last_login ? ' · last login ' + fmtTime(x.last_login) : ''))),
+          x.role === 'ROOT_OWNER' ? null : h('button', { class: 'btn small', type: 'button', onclick: async () => {
+            const res = await api.post('/api/admin/users/status', { user_id: x.user_id, is_active: !x.is_active });
+            toast(res.ok ? 'User ' + (x.is_active ? 'disabled.' : 'enabled.') : 'Not changed: ' + res.error); load();
+          } }, x.is_active ? 'Disable' : 'Enable'))),
+        h('h4', {}, 'Add a user'),
+        h('div', { class: 'form' }, h('label', {}, 'Username', u), h('label', {}, 'Display name', dn),
+          h('label', {}, 'Password', pw), h('label', {}, 'Role', role),
+          h('div', { class: 'form-actions' }, h('button', { class: 'btn small primary', type: 'button', onclick: async () => {
+            const res = await api.post('/api/admin/users/create', { username: u.value.trim(), display_name: dn.value.trim(),
+              password: pw.value, role: role.value });
+            toast(res.ok ? 'User created.' : 'User not created: ' + res.error);
+            if (res.ok) load();
+          } }, 'Create user'))));
+    });
+    load();
+    return card('Users', box);
+  }
+
   // ------------------------------------------------------------------ Settings
   function settingsView() {
     const sessions = h('div', {});
@@ -1045,10 +1126,12 @@
       h('div', { class: 'two-col' },
         card('Account', h('div', {}, h('dl', { class: 'kv' }, h('dt', {}, 'User'), h('dd', {}, String(session.user)), h('dt', {}, 'Role'), h('dd', {}, String(session.role))),
           h('div', { class: 'form-actions' }, h('button', { class: 'btn', type: 'button', onclick: () => session.logout() }, 'Sign out'),
-            h('a', { class: 'btn', href: '/classic' }, 'Classic console (password, users)')))),
+            h('a', { class: 'btn', href: '/classic' }, 'Classic console (legacy)')))),
         card('Display', h('div', {}, h('label', { class: 'switchline' }, reduce, ' Reduce motion'),
           h('div', { class: 'form-actions' }, h('button', { class: 'btn', type: 'button', onclick: () => { widgets.layout = DEFAULT_LAYOUT.map((w) => ({ ...w })); widgets.save(); toast('Layout reset.'); } }, 'Reset dashboard layout'))))),
       session.role === 'ROOT_OWNER' ? h('div', { style: { marginTop: '14px' } }, modelProviderCard()) : null,
+      h('div', { class: 'two-col', style: { marginTop: '14px' } }, securityCard(),
+        session.role === 'ROOT_OWNER' ? usersCard() : null),
       h('div', { style: { marginTop: '14px' } }, card('Active sessions', sessions)));
   }
 

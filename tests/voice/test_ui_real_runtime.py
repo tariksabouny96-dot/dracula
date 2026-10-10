@@ -2,8 +2,8 @@
 Integration Test Suite for HOOD Interface Runtime Connection & Telemetry.
 Verifies:
 1. Introduction prompt returns grounded conversational response without executing actions.
-2. Complex objective prompt triggers real DAG planning, execution across lead agents, and synthesizes 3 zero-cost improvements.
-3. Conversation continuity is preserved across turns.
+2. An objective in chat is never "executed" or reported as done: chat only talks.
+3. Conversation continuity: earlier turns are sent to the model.
 4. /api/telemetry returns grounded, truthful runtime telemetry.
 5. Concurrent Emergency Stop halts execution and revokes capabilities safely.
 """
@@ -47,12 +47,7 @@ def runtime_setup():
 
 
 def test_hood_interface_introduction_advisory_mode(runtime_setup):
-    """
-    Acceptance Test 1:
-    Verifies that asking HOOD to introduce itself from the UI returns a grounded advisory
-    response specifying Zak's authority, capabilities, constraints, AI levels 1-3,
-    6 domain leads, and dormant X status, with 0 executed tasks.
-    """
+    """The self-introduction is built only from live facts: no invented models or agents."""
     interaction = runtime_setup["interaction"]
     prompt = (
         "Hood, introduce yourself to me. Tell me who you are, who I am in your authority model, "
@@ -63,31 +58,19 @@ def test_hood_interface_introduction_advisory_mode(runtime_setup):
     msg = interaction.handle_text_input(prompt)
     assert msg.sender == "Hood"
     text = msg.text
-
-    # Verify grounded elements
-    assert "Zak" in text
-    assert "sole human owner" in text or "final human authority" in text
-    assert "Level 1" in text
-    assert "Level 2" in text
-    assert "Level 3" in text
-    assert "Engineering_Lead" in text or "Engineering Lead" in text
-    assert "Cybersecurity_Lead" in text or "Cybersecurity Lead" in text
-    assert "Operations_Lead" in text or "Operations Lead" in text
-    assert "X_DORMANT" in text or "dormant" in text.lower()
-
-    # Verify no tasks were executed (advisory/conversational only)
+    assert "Root Owner" in text and "final authority" in text
+    for level in ("Level 1", "Level 2", "Level 3"):
+        assert level in text
+    assert "does not exist yet" in text                      # Level 3 is not claimed
+    assert "Planner" in text and "Verifier" in text           # the agents that really exist
+    for invented in ("Commerce_Lead", "LLaMA 3.1", "Hood-Code-v1", "self-healing"):
+        assert invented not in text
     session = interaction.sessions[interaction.active_session_id]
     assert len(session.active_tasks) == 0
 
 
-def test_hood_interface_real_dag_execution_and_improvements(runtime_setup):
-    """
-    Acceptance Test 2:
-    Verifies that submitting 'Inspect my current HOOD environment and give me the three
-    highest-value improvements possible without spending money...' triggers real DAG planning
-    across Operations and Engineering leads, collects real diagnostics, produces 3 high-value
-    improvements at $0 cost, and updates task progress.
-    """
+def test_hood_interface_objective_is_never_faked(runtime_setup):
+    """An objective typed in chat is not executed, and nothing is reported as done or verified."""
     interaction = runtime_setup["interaction"]
     prompt = (
         "Inspect my current HOOD environment and give me the three highest-value improvements "
@@ -95,33 +78,32 @@ def test_hood_interface_real_dag_execution_and_improvements(runtime_setup):
     )
     msg = interaction.handle_text_input(prompt)
     assert msg.sender == "Hood"
-    text = msg.text
-
-    # Verify evidence synthesis & 3 improvements
-    assert "Three High-Value Improvements" in text or "High-Value Improvements" in text or "Option" in text or "1." in text
-    assert "$0.00" in text or "zero-cost" in text.lower() or "$0" in text
-
-    # Verify real DAG tasks were created and executed
     session = interaction.sessions[interaction.active_session_id]
-    assert len(session.active_tasks) >= 2
-    for task in session.active_tasks:
-        assert task.status == "COMPLETED"
-        assert task.progress_pct == 100
+    assert session.active_tasks == []
+    for fabricated in ("verified successfully", "Tasks Executed", "All completed with verified evidence"):
+        assert fabricated not in msg.text
 
 
 def test_hood_interface_conversation_continuity(runtime_setup):
-    """
-    Acceptance Test 3:
-    Verifies multi-turn conversational continuity in the same session.
-    A follow-up question refers back to previous recommendations.
-    """
+    """Follow-ups are answered with the earlier turns sent to the model."""
     interaction = runtime_setup["interaction"]
-    prompt1 = "Inspect my current HOOD environment and give me the three highest-value improvements possible without spending money."
-    interaction.handle_text_input(prompt1)
+    seen = []
 
-    prompt2 = "What was your number one recommendation?"
-    msg2 = interaction.handle_text_input(prompt2)
-    assert "1" in msg2.text or "recommendation" in msg2.text.lower()
+    class Router:
+        providers = {}
+
+        def invoke(self, req):
+            from packages.contracts import ModelResponse, ModelUsage, ProviderName
+            seen.append(req.prompt)
+            return ModelResponse(text="Reply " + str(len(seen)), provider=ProviderName.GEMINI,
+                                 model_name="stub", usage=ModelUsage(), latency_ms=1)
+
+    interaction.commander.model_router = Router()
+    interaction.handle_text_input("Give me three improvements for my laptop setup.")
+    msg2 = interaction.handle_text_input("What was your number one recommendation?")
+    assert msg2.text == "Reply 2"
+    assert "Give me three improvements for my laptop setup." in seen[1]
+    assert "HOOD: Reply 1" in seen[1]
 
 
 def test_hood_interface_telemetry_endpoint(runtime_setup):

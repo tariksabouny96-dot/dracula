@@ -251,59 +251,38 @@ class PlanResultSynthesizer:
 
         diag = diagnostics or SystemDiagnosticsCollector.collect()
 
-        # Build human-readable response text
+        # Human-readable report. It states only what happened: each task's real
+        # status and output. Lead-agent output is model analysis, never verified
+        # work, and is labelled as such; no pre-written findings are added.
+        completed = sum(1 for t in executed_tasks.values() if t.status.value == "COMPLETED")
+        failed = sum(1 for t in executed_tasks.values() if t.status.value == "FAILED")
         lines = [
-            "HOOD",
-            "Objective understood.\n",
-            f"Intent: {parsed.description}",
-            f"Category: {parsed.category.value}\n",
-            "Constraints Enforced:",
-            f"  - Read-Only Mode: {'ACTIVE (No system modifications allowed)' if parsed.constraints.read_only else 'INACTIVE'}",
-            f"  - Financial Policy: Max incremental spend ${parsed.constraints.max_incremental_cost_usd:.2f} (Strict $0.00)",
-            f"  - Executive X Status: {'ACTIVE' if parsed.constraints.x_allowed else 'DORMANT (Explicitly unactivated)'}",
-            f"  - Execution Scope: {parsed.constraints.execution_scope}\n",
-            f"Domain Leads Assigned: {', '.join(agents_used)}",
-            f"Tasks Executed: {len(executed_tasks)} (All completed with verified evidence)\n",
-            "Grounded Telemetry & System Status:",
-            f"  - System Health: {diag.get('status', 'HEALTHY')}",
+            f"Objective: {parsed.description}",
+            f"Category: {parsed.category.value}",
+            f"Tasks: {len(executed_tasks)} run, {completed} finished, {failed} failed. "
+            "These are analyses only: nothing was built, changed or independently verified.",
+            "",
+        ]
+        for t in executed_tasks.values():
+            lines.append(f"- {t.title} ({t.assigned_agent}): {t.status.value}")
+            result = t.response.result if t.response else None
+            text = result.get("analysis") if isinstance(result, dict) else result
+            if isinstance(result, dict) and result.get("simulated"):
+                text = "(simulated output, no live model) " + str(text or "")
+            if text:
+                lines.append("  " + str(text).strip().replace("\n", " ")[:600])
+        lines += [
+            "",
+            "Measured on this machine:",
             f"  - Host OS: {diag['hardware']['os']} | CPU: {diag['hardware']['processor']} ({diag['hardware']['cpu_cores']} cores)",
             f"  - Memory: {diag['hardware']['ram_total_gb']} GB RAM | Storage: {diag['hardware']['disk_free_gb']} GB free of {diag['hardware']['disk_total_gb']} GB",
-            f"  - Active Providers: {', '.join([f'{k}: {v}' for k, v in diag['providers'].items()])}",
-            f"  - Available Tools: {diag['active_tools_count']} verified tools registered in Tool Gateway\n"
+            f"  - Providers: {', '.join([f'{k}: {v}' for k, v in diag['providers'].items()])}",
+            f"  - Tools registered in the tool gateway: {diag['active_tools_count']}",
+            "",
+            "To have HOOD actually build or change something, start an agent mission "
+            "(/mission followed by the objective): you approve the plan, agents do the work, "
+            "and an independent verifier checks it.",
         ]
-
-        if parsed.category == ObjectiveCategory.SYSTEM_DIAGNOSTIC:
-            lines.append("Top 3 High-Value Zero-Cost Improvements:")
-            for imp in diag.get("improvements", []):
-                lines.append(f"  {imp['rank']}. {imp['title']} ({imp['cost']} spend, Risk: {imp['risk']})")
-                lines.append(f"     Impact: {imp['impact']}")
-            lines.append("\nRecommendation:")
-            lines.append("Maintain the current portable zero-cost architecture. No hardware upgrade or paid subscriptions required.")
-
-        elif parsed.category == ObjectiveCategory.RESEARCH:
-            lines.append("Research Findings:")
-            lines.append("  - Factual consensus established from primary documentation and verified schemas.")
-            lines.append("  - Unverified assertions filtered out; primary API specifications prioritized.")
-            lines.append("\nRecommendation: Rely on deterministic local tooling and free quota endpoints.")
-
-        elif parsed.category == ObjectiveCategory.PLANNING:
-            lines.append("Top 3 High-Value Engineering Improvements Proposed:")
-            lines.append("  1. Modular Async Pipeline Tuning: Streamline Inter-Agent Bus latency.")
-            lines.append("  2. Local Embedding Integration: Self-hosted semantic memory without cloud dependency.")
-            lines.append("  3. Automated Continuous Regression Guard: Run targeted adversarial checks on git pre-commit.")
-            lines.append("\nRecommendation: Adopt Proposal 1 as the next zero-cost engineering priority.")
-
-        elif parsed.category == ObjectiveCategory.COMMERCE_BUSINESS:
-            lines.append("Commercial Analysis:")
-            lines.append("  - Demand & unit economics verified feasible with positive margin potential.")
-            lines.append("  - Technical implementation leverages existing modular components.")
-            lines.append("\nRecommendation: Proceed with low-cost prototype validation.")
-
-        else:
-            lines.append("Execution Findings:")
-            lines.append("  - All assigned tasks verified successfully without errors.")
-
-        lines.append(f"\nExecution Profile: Cost: $0.00 | Risk: L0-L1 | Actions Requiring Approval: None")
 
         formatted_output = "\n".join(lines)
 

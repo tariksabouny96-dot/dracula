@@ -53,12 +53,14 @@ def test_casual_affirmation_without_pending_approval(governance_setup):
     interaction, _, _, approval_service, _ = governance_setup
     assert len(approval_service.list_pending()) == 0
 
+    # With nothing pending, "yes" is answered in the context of the conversation
+    # (not with a canned "no pending approvals"), and it never approves anything.
     resp = interaction.handle_text_input("yes")
-    assert "no pending" in resp.text.lower()
+    assert "approval" not in resp.text.lower() or "no pending" not in resp.text.lower()
     assert interaction.get_ui_state() == UIState.IDLE
-
     resp2 = interaction.handle_text_input("proceed")
-    assert "no pending" in resp2.text.lower()
+    assert resp2.sender == "Hood" and resp2.approval_ref is None
+    assert len(approval_service.list_pending()) == 0
 
 
 def test_casual_affirmation_with_pending_approval(governance_setup):

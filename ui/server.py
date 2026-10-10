@@ -608,7 +608,8 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
                 "speaker_id": getattr(resp, "speaker_id", "hood"),
                 "tasks": tasks,
                 "approval_ref": getattr(resp, "approval_ref", None),
-                "approval": approval_data
+                "approval": approval_data,
+                "suggested_mission": getattr(resp, "suggested_mission", None)
             })
 
         elif self.path == "/api/interrupt":

@@ -185,10 +185,11 @@ class GeminiProviderAdapter(BaseModelProvider):
         finish = candidate.get("finishReason", "STOP")
         parts = candidate.get("content", {}).get("parts", [])
         text_result = "".join(p.get("text", "") for p in parts if not p.get("thought"))
-        if finish == "MAX_TOKENS":
+        truncated = finish == "MAX_TOKENS"
+        if truncated and not (getattr(request, "allow_partial", False) and text_result.strip()):
             # A truncated answer is not an answer; never pass it on as complete.
             raise ProviderError(f"Gemini output truncated at maxOutputTokens={request.max_tokens}")
-        if finish not in ("STOP", "FINISH_REASON_UNSPECIFIED"):
+        if not truncated and finish not in ("STOP", "FINISH_REASON_UNSPECIFIED"):
             raise ProviderError(f"Gemini stopped with finishReason={finish}")
         if not text_result.strip():
             raise ProviderError("Gemini response contained no text")
@@ -207,4 +208,5 @@ class GeminiProviderAdapter(BaseModelProvider):
             latency_ms=elapsed_ms,
             is_mock=False,
             is_fallback=is_fallback,
+            truncated=truncated,
         )
