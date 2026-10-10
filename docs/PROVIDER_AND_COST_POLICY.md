@@ -17,3 +17,18 @@
 
 Configuration: `HOOD_GEMINI_{FAST,STANDARD,DEEP}_MODEL`, `HOOD_OPENAI_{FAST,STANDARD,DEEP}_MODEL`,
 `GEMINI_API_KEY` / vault `SECRET://gemini/api_key`, `OPENAI_API_KEY` / vault `SECRET://openai/api_key`.
+
+## Self-repair (Phase 4)
+
+Self-repair uses the **DEEP** class (default `gemini-3.8-flash`, `HOOD_GEMINI_DEEP_MODEL` to change)
+for the fix and the **STANDARD** class to read a screenshot. One report makes 1 DEEP call, 2 when a
+correction is needed, plus 1 STANDARD call per screenshot. Each call sends at most ~110,000
+characters of code excerpts (~37,000 tokens) and may answer up to 16,000 tokens, so the reservation
+is about $0.09 per DEEP call at $0.75 / $3.75 per million tokens (in / out); measured usage is
+usually lower. The same rules apply as everywhere: no price, no call; spend is reserved, settled
+and shown on the System map page (Live data).
+
+The free tier is enough for small, clear bugs, within its daily request limit. On the free tier the
+provider's terms allow it to use what you send to improve its products: don't send screenshots with
+private data. When a report ends as "no reliable fix", a stronger model may help; set it with
+`HOOD_GEMINI_DEEP_MODEL` and give it a price first.

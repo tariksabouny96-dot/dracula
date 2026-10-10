@@ -96,6 +96,29 @@ Listening (speech-to-text) stays on Gemini. Removing the key switches back to Ge
 | Voice: "Microphone permission denied" | the browser blocked the microphone | allow the microphone for `127.0.0.1` in the browser's site settings |
 | PowerShell shows `ConnectionAbortedError [WinError 10053]` | (older versions) the browser closed a connection; harmless | update: these are no longer printed |
 
+## Self-repair: "something in HOOD is broken"
+
+Root Owner only. Tell HOOD in chat (an **Investigate & fix** button appears) or open **Self-repair ›
+Report a problem**. Describe where it happens and copy any error text exactly; a screenshot helps
+(it is only sent after you tick the consent box).
+
+1. HOOD finds the parts of its code involved and asks the AI model (the DEEP model) for a minimal fix
+   plus a new test. Excerpts of HOOD's code go to the AI provider (secrets are redacted).
+2. It proves the fix in its sandbox: the new test **fails** on today's code, **passes** with the fix,
+   and **all** of HOOD's other tests still pass. One correction round at most.
+3. If it isn't sure, the report ends as **No reliable fix found** with the reason. Nothing changes.
+4. Otherwise you see the diagnosis, the three proofs and the exact change. **Apply fix** changes only
+   that (a restore point and a `.patch` file are kept in `<data>/self_repair/`); **Undo** puts the old
+   code back. Python changes need **Restart HOOD** (only when started with `hood_cli.py ui`); console
+   changes need a page reload.
+
+Limits: guardrails (auth, approvals, firewall, emergency stop, X, sandbox, self-repair itself, the
+HTTP boundary, deployment files, existing tests) are never edited. Without a sandbox on the PC you
+decide per fix whether the checks may run directly on this computer (needs **Run on my PC**). In the
+container HOOD's code is read-only, so fixes can be reviewed there but not applied. The free Gemini
+tier handles small, clear bugs; deeper problems end as "no reliable fix" (a stronger paid model helps,
+see `docs/PROVIDER_AND_COST_POLICY.md`).
+
 ## Container deployment (Docker)
 
 A production image and reverse-proxy topology ship in the repo (`Dockerfile`,
