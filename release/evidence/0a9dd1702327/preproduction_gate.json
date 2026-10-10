@@ -1,0 +1,483 @@
+{
+  "generated_at": "2026-10-09T15:11:22.703543+00:00",
+  "commit": "0a9dd1702327eb1e446650ac12bf03befdbd06af",
+  "working_tree_dirty": [],
+  "host": {
+    "platform": "Linux-6.18.44-fc-v80-x86_64-with-glibc2.39",
+    "python": "3.13.16",
+    "machine": "x86_64"
+  },
+  "suite": {
+    "command": [
+      "/home/user/dracula/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "-rs",
+      "--junitxml=/home/user/dracula/release/evidence/0a9dd1702327/junit.xml"
+    ],
+    "exit_code": 0,
+    "output_tail": "........................................................................ [ 20%]\n...........................s..................s......................... [ 41%]\n............................................sss.s....................... [ 61%]\n........................................................................ [ 82%]\n..............................................................           [100%]\n=========================== short test summary info ============================\nSKIPPED [1] tests/browser/test_browser_automation.py:265: BLOCKED_EXTERNAL: live internet test: set HOOD_RUN_LIVE_NETWORK=1 on a host with outbound access\nSKIPPED [1] tests/dev_executor/test_dev_executor.py:213: BLOCKED_EXTERNAL: live provider test: set HOOD_RUN_LIVE_PROVIDER=1 with an approved key, pricing file and spend cap\nSKIPPED [1] tests/integration/test_real_gemini.py:17: BLOCKED_EXTERNAL: live provider test: set HOOD_RUN_LIVE_PROVIDER=1 with an approved key, pricing file and spend cap\nSKIPPED [1] tests/integration/test_real_gemini.py:40: BLOCKED_EXTERNAL: live provider test: set HOOD_RUN_LIVE_PROVIDER=1 with an approved key, pricing file and spend cap\nSKIPPED [1] tests/integration/test_real_internet_intelligence.py:11: BLOCKED_EXTERNAL: live internet test: set HOOD_RUN_LIVE_NETWORK=1 on a host with outbound access\nSKIPPED [1] tests/integration/test_real_orchestration.py:21: BLOCKED_EXTERNAL: live provider test: set HOOD_RUN_LIVE_PROVIDER=1 with an approved key, pricing file and spend cap\n344 passed, 6 skipped in 93.23s (0:01:33)\n",
+    "junit": "release/evidence/0a9dd1702327/junit.xml",
+    "junit_sha256": "26b9d6164e45b5ede0c0834b4875996ed54a9f8a0b0f40457a2f9ebe95af0aba",
+    "counts": {
+      "passed": 344,
+      "failed": 0,
+      "skipped": 6
+    }
+  },
+  "register_sha256": "452f0e6b0eb69f5335b161bc94b77f3d15b7df5cd47161929f9e143cfb113ab0",
+  "findings_sha256": "484525bf8f79dd50df18ab309500b750e64abbdcf50dece4ab98b48a097defcf",
+  "decision": "NO_GO",
+  "gates": {
+    "G0_baseline": {
+      "status": "PASS",
+      "reasons": []
+    },
+    "G1_p0_security": {
+      "status": "FAIL",
+      "reasons": [
+        "Open P0 findings: F03, F05, F07, F09, F10, F12, F23, F25, F27, F29",
+        "No formal independent threat-model review recorded"
+      ]
+    },
+    "G2_functional_core": {
+      "status": "FAIL",
+      "reasons": [
+        "Golden journey with a live LLM not evidenced (Achieved TESTED_WITH_STUB; requires VERIFIED_STAGING)"
+      ]
+    },
+    "G3_recovery_finance": {
+      "status": "PASS",
+      "reasons": []
+    },
+    "G4_p1_coverage": {
+      "status": "FAIL",
+      "reasons": [
+        "conversation: Achieved VERIFIED_LOCAL; requires VERIFIED_STAGING",
+        "orchestrator: Achieved TESTED_WITH_STUB; requires VERIFIED_STAGING",
+        "governance: Achieved VERIFIED_LOCAL; requires VERIFIED_STAGING",
+        "x: Achieved VERIFIED_LOCAL; requires VERIFIED_TARGET",
+        "emergency: Achieved VERIFIED_LOCAL; requires VERIFIED_STAGING",
+        "sentinel: Achieved TESTED_WITH_STUB; requires VERIFIED_TARGET",
+        "tool_gateway: Achieved VERIFIED_LOCAL; requires VERIFIED_STAGING",
+        "development: Achieved TESTED_WITH_STUB; requires VERIFIED_STAGING",
+        "browser: Achieved VERIFIED_LOCAL; requires VERIFIED_TARGET",
+        "desktop: Achieved TESTED_WITH_STUB; requires VERIFIED_TARGET",
+        "memory: Achieved VERIFIED_LOCAL; requires VERIFIED_STAGING",
+        "audit: Achieved VERIFIED_LOCAL; requires VERIFIED_STAGING",
+        "gemini: Achieved BLOCKED; requires VERIFIED_STAGING",
+        "openai: Achieved TESTED_WITH_STUB; requires VERIFIED_STAGING",
+        "local_llm: Achieved TESTED_WITH_STUB; requires VERIFIED_TARGET",
+        "voice: Achieved NOT_IMPLEMENTED; requires VERIFIED_TARGET",
+        "ecommerce: Achieved NOT_IMPLEMENTED; requires VERIFIED_STAGING",
+        "freelance: Achieved NOT_IMPLEMENTED; requires VERIFIED_STAGING",
+        "marketing: Achieved NOT_IMPLEMENTED; requires VERIFIED_STAGING",
+        "calendar: Achieved NOT_IMPLEMENTED; requires VERIFIED_STAGING",
+        "email: Achieved NOT_IMPLEMENTED; requires VERIFIED_STAGING",
+        "artifacts: Achieved VERIFIED_LOCAL; requires VERIFIED_STAGING",
+        "economics: Achieved VERIFIED_LOCAL; requires VERIFIED_STAGING"
+      ]
+    },
+    "G5_full_suite": {
+      "status": "FAIL",
+      "reasons": [
+        "6 skipped (environment-blocked evidence is not a pass): tests/browser/test_browser_automation.py::test_real_public_web_safe_task, tests/dev_executor/test_dev_executor.py::test_end_to_end_autonomous_break_fix_scenario, tests/integration/test_real_gemini.py::test_gemini_adapter_live_call, tests/integration/test_real_gemini.py::test_model_router_with_cost_ledger, tests/integration/test_real_internet_intelligence.py::test_live_http_retrieval_and_evidence, tests/integration/test_real_orchestration.py::test_real_orchestrated_audit_task"
+      ]
+    },
+    "G6_deployment": {
+      "status": "FAIL",
+      "reasons": [
+        "release/staging/STAGING_EVIDENCE.json missing"
+      ]
+    },
+    "G7_independent_review": {
+      "status": "FAIL",
+      "reasons": [
+        "audit/INDEPENDENT_REVIEW.json missing"
+      ]
+    }
+  },
+  "capabilities": [
+    {
+      "id": "conversation",
+      "scope": "P1",
+      "achieved_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_STAGING",
+      "accepted": false,
+      "reason": "Achieved VERIFIED_LOCAL; requires VERIFIED_STAGING",
+      "tests_passed": 7,
+      "tests_failed": [],
+      "tests_skipped": [],
+      "declared_blockers": [
+        "Chat replies are mostly rule-based; LLM-backed replies need an approved provider key and pricing",
+        "No staging environment"
+      ]
+    },
+    {
+      "id": "orchestrator",
+      "scope": "P0",
+      "achieved_level": "TESTED_WITH_STUB",
+      "required_level": "VERIFIED_STAGING",
+      "accepted": false,
+      "reason": "Achieved TESTED_WITH_STUB; requires VERIFIED_STAGING",
+      "tests_passed": 44,
+      "tests_failed": [],
+      "tests_skipped": [],
+      "declared_blockers": [
+        "No live LLM run: no approved provider key, pricing file or spend cap supplied",
+        "No staging environment"
+      ]
+    },
+    {
+      "id": "governance",
+      "scope": "P0",
+      "achieved_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_STAGING",
+      "accepted": false,
+      "reason": "Achieved VERIFIED_LOCAL; requires VERIFIED_STAGING",
+      "tests_passed": 49,
+      "tests_failed": [],
+      "tests_skipped": [],
+      "declared_blockers": [
+        "Approvals are in-memory: a restart drops pending approvals (fail-closed, but not durable)",
+        "No staging environment"
+      ]
+    },
+    {
+      "id": "x",
+      "scope": "P0",
+      "achieved_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_TARGET",
+      "accepted": false,
+      "reason": "Achieved VERIFIED_LOCAL; requires VERIFIED_TARGET",
+      "tests_passed": 11,
+      "tests_failed": [],
+      "tests_skipped": [],
+      "declared_blockers": [
+        "X state is in-memory (dormant after restart, which is the safe default) \u2014 wake/sleep consent journey not run on target machine"
+      ]
+    },
+    {
+      "id": "emergency",
+      "scope": "P0",
+      "achieved_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_STAGING",
+      "accepted": false,
+      "reason": "Achieved VERIFIED_LOCAL; requires VERIFIED_STAGING",
+      "tests_passed": 32,
+      "tests_failed": [],
+      "tests_skipped": [],
+      "declared_blockers": [
+        "Evolution engine has no cancellation API (reported UNSUPPORTED)",
+        "Browser/desktop halts unverified on target machine"
+      ]
+    },
+    {
+      "id": "sentinel",
+      "scope": "P1",
+      "achieved_level": "TESTED_WITH_STUB",
+      "required_level": "VERIFIED_TARGET",
+      "accepted": false,
+      "reason": "Achieved TESTED_WITH_STUB; requires VERIFIED_TARGET",
+      "tests_passed": 10,
+      "tests_failed": [],
+      "tests_skipped": [],
+      "declared_blockers": [
+        "Host firewall/integrity observations need the Windows target"
+      ]
+    },
+    {
+      "id": "tool_gateway",
+      "scope": "P0",
+      "achieved_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_STAGING",
+      "accepted": false,
+      "reason": "Achieved VERIFIED_LOCAL; requires VERIFIED_STAGING",
+      "tests_passed": 42,
+      "tests_failed": [],
+      "tests_skipped": [],
+      "declared_blockers": [
+        "Sandbox hides network but not the host filesystem from child processes; a container/VM is required before untrusted code runs on a machine with real data",
+        "No Windows sandbox (runner refuses to execute there)"
+      ]
+    },
+    {
+      "id": "development",
+      "scope": "P1",
+      "achieved_level": "TESTED_WITH_STUB",
+      "required_level": "VERIFIED_STAGING",
+      "accepted": false,
+      "reason": "Achieved TESTED_WITH_STUB; requires VERIFIED_STAGING",
+      "tests_passed": 8,
+      "tests_failed": [],
+      "tests_skipped": [
+        "tests/dev_executor/test_dev_executor.py::test_end_to_end_autonomous_break_fix_scenario"
+      ],
+      "declared_blockers": [
+        "Code is written by a scripted model in tests; no live LLM build has been run",
+        "Dependency installation intentionally unsupported (no network in sandbox)"
+      ]
+    },
+    {
+      "id": "browser",
+      "scope": "P1",
+      "achieved_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_TARGET",
+      "accepted": false,
+      "reason": "Achieved VERIFIED_LOCAL; requires VERIFIED_TARGET",
+      "tests_passed": 11,
+      "tests_failed": [],
+      "tests_skipped": [
+        "tests/browser/test_browser_automation.py::test_real_public_web_safe_task"
+      ],
+      "declared_blockers": [
+        "Public-internet browsing test blocked (no outbound access here)",
+        "Windows Chromium not exercised"
+      ]
+    },
+    {
+      "id": "desktop",
+      "scope": "P1",
+      "achieved_level": "TESTED_WITH_STUB",
+      "required_level": "VERIFIED_TARGET",
+      "accepted": false,
+      "reason": "Achieved TESTED_WITH_STUB; requires VERIFIED_TARGET",
+      "tests_passed": 16,
+      "tests_failed": [],
+      "tests_skipped": [],
+      "declared_blockers": [
+        "Requires a real Windows desktop session; Linux runs only exercise the governance layer"
+      ]
+    },
+    {
+      "id": "memory",
+      "scope": "P1",
+      "achieved_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_STAGING",
+      "accepted": false,
+      "reason": "Achieved VERIFIED_LOCAL; requires VERIFIED_STAGING",
+      "tests_passed": 7,
+      "tests_failed": [],
+      "tests_skipped": [],
+      "declared_blockers": [
+        "Memory records are project-scoped, not principal-scoped; HTTP access is owner-only until per-user scoping lands (F25)"
+      ]
+    },
+    {
+      "id": "audit",
+      "scope": "P0",
+      "achieved_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_STAGING",
+      "accepted": false,
+      "reason": "Achieved VERIFIED_LOCAL; requires VERIFIED_STAGING",
+      "tests_passed": 1,
+      "tests_failed": [],
+      "tests_skipped": [],
+      "declared_blockers": [
+        "Audit log is not hash-chained; agent-engine receipts are HMAC-protected but the general audit table is mutable"
+      ]
+    },
+    {
+      "id": "gemini",
+      "scope": "P1",
+      "achieved_level": "BLOCKED",
+      "required_level": "VERIFIED_STAGING",
+      "accepted": false,
+      "reason": "Achieved BLOCKED; requires VERIFIED_STAGING",
+      "tests_passed": 0,
+      "tests_failed": [],
+      "tests_skipped": [
+        "tests/integration/test_real_gemini.py::test_gemini_adapter_live_call",
+        "tests/integration/test_real_gemini.py::test_model_router_with_cost_ledger"
+      ],
+      "declared_blockers": [
+        "No approved Gemini key, pricing file or spend cap"
+      ]
+    },
+    {
+      "id": "openai",
+      "scope": "P1",
+      "achieved_level": "TESTED_WITH_STUB",
+      "required_level": "VERIFIED_STAGING",
+      "accepted": false,
+      "reason": "Achieved TESTED_WITH_STUB; requires VERIFIED_STAGING",
+      "tests_passed": 5,
+      "tests_failed": [],
+      "tests_skipped": [],
+      "declared_blockers": [
+        "No approved OpenAI key, pricing file or spend cap"
+      ]
+    },
+    {
+      "id": "local_llm",
+      "scope": "P1",
+      "achieved_level": "TESTED_WITH_STUB",
+      "required_level": "VERIFIED_TARGET",
+      "accepted": false,
+      "reason": "Achieved TESTED_WITH_STUB; requires VERIFIED_TARGET",
+      "tests_passed": 10,
+      "tests_failed": [],
+      "tests_skipped": [],
+      "declared_blockers": [
+        "No local inference server available"
+      ]
+    },
+    {
+      "id": "hood_model",
+      "scope": "OPTIONAL",
+      "achieved_level": "NOT_IMPLEMENTED",
+      "required_level": "DEFERRED",
+      "accepted": false,
+      "reason": "Optional capability needs an explicit owner deferral (and must stay disabled)",
+      "tests_passed": 0,
+      "tests_failed": [],
+      "tests_skipped": [],
+      "declared_blockers": [
+        "No trained or served model exists"
+      ]
+    },
+    {
+      "id": "voice",
+      "scope": "P1",
+      "achieved_level": "NOT_IMPLEMENTED",
+      "required_level": "VERIFIED_TARGET",
+      "accepted": false,
+      "reason": "Achieved NOT_IMPLEMENTED; requires VERIFIED_TARGET",
+      "tests_passed": 8,
+      "tests_failed": [],
+      "tests_skipped": [],
+      "declared_blockers": [
+        "No STT/TTS transport implemented; microphone capture not connected"
+      ]
+    },
+    {
+      "id": "ecommerce",
+      "scope": "P1",
+      "achieved_level": "NOT_IMPLEMENTED",
+      "required_level": "VERIFIED_STAGING",
+      "accepted": false,
+      "reason": "Achieved NOT_IMPLEMENTED; requires VERIFIED_STAGING",
+      "tests_passed": 0,
+      "tests_failed": [],
+      "tests_skipped": [],
+      "declared_blockers": [
+        "No storefront or payment sandbox integration exists"
+      ]
+    },
+    {
+      "id": "freelance",
+      "scope": "P1",
+      "achieved_level": "NOT_IMPLEMENTED",
+      "required_level": "VERIFIED_STAGING",
+      "accepted": false,
+      "reason": "Achieved NOT_IMPLEMENTED; requires VERIFIED_STAGING",
+      "tests_passed": 0,
+      "tests_failed": [],
+      "tests_skipped": [],
+      "declared_blockers": [
+        "No integration exists"
+      ]
+    },
+    {
+      "id": "marketing",
+      "scope": "P1",
+      "achieved_level": "NOT_IMPLEMENTED",
+      "required_level": "VERIFIED_STAGING",
+      "accepted": false,
+      "reason": "Achieved NOT_IMPLEMENTED; requires VERIFIED_STAGING",
+      "tests_passed": 0,
+      "tests_failed": [],
+      "tests_skipped": [],
+      "declared_blockers": [
+        "No integration exists"
+      ]
+    },
+    {
+      "id": "calendar",
+      "scope": "P1",
+      "achieved_level": "NOT_IMPLEMENTED",
+      "required_level": "VERIFIED_STAGING",
+      "accepted": false,
+      "reason": "Achieved NOT_IMPLEMENTED; requires VERIFIED_STAGING",
+      "tests_passed": 0,
+      "tests_failed": [],
+      "tests_skipped": [],
+      "declared_blockers": [
+        "No integration exists"
+      ]
+    },
+    {
+      "id": "email",
+      "scope": "P1",
+      "achieved_level": "NOT_IMPLEMENTED",
+      "required_level": "VERIFIED_STAGING",
+      "accepted": false,
+      "reason": "Achieved NOT_IMPLEMENTED; requires VERIFIED_STAGING",
+      "tests_passed": 0,
+      "tests_failed": [],
+      "tests_skipped": [],
+      "declared_blockers": [
+        "No integration exists"
+      ]
+    },
+    {
+      "id": "artifacts",
+      "scope": "P1",
+      "achieved_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_STAGING",
+      "accepted": false,
+      "reason": "Achieved VERIFIED_LOCAL; requires VERIFIED_STAGING",
+      "tests_passed": 2,
+      "tests_failed": [],
+      "tests_skipped": [],
+      "declared_blockers": [
+        "Only ZIP code artifacts are produced; PDF/DOCX/XLSX exporters not implemented"
+      ]
+    },
+    {
+      "id": "nodes",
+      "scope": "OPTIONAL",
+      "achieved_level": "TESTED_WITH_STUB",
+      "required_level": "DEFERRED",
+      "accepted": false,
+      "reason": "Optional capability needs an explicit owner deferral (and must stay disabled)",
+      "tests_passed": 11,
+      "tests_failed": [],
+      "tests_skipped": [],
+      "declared_blockers": [
+        "No networked two-node test; replay protection incomplete (F35)"
+      ]
+    },
+    {
+      "id": "economics",
+      "scope": "P0",
+      "achieved_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_STAGING",
+      "accepted": false,
+      "reason": "Achieved VERIFIED_LOCAL; requires VERIFIED_STAGING",
+      "tests_passed": 4,
+      "tests_failed": [],
+      "tests_skipped": [],
+      "declared_blockers": [
+        "Real provider invoices never reconciled; global CostController counters are in-memory (mission ledger is durable)"
+      ]
+    },
+    {
+      "id": "evolution",
+      "scope": "OPTIONAL",
+      "achieved_level": "TESTED_WITH_STUB",
+      "required_level": "DEFERRED",
+      "accepted": false,
+      "reason": "Optional capability needs an explicit owner deferral (and must stay disabled)",
+      "tests_passed": 10,
+      "tests_failed": [],
+      "tests_skipped": [],
+      "declared_blockers": [
+        "No trusted evaluation oracle; promotion must stay disabled"
+      ]
+    }
+  ],
+  "accepted_capabilities": 0,
+  "total_capabilities": 26
+}

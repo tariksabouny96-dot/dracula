@@ -1,0 +1,776 @@
+{
+  "schema_version": 1,
+  "level_order": [
+    "NOT_IMPLEMENTED",
+    "DEFERRED",
+    "BLOCKED",
+    "SIMULATED",
+    "IMPLEMENTED_UNVERIFIED",
+    "TESTED_WITH_STUB",
+    "VERIFIED_LOCAL",
+    "VERIFIED_TARGET",
+    "VERIFIED_STAGING"
+  ],
+  "note": "local_evidence_level is the most a passing local test run can prove for this capability. The gate binds results to the exact commit and host; required_level decides acceptance.",
+  "capabilities": [
+    {
+      "id": "conversation",
+      "name": "Conversation",
+      "scope": "P1",
+      "priority": "P1",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/interaction/interaction_service.py",
+        "services/interaction/conversation_store.py"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_STAGING",
+      "test_ids": [
+        "tests/interaction/test_conversation_persistence.py",
+        "tests/interaction/test_conversational_governance.py"
+      ],
+      "negative_tests": [
+        "tests/interaction/test_conversation_persistence.py::test_casual_yes_does_not_approve_pending_action"
+      ],
+      "execution_environment": "local + staging",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "Chat replies are mostly rule-based; LLM-backed replies need an approved provider key and pricing",
+        "No staging environment"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Durable per-principal history, restart continuity, isolation and erasure verified locally."
+    },
+    {
+      "id": "orchestrator",
+      "name": "Agent orchestration",
+      "scope": "P0",
+      "priority": "P0",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/agents/"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "TESTED_WITH_STUB",
+      "required_level": "VERIFIED_STAGING",
+      "test_ids": [
+        "tests/agents/test_agent_engine.py",
+        "tests/agents/test_agent_http.py",
+        "tests/agents/test_agent_ui_browser.py"
+      ],
+      "negative_tests": [
+        "tests/agents/test_agent_engine.py::test_unsafe_or_malformed_plans_are_rejected",
+        "tests/agents/test_agent_engine.py::test_live_engine_refuses_simulated_output"
+      ],
+      "execution_environment": "local (scripted model) + live provider + staging",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "No staging environment: staging-level (VERIFIED_STAGING) evidence not yet produced"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Full engine path verified offline with a scripted model AND end-to-end with a live provider: a golden-journey mission on free-tier Gemini via the environment proxy COMPLETED with verifier verdict PASS, valid HMAC receipts and $0 spend (release/evidence/live/agm_71c4a72d00744241a59b65dc23e23976.json; repeatable via tests/integration/test_real_gemini.py with HOOD_RUN_LIVE_PROVIDER=1). local_evidence_level stays TESTED_WITH_STUB because the gate's offline test_ids use a scripted model; VERIFIED_STAGING acceptance still requires a staging run (G6)."
+    },
+    {
+      "id": "governance",
+      "name": "Approvals and policy",
+      "scope": "P0",
+      "priority": "P0",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/policy/approval_service.py",
+        "services/tool_gateway/gateway.py"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_STAGING",
+      "test_ids": [
+        "tests/security/test_p0_boundaries.py",
+        "tests/adversarial/test_adversarial_governance.py",
+        "tests/hardening/test_remediation.py",
+        "tests/browser/test_browser_automation.py::test_approval_gated_consequential_browser_action"
+      ],
+      "negative_tests": [
+        "tests/security/test_p0_boundaries.py::test_expired_approval_is_refused",
+        "tests/security/test_p0_boundaries.py::test_approval_bound_to_principal"
+      ],
+      "execution_environment": "local + staging",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "Approvals are in-memory: a restart drops pending approvals (fail-closed, but not durable)",
+        "No staging environment"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Exact tool/target/task/parameter/principal/TTL binding, one-time use and DENY auditing verified locally."
+    },
+    {
+      "id": "x",
+      "name": "X executive",
+      "scope": "P0",
+      "priority": "P0",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/x_control/x_session_manager.py"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_TARGET",
+      "test_ids": [
+        "tests/x_control/test_x_governed_activation.py"
+      ],
+      "negative_tests": [
+        "tests/x_control/test_x_governed_activation.py::test_x_authority_comes_from_root_role_not_username"
+      ],
+      "execution_environment": "local + owner Windows machine",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "X state is in-memory (dormant after restart, which is the safe default) — wake/sleep consent journey not run on target machine"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Role-based authority, TTL expiry, replay refusal and stand-down verified locally."
+    },
+    {
+      "id": "emergency",
+      "name": "Emergency stop",
+      "scope": "P0",
+      "priority": "P0",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/core/emergency_stop.py",
+        "packages/security/stop.py"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_STAGING",
+      "test_ids": [
+        "tests/security/test_p0_boundaries.py",
+        "tests/agents/test_agent_engine.py::test_kill_all_stops_running_process_group",
+        "tests/agents/test_agent_engine.py::test_emergency_stop_blocks_engine",
+        "tests/agents/test_agent_http.py::test_emergency_stop_over_http_blocks_new_missions"
+      ],
+      "negative_tests": [
+        "tests/security/test_p0_boundaries.py::test_stop_report_never_claims_a_failed_halt"
+      ],
+      "execution_environment": "local + staging",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "Evolution engine has no cancellation API (reported UNSUPPORTED)",
+        "Browser/desktop halts unverified on target machine"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Persistent latch blocks every tool, grant and agent step; child process groups killed; per-subsystem honest report."
+    },
+    {
+      "id": "sentinel",
+      "name": "Security Sentinel",
+      "scope": "P1",
+      "priority": "P1",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/sentinel/"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "TESTED_WITH_STUB",
+      "required_level": "VERIFIED_TARGET",
+      "test_ids": [
+        "tests/sentinel/test_sentinel_service.py",
+        "tests/sentinel/test_evidence_boundaries.py"
+      ],
+      "negative_tests": [],
+      "execution_environment": "owner Windows machine",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "Host firewall/integrity observations need the Windows target"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Module tests only."
+    },
+    {
+      "id": "tool_gateway",
+      "name": "Tool gateway",
+      "scope": "P0",
+      "priority": "P0",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/tool_gateway/gateway.py",
+        "packages/security/paths.py",
+        "services/agents/sandbox.py"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_STAGING",
+      "test_ids": [
+        "tests/security/test_p0_boundaries.py",
+        "tests/hardening/test_portable_path_boundaries.py",
+        "tests/agents/test_agent_engine.py::test_engineer_cannot_write_outside_its_area",
+        "tests/agents/test_agent_engine.py::test_sandbox_has_loopback_but_no_external_network"
+      ],
+      "negative_tests": [
+        "tests/agents/test_agent_engine.py::test_prompt_injected_writes_are_blocked_at_the_boundary"
+      ],
+      "execution_environment": "local + staging",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "Sandbox hides network but not the host filesystem from child processes; a container/VM is required before untrusted code runs on a machine with real data",
+        "No Windows sandbox (runner refuses to execute there)"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Path confinement, role write roots, scrubbed env, rlimits and network namespace verified on Linux."
+    },
+    {
+      "id": "development",
+      "name": "Development executor",
+      "scope": "P1",
+      "priority": "P1",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/agents/",
+        "services/dev_executor/"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "TESTED_WITH_STUB",
+      "required_level": "VERIFIED_STAGING",
+      "test_ids": [
+        "tests/agents/test_agent_engine.py::test_golden_journey_catches_planted_bug_repairs_and_delivers",
+        "tests/dev_executor/test_dev_executor.py"
+      ],
+      "negative_tests": [
+        "tests/agents/test_agent_engine.py::test_unrepairable_bug_ends_failed_without_artifact"
+      ],
+      "execution_environment": "local (scripted model) + live provider",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "Code is written by a scripted model in tests; no live LLM build has been run",
+        "Dependency installation intentionally unsupported (no network in sandbox)"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Real build/test/repair/verify/package loop verified with scripted agent output."
+    },
+    {
+      "id": "browser",
+      "name": "Browser automation",
+      "scope": "P1",
+      "priority": "P1",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/browser/"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_TARGET",
+      "test_ids": [
+        "tests/browser/test_browser_automation.py",
+        "tests/agents/test_agent_ui_browser.py"
+      ],
+      "negative_tests": [
+        "tests/browser/test_browser_automation.py::test_upload_security_and_secret_leak_prevention"
+      ],
+      "execution_environment": "local Chromium + public internet + Windows Chromium",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "Public-internet browsing test blocked (no outbound access here)",
+        "Windows Chromium not exercised"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Local Chromium E2E against loopback pages and the Hood UI verified."
+    },
+    {
+      "id": "desktop",
+      "name": "Desktop control",
+      "scope": "P1",
+      "priority": "P1",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/desktop/"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "TESTED_WITH_STUB",
+      "required_level": "VERIFIED_TARGET",
+      "test_ids": [
+        "tests/desktop/test_desktop_governance.py",
+        "tests/hardening/test_desktop_action_approvals.py"
+      ],
+      "negative_tests": [],
+      "execution_environment": "owner Windows machine",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "Requires a real Windows desktop session; Linux runs only exercise the governance layer"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Governance logic only."
+    },
+    {
+      "id": "memory",
+      "name": "Persistent memory",
+      "scope": "P1",
+      "priority": "P1",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/memory/"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_STAGING",
+      "test_ids": [
+        "tests/unit/test_memory.py",
+        "tests/integration/test_persistent_memory_restart.py"
+      ],
+      "negative_tests": [],
+      "execution_environment": "local + staging",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "Memory records are project-scoped, not principal-scoped; HTTP access is owner-only until per-user scoping lands (F25)"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Restart persistence verified; tenant scoping incomplete."
+    },
+    {
+      "id": "audit",
+      "name": "Audit events",
+      "scope": "P0",
+      "priority": "P0",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/audit/service.py"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_STAGING",
+      "test_ids": [
+        "tests/security/test_p0_boundaries.py::test_stop_blocks_every_tool_and_grant_and_is_audited"
+      ],
+      "negative_tests": [],
+      "execution_environment": "local + staging",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "Audit log is not hash-chained; agent-engine receipts are HMAC-protected but the general audit table is mutable"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "DENY decisions now audited at the gateway."
+    },
+    {
+      "id": "gemini",
+      "name": "Gemini API",
+      "scope": "P1",
+      "priority": "P1",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/model_gateway/gemini_adapter.py"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "IMPLEMENTED_UNVERIFIED",
+      "required_level": "VERIFIED_STAGING",
+      "test_ids": [
+        "tests/integration/test_real_gemini.py"
+      ],
+      "negative_tests": [],
+      "execution_environment": "live provider",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "No approved Gemini key, pricing file or spend cap"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Live test is BLOCKED_EXTERNAL."
+    },
+    {
+      "id": "openai",
+      "name": "OpenAI API",
+      "scope": "P1",
+      "priority": "P1",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/model_gateway/openai_adapter.py"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "TESTED_WITH_STUB",
+      "required_level": "VERIFIED_STAGING",
+      "test_ids": [
+        "tests/release/test_live_provider_contracts.py"
+      ],
+      "negative_tests": [],
+      "execution_environment": "live provider",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "No approved OpenAI key, pricing file or spend cap"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Transport contract tested offline only."
+    },
+    {
+      "id": "local_llm",
+      "name": "Local model gateway",
+      "scope": "P1",
+      "priority": "P1",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/model_gateway/local_adapter.py"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "TESTED_WITH_STUB",
+      "required_level": "VERIFIED_TARGET",
+      "test_ids": [
+        "tests/hardening/test_remediation.py"
+      ],
+      "negative_tests": [],
+      "execution_environment": "owner machine with a local inference server",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "No local inference server available"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Loopback-only adapter tested with a fake HTTP response."
+    },
+    {
+      "id": "hood_model",
+      "name": "Hood proprietary model",
+      "scope": "OPTIONAL",
+      "priority": "OPTIONAL",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/evolution/arena.py"
+      ],
+      "implementation_status": "NOT_IMPLEMENTED",
+      "local_evidence_level": "NOT_IMPLEMENTED",
+      "required_level": "DEFERRED",
+      "test_ids": [],
+      "negative_tests": [],
+      "execution_environment": "n/a",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "No trained or served model exists"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Optional per blueprint; must stay visibly unavailable until scoped."
+    },
+    {
+      "id": "voice",
+      "name": "Voice and speech",
+      "scope": "P1",
+      "priority": "P1",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/voice/cloud.py",
+        "services/voice/api.py",
+        "ui/static/next/app.js"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_TARGET",
+      "test_ids": [
+        "tests/ui/test_settings_and_voice_http.py::test_voice_transcribes_and_speaks_only_when_allowed",
+        "tests/voice/test_voice_surface.py",
+        "tests/simulation/test_voice_fail_closed.py"
+      ],
+      "negative_tests": [
+        "tests/ui/test_settings_and_voice_http.py::test_voice_transcribes_and_speaks_only_when_allowed"
+      ],
+      "execution_environment": "owner Windows machine with microphone",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "Not yet run on the owner's Windows machine with a real microphone (VERIFIED_TARGET)"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Browser recording (MediaRecorder webm) -> Gemini speech-to-text and Gemini text-to-speech -> WAV playback implemented in the console, governed by key, firewall, price, spend caps, emergency stop, and recorded consent before any microphone audio is sent. Verified locally end to end against live Gemini in headless Chrome with a fake microphone (2026-10-10); a real-microphone run on the target machine is still required."
+    },
+    {
+      "id": "ecommerce",
+      "name": "E-commerce workflows",
+      "scope": "P1",
+      "priority": "P1",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/economic/engine.py"
+      ],
+      "implementation_status": "NOT_IMPLEMENTED",
+      "local_evidence_level": "NOT_IMPLEMENTED",
+      "required_level": "VERIFIED_STAGING",
+      "test_ids": [],
+      "negative_tests": [],
+      "execution_environment": "payment/storefront sandbox",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "No storefront or payment sandbox integration exists"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Not implemented."
+    },
+    {
+      "id": "freelance",
+      "name": "Freelance delivery",
+      "scope": "P1",
+      "priority": "P1",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [],
+      "implementation_status": "NOT_IMPLEMENTED",
+      "local_evidence_level": "NOT_IMPLEMENTED",
+      "required_level": "VERIFIED_STAGING",
+      "test_ids": [],
+      "negative_tests": [],
+      "execution_environment": "sandbox accounts",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "No integration exists"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Not implemented."
+    },
+    {
+      "id": "marketing",
+      "name": "Campaign automation",
+      "scope": "P1",
+      "priority": "P1",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [],
+      "implementation_status": "NOT_IMPLEMENTED",
+      "local_evidence_level": "NOT_IMPLEMENTED",
+      "required_level": "VERIFIED_STAGING",
+      "test_ids": [],
+      "negative_tests": [],
+      "execution_environment": "sandbox mail/CRM",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "No integration exists"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Not implemented."
+    },
+    {
+      "id": "calendar",
+      "name": "Calendar and meetings",
+      "scope": "P1",
+      "priority": "P1",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [],
+      "implementation_status": "NOT_IMPLEMENTED",
+      "local_evidence_level": "NOT_IMPLEMENTED",
+      "required_level": "VERIFIED_STAGING",
+      "test_ids": [],
+      "negative_tests": [],
+      "execution_environment": "sandbox calendar OAuth",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "No integration exists"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Not implemented."
+    },
+    {
+      "id": "email",
+      "name": "Email operations",
+      "scope": "P1",
+      "priority": "P1",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [],
+      "implementation_status": "NOT_IMPLEMENTED",
+      "local_evidence_level": "NOT_IMPLEMENTED",
+      "required_level": "VERIFIED_STAGING",
+      "test_ids": [],
+      "negative_tests": [],
+      "execution_environment": "sandbox mailbox OAuth",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "No integration exists"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Not implemented."
+    },
+    {
+      "id": "artifacts",
+      "name": "File and document exports",
+      "scope": "P1",
+      "priority": "P1",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/exports/",
+        "services/artifacts/registry.py",
+        "services/agents/engine.py"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_STAGING",
+      "test_ids": [
+        "tests/exports/test_exports_unit.py",
+        "tests/exports/test_exports_http.py",
+        "tests/agents/test_agent_engine.py::test_tampered_receipt_or_artifact_withholds_download",
+        "tests/agents/test_agent_http.py::test_owner_http_journey_to_verified_download"
+      ],
+      "negative_tests": [
+        "tests/exports/test_exports_unit.py::test_registry_token_binding_and_expiry",
+        "tests/exports/test_exports_http.py::test_full_export_download_flow_and_cross_tenant"
+      ],
+      "execution_environment": "local + staging",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "No staging environment: staging-level (VERIFIED_STAGING) evidence not yet produced"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Full md/html/pdf/docx/xlsx/csv/zip export pipeline with independent validators and an owner-scoped artifact registry (hashed files, single-use HMAC download tokens, cross-tenant isolation) verified locally over HTTP; staging run still required for acceptance."
+    },
+    {
+      "id": "nodes",
+      "name": "Multi-node runtime",
+      "scope": "OPTIONAL",
+      "priority": "OPTIONAL",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/nodes/"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "TESTED_WITH_STUB",
+      "required_level": "DEFERRED",
+      "test_ids": [
+        "tests/nodes/test_multi_node.py"
+      ],
+      "negative_tests": [],
+      "execution_environment": "two real nodes",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "No networked two-node test; replay protection incomplete (F35)"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Optional unless explicitly scoped; keep disabled."
+    },
+    {
+      "id": "economics",
+      "name": "Cost governance",
+      "scope": "P0",
+      "priority": "P0",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/model_gateway/cost_controller.py",
+        "services/model_gateway/router.py",
+        "packages/config/pricing.py",
+        "services/agents/engine.py"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_STAGING",
+      "test_ids": [
+        "tests/security/test_p0_boundaries.py::test_parallel_reservations_cannot_overspend",
+        "tests/security/test_p0_boundaries.py::test_unknown_price_refuses_paid_call",
+        "tests/agents/test_agent_engine.py::test_mission_budget_blocks_before_any_paid_call",
+        "tests/agents/test_agent_engine.py::test_unsettled_spend_is_charged_on_recovery"
+      ],
+      "negative_tests": [
+        "tests/security/test_p0_boundaries.py::test_missing_usage_is_charged_not_zero"
+      ],
+      "execution_environment": "local + live provider billing",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "Real provider invoices never reconciled; global CostController counters are in-memory (mission ledger is durable)"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Atomic reservations, unknown-price refusal and durable mission ledger verified locally."
+    },
+    {
+      "id": "evolution",
+      "name": "Learning and evolution",
+      "scope": "OPTIONAL",
+      "priority": "OPTIONAL",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/evolution/"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "TESTED_WITH_STUB",
+      "required_level": "DEFERRED",
+      "test_ids": [
+        "tests/evolution/test_evolution_engine.py"
+      ],
+      "negative_tests": [],
+      "execution_environment": "n/a",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "No trusted evaluation oracle; promotion must stay disabled"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Optional unless explicitly scoped."
+    },
+    {
+      "id": "firewall",
+      "name": "Egress firewall",
+      "scope": "P1",
+      "priority": "P1",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/firewall/",
+        "services/model_gateway/router.py"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_STAGING",
+      "test_ids": [
+        "tests/firewall/test_firewall.py",
+        "tests/firewall/test_firewall_http.py",
+        "tests/firewall/test_router_firewall.py"
+      ],
+      "negative_tests": [
+        "tests/firewall/test_firewall_http.py"
+      ],
+      "execution_environment": "local + staging",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "No staging environment: staging-level (VERIFIED_STAGING) evidence not yet produced"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Default-deny egress enforced in the model gateway before any live call; owner-only rule changes; verified locally, including against the real Gemini host (blocked by default, allowed only when the owner permits it)."
+    },
+    {
+      "id": "learning",
+      "name": "Self-learning",
+      "scope": "P1",
+      "priority": "P1",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/learning/",
+        "services/agents/engine.py"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_STAGING",
+      "test_ids": [
+        "tests/learning/test_learning.py",
+        "tests/learning/test_learning_http.py",
+        "tests/learning/test_semantic_and_autolearn.py"
+      ],
+      "negative_tests": [
+        "tests/learning/test_learning_http.py"
+      ],
+      "execution_environment": "local + staging",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "No staging environment: staging-level (VERIFIED_STAGING) evidence not yet produced"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Lessons auto-recorded from finished missions, trust ladder with owner-only ESTABLISHED, semantic recall via firewall-gated embeddings with an honest lexical fallback; verified locally."
+    },
+    {
+      "id": "self_development",
+      "name": "Governed self-development",
+      "scope": "P1",
+      "priority": "P1",
+      "owner": "Hood owner (Zak)",
+      "source_paths": [
+        "services/evolution/self_development.py",
+        "services/evolution/self_development_api.py"
+      ],
+      "implementation_status": "IMPLEMENTED_UNVERIFIED",
+      "local_evidence_level": "VERIFIED_LOCAL",
+      "required_level": "VERIFIED_STAGING",
+      "test_ids": [
+        "tests/evolution/test_self_development.py",
+        "tests/evolution/test_self_development_http.py"
+      ],
+      "negative_tests": [
+        "tests/evolution/test_self_development_http.py"
+      ],
+      "execution_environment": "local + staging",
+      "test_command": "python scripts/preproduction_gate.py",
+      "blockers": [
+        "No staging environment: staging-level (VERIFIED_STAGING) evidence not yet produced"
+      ],
+      "independent_reviewer": null,
+      "decision_reason": "Proposals are recorded only; applying requires the owner's approval bound to the content hash, with checkpoint, validation and rollback; guardrail files are never modifiable. Verified locally."
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+# HOOD System Configuration Template (DO NOT STORE SECRETS HERE)
+# Use SECRET://provider/key references for credentials.
+
+environment: development
+node_role: dev-temporary
+
+budgets:
+  max_task_spend_usd: 2.0
+  max_daily_spend_usd: 10.0
+  max_monthly_spend_usd: 50.0
+  max_task_model_calls: 25
+  max_task_deep_model_calls: 4
+  max_parallel_workers: 4
+  max_task_runtime_sec: 300
+  hard_stop_on_budget_exceeded: true
+
+providers:
+  gemini:
+    enabled: true
+    is_paid: false
+    api_key_secret_ref: "SECRET://gemini/api_key"
+    default_fast_model: "gemini-3.5-flash-lite"
+    default_standard_model: "gemini-3.8-flash"
+    default_deep_model: "gemini-3.8-flash"
+    timeout_sec: 30
+    max_retries: 3
+  openai:
+    enabled: false # Explicitly disabled until authorized by Zak
+    is_paid: true
+    api_key_secret_ref: "SECRET://openai/api_key"
+    default_fast_model: "gpt-4o-mini"
+    default_standard_model: "gpt-4o"
+    default_deep_model: "o3-mini"
+    timeout_sec: 30
+    max_retries: 3
+  mock:
+    enabled: true
+    is_paid: false
+    api_key_secret_ref: null
+    default_fast_model: "mock-fast"
+    default_standard_model: "mock-standard"
+    default_deep_model: "mock-deep"
+    timeout_sec: 5
+    max_retries: 1
+
+storage:
+  backend: sqlite
+  sqlite_path: "artifacts/hood_data.db"
+  postgres_dsn: null
+  enable_pgvector: false
+  artifacts_dir: "artifacts/data"
+
+security:
+  owner_name: Zak
+  require_explicit_approval_for_money: true
+  require_explicit_approval_for_prod: true
+  require_explicit_approval_for_destructive: true
+  allowed_workspace_roots:
+    - "."
+  secret_vault_backend: encrypted_local
+  secret_vault_file: "artifacts/vault.enc"

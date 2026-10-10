@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HOOD</title>
+  <link rel="icon" href="/static/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body class="theme-hood">
+  <div class="nova-truth-banner" role="status"><strong>DEVELOPMENT BUILD</strong><span>Capabilities require runtime validation. X and autonomous operations are restricted.</span></div>
+  <div class="hud-scanline"></div>
+  <div class="hud-grid-overlay"></div>
+
+  <!-- Primary Application Wrapper -->
+  <div class="command-container">
+    <!-- Top Cinematic HUD Header -->
+    <header class="hud-header">
+      <div class="hud-brand-block">
+        <div class="brand-crest">
+          <div class="crest-core"></div>
+          <div class="crest-ring"></div>
+        </div>
+        <div class="brand-titles">
+          <div class="brand-row">
+            <span id="brand-logo-main" class="logo-text">HOOD</span>
+            <span class="brand-divider">//</span>
+            <span id="brand-logo-sub" class="logo-subtext">X</span>
+            <span class="version-tag">NOVA · v2.5 development</span>
+          </div>
+          <div id="brand-system-codename" class="system-codename">PERSONAL AI OPERATIONS · GOVERNED LOCAL DEVELOPMENT</div>
+        </div>
+      </div>
+
+      <!-- Streamlined Header Status Strip -->
+      <div class="hud-indicators-strip">
+        <div id="desktop-badge" class="indicator-badge" title="Desktop availability not yet verified">
+          <span class="badge-dot"></span><span class="badge-label">DESKTOP: UNVERIFIED</span>
+        </div>
+        <div id="provider-badge" class="indicator-badge" title="Provider availability not yet verified">
+          <span class="badge-dot"></span><span class="badge-label">PROVIDER: UNVERIFIED</span>
+        </div>
+        <div id="x-status" class="indicator-badge x-dormant" title="Offensive Security Executive Status">
+          <span class="badge-dot"></span><span class="badge-label">X: DORMANT</span>
+        </div>
+      </div>
+
+      <!-- Right Governance & Security Actions -->
+      <div class="hud-actions-block">
+        <div id="user-badge" class="indicator-badge user-badge" style="display: none;">
+          <span class="user-role-icon">👤</span>
+          <span id="user-display">USER: AUTH REQUIRED</span>
+          <button id="btn-logout" class="btn-subtle" title="Sign Out">✕</button>
+        </div>
+        <button id="btn-admin-panel" class="btn-hud-action action-admin" style="display: none;">USER ADMIN</button>
+        <button id="btn-security-panel" class="btn-hud-action action-security" style="display: none;">ROOT SECURITY</button>
+        <button id="btn-sentinel-center" class="btn-hud-action action-sentinel" style="display: none;">SECURITY CENTER</button>
+        <button id="btn-toggle-telemetry" class="btn-hud-action action-telemetry-toggle" title="Toggle Real-Time Telemetry Drawer">📊 TELEMETRY</button>
+        <button id="btn-emergency-stop" class="btn-emergency-halt" title="Halt all background tasks and revoke capabilities">
+          <span class="halt-icon">🛑</span>
+          <span class="halt-text">EMERGENCY STOP</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Accessible mobile navigation; the desktop command flank is hidden below 860px. -->
+    <nav class="mobile-nav" aria-label="Hood sections">
+      <button type="button" class="nav-tab active" data-target="tab-command-deck">Command</button>
+      <button type="button" class="nav-tab" data-target="tab-missions">Missions</button>
+      <button type="button" class="nav-tab" data-target="tab-sentinel">Sentinel</button>
+      <button type="button" class="nav-tab" data-target="tab-intelligence">Intelligence</button>
+      <button type="button" class="nav-tab" data-target="tab-economic">Economics</button>
+      <button type="button" class="nav-tab" data-target="tab-impossible">Barriers</button>
+      <button type="button" class="nav-tab" data-target="tab-desktop">Desktop</button>
+      <button type="button" class="nav-tab" data-target="tab-memory">Memory</button>
+      <button type="button" class="nav-tab" data-target="tab-systems">Systems</button>
+    </nav>
+
+    <!-- X Status Quick Bar (Visible when X is active) -->
+    <div id="x-banner-quick" class="x-banner-quick" style="display: none;">
+      <span class="x-pulse-warning">⚠️</span>
+      <span class="x-banner-text">X OFFENSIVE SECURITY EXECUTIVE ACTIVE — TEMPORARY AUTHORITY TRANSFERRED</span>
+      <button id="btn-quick-standdown-x" class="btn-x-quick-standdown">STAND DOWN X</button>
+    </div>
+
+    <!-- Main Command Deck Layout -->
+    <main class="main-surface" id="main-surface-deck">
+      <!-- Left Column: Sleek Cinematic Vertical Command Bar (Matching Reference A & B) -->
+      <aside class="flank-panel flank-left vertical-command-bar">
+        <!-- Vertical Navigation Section -->
+        <div class="vertical-nav-container">
+          <div class="vnav-label">COMMAND FLANK</div>
+          <div class="vnav-list">
+            <button class="vnav-item active" data-target="tab-command-deck" title="Primary Command Deck">
+              <span class="vnav-icon">⚡</span>
+              <span class="vnav-text">Command Deck</span>
+            </button>
+            <button class="vnav-item" data-target="tab-missions" title="Agents & Missions Orchestration">
+              <span class="vnav-icon">🎯</span>
+              <span class="vnav-text">Agents & Missions</span>
+              <span class="tab-badge" style="display: none;"></span>
+            </button>
+            <button class="vnav-item" data-target="tab-sentinel" title="Project Sentinel v1.3 Cybersecurity">
+              <span class="vnav-icon">🛡️</span>
+              <span class="vnav-text">Cyber Sentinel</span>
+            </button>
+            <button class="vnav-item" data-target="tab-intelligence" title="Intelligence & Evolution Lab">
+              <span class="vnav-icon">🧠</span>
+              <span class="vnav-text">Intelligence Lab</span>
+            </button>
+            <button class="vnav-item" data-target="tab-economic" title="Economic Engine & Zero-Spend Cap">
+              <span class="vnav-icon">💰</span>
+              <span class="vnav-text">Economic Engine</span>
+            </button>
+            <button class="vnav-item" data-target="tab-impossible" title="Impossible List & Frontier Barriers">
+              <span class="vnav-icon">🚧</span>
+              <span class="vnav-text">Impossible List</span>
+            </button>
+            <button class="vnav-item" data-target="tab-desktop" title="Governed Desktop Operations">
+              <span class="vnav-icon">🖥️</span>
+              <span class="vnav-text">Desktop Ops</span>
+            </button>
+            <button class="vnav-item" data-target="tab-memory" title="Durable Sovereign Memory & Knowledge">
+              <span class="vnav-icon">📚</span>
+              <span class="vnav-text">Memory Graph</span>
+            </button>
+            <button class="vnav-item" data-target="tab-systems" title="Capabilities, integrations and readiness">
+              <span class="vnav-icon">◈</span><span class="vnav-text">Systems & Integrations</span>
+            </button>
+            <button class="vnav-item vnav-item-x-locked" data-target="tab-sentinel" title="X Sovereign Red-Team (Dormant - Authorization Required)">
+              <span class="vnav-icon">🔒</span>
+              <span class="vnav-text">X Red-Team</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Voice & Neural Harmonics Visualizer Box -->
+        <div class="vnav-voice-box">
+          <div class="vnav-box-header">
+            <span class="vnav-box-title">NEURAL FREQ</span>
+            <span id="freq-val" class="freq-val">432.0 Hz</span>
+          </div>
+          <div id="audio-visualizer" class="audio-equalizer">
+            <div class="eq-bar bar-1"></div>
+            <div class="eq-bar bar-2"></div>
+            <div class="eq-bar bar-3"></div>
+            <div class="eq-bar bar-4"></div>
+            <div class="eq-bar bar-5"></div>
+            <div class="eq-bar bar-6"></div>
+            <div class="eq-bar bar-7"></div>
+            <div class="eq-bar bar-8"></div>
+            <div class="eq-bar bar-9"></div>
+            <div class="eq-bar bar-10"></div>
+            <div class="eq-bar bar-11"></div>
+            <div class="eq-bar bar-12"></div>
+          </div>
+          <div class="vnav-voice-actions">
+            <button id="btn-ptt" class="btn-tactical btn-ptt-mini" title="Push-to-Talk">🎙️ PTT</button>
+            <button id="btn-interrupt" class="btn-tactical btn-interrupt-mini" title="Barge-in Interrupt">⚡ HALT</button>
+          </div>
+        </div>
+
+        <!-- Sovereign Governance Identity Pill -->
+        <div class="vnav-governance-pill">
+          <div class="gov-pill-title">SIGNED-IN PRINCIPAL</div>
+          <div class="gov-pill-name" id="gov-pill-name">NOT SIGNED IN</div>
+          <div class="gov-pill-status val-green" id="gov-pill-status">● —</div>
+        </div>
+      </aside>
+
+      <!-- Center Column: Unified Dialogue & Task Orchestration -->
+      <section class="center-stage">
+        <!-- Tab View: Command Deck (Primary Conversational Space) -->
+        <div id="tab-command-deck" class="hud-tab-content active">
+          <div class="cinematic-theatre">
+            <!-- Background Atmospheric Nebula Glow -->
+            <div class="nebula-glow"></div>
+            
+            <div class="nova-launch-strip" aria-label="NOVA command launchpad">
+              <div class="nova-launch-brand"><span class="nova-live-indicator" aria-hidden="true"></span><span>NOVA / SYSTEMS NETWORK</span><small id="nova-launch-status">Connection not yet checked</small></div>
+              <button class="nova-launch-action" type="button" data-target="tab-systems">EXPLORE 26 SYSTEMS ↗</button>
+            </div>
+            <!-- Holographic Avatar Stage -->
+            <div class="avatar-hero-container">
+              <!-- Holographic Avatar Image -->
+              <div class="avatar-image-wrapper">
+                <img id="avatar-presence-img" class="avatar-presence-img" src="/static/assets/hood_avatar_clean.jpg" alt="HOOD Holographic Avatar" />
+                <div class="avatar-scan-overlay"></div>
+                <div class="avatar-glow-aurora"></div>
+              </div>
+
+              <!-- Holographic Planetary Projection Orb -->
+              <div class="planetary-projection-stage">
+                <div class="planetary-orb">
+                  <div class="planet-rings"></div>
+                </div>
+              </div>
+
+              <!-- Cinematic Philosophy Tag Overlay -->
+              <div class="avatar-quote-card">
+                <span class="quote-sparkle">✦</span>
+                <span id="avatar-quote-text" class="quote-text">"Higher intelligence, a kinder tomorrow"</span>
+              </div>
+            </div>
+
+            <!-- Integrated Conversation Console Capsule (Docked at Bottom) -->
+            <div class="conversational-dock-capsule">
+              <!-- Quick Suggestions Chips -->
+              <div id="suggestion-chips-row" class="suggestion-chips-row">
+                <button type="button" class="suggestion-chip" data-prompt="What do you know about me?">What do you know about me?</button>
+                <button type="button" class="suggestion-chip" data-prompt="What can you do?">What can you do?</button>
+                <button type="button" class="suggestion-chip" data-prompt="/mission Draft a safe responsive website delivery plan with milestones and review steps">Create mission draft</button>
+                <button type="button" class="suggestion-chip" data-prompt="Inspect system security status">Check security status</button>
+              </div>
+
+              <!-- Conversational Message Log (Expandable / Scrollable Stream) -->
+              <div id="chat-messages" class="chat-messages cinematic-chat-log" role="log" aria-live="polite" aria-relevant="additions">
+                <div class="message msg-system">
+                  <span class="sender-tag system-tag">SYSTEM:</span>
+                  <span class="msg-body">HOOD NOVA surface loaded. Authenticate to inspect services. Capabilities are not verified by UI availability.</span>
+                </div>
+              </div>
+
+              <!-- Mode Selection Pills & Input Form -->
+              <div class="input-capsule-box">
+                <div class="mode-pills-bar">
+                  <span class="mode-pill active" data-mode="conversation">● CONVERSATION</span>
+                  <span class="mode-pill" aria-disabled="true" data-mode="planning" title="Visual mode label only; planning is not an isolated execution service">PLANNING · PREVIEW</span>
+                  <span class="mode-pill" aria-disabled="true" data-mode="tools" title="Visual mode label only; tool execution not connected here">TOOLS · PREVIEW</span>
+                  <span class="mode-pill" aria-disabled="true" data-mode="files" title="Visual mode label only; no file upload here">FILES · PREVIEW</span>
+                </div>
+
+                <form id="chat-form" class="chat-input-bar cinematic-input-bar">
+                  <button type="button" class="btn-attach" title="File attachment is not connected" disabled aria-label="File attachment unavailable">📎</button>
+                  <input type="text" id="chat-input" aria-label="Message Hood" placeholder="Message HOOD, or /mission followed by an objective..." autocomplete="off">
+                  <button type="button" id="btn-capsule-mic" class="btn-capsule-mic" title="Voice Input">🎙️</button>
+                  <button type="submit" class="btn-transmit">
+                    <span class="btn-text">TRANSMIT</span>
+                    <span class="btn-arrow">➔</span>
+                  </button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- NOVA read-only registry: connects the visual surface to real backend attachment signals. -->
+        <div id="tab-systems" class="hud-tab-content">
+          <div class="nova-page-heading">
+            <span class="nova-eyebrow">SYSTEM ARCHITECTURE / LIVE INVENTORY</span>
+            <h2>Systems & Integrations <span class="nova-version">NOVA 2.0</span></h2>
+            <p>Every configured module in one place. A source file is not proof that a service works. No autonomous actions start from this screen.</p>
+          </div>
+          <div class="nova-stats" id="nova-stats" aria-label="Subsystem status counts"></div>
+          <div class="nova-toolbar">
+            <label for="nova-search">Find a capability</label>
+            <input id="nova-search" type="search" placeholder="Search agents, providers, tools, services…" autocomplete="off">
+            <label for="nova-category">Category</label>
+            <select id="nova-category"><option value="all">All systems</option></select>
+            <button id="nova-refresh" class="btn-hud-action" type="button">↻ Refresh inventory</button>
+          </div>
+          <div id="nova-error" class="nova-error" role="alert" hidden></div>
+          <p id="nova-inventory-note" class="nova-inventory-note" aria-live="polite">Authenticate to inspect the local runtime.</p>
+          <div id="nova-capability-grid" class="nova-capability-grid" aria-live="polite"></div>
+          <section class="nova-configuration" aria-labelledby="nova-config-title">
+            <div><h3 id="nova-config-title">Interface preferences</h3><p>Local browser preferences only. These do not change model credentials, budgets or security permissions.</p></div>
+            <label class="nova-switch"><input type="checkbox" id="nova-reduced-motion"> Reduce interface animation</label>
+            <label class="nova-switch"><input type="checkbox" id="nova-compact-cards"> Compact subsystem cards</label>
+            <button type="button" id="nova-reset-preferences" class="btn-hud-action">Reset preferences</button>
+          </section>
+        </div>
+
+        <!-- Tab View: Dedicated Agents & Mission Orchestration Deck -->
+        <div id="tab-missions" class="hud-tab-content">
+          <!-- Active Mission & Task Orchestration Board -->
+          <div class="terminal-deck-card tasks-wrapper">
+            <div class="terminal-deck-header">
+              <div class="deck-title">
+                <span class="deck-title-icon">⚡</span>
+                <span>ACTIVE MISSION ORCHESTRATION & DAG GRAPH</span>
+              </div>
+              <div class="deck-status">
+                <span class="status-pill">LEGACY COMMANDER TASKS</span>
+              </div>
+            </div>
+            <div id="task-list" class="task-list">
+              <div class="task-empty">System standby. No active tasks executing in background.</div>
+            </div>
+          </div>
+
+          <div class="terminal-deck-card nova-ops" aria-labelledby="agent-ops-title">
+            <div class="terminal-deck-header"><div class="deck-title" id="agent-ops-title">AGENT MISSIONS // PLAN · APPROVE · BUILD · VERIFY</div><span class="status-pill" id="agent-engine-badge">ENGINE STATUS UNKNOWN</span></div>
+            <p class="nova-ops-caption">Hood asks the configured model provider for a task plan. Nothing runs until you approve that exact plan and its budget. Engineer and QA agents then write code in an isolated workspace with no internet access; an independent checker runs the tests. A mission is marked COMPLETED only when those checks pass, and only then can you download the result.</p>
+            <form id="agent-mission-form" class="nova-mission-form">
+              <label for="agent-mission-objective">Objective</label>
+              <textarea id="agent-mission-objective" minlength="10" maxlength="8000" rows="4" required placeholder="Example: Build a small responsive notes web app with create, read, update and delete over a JSON API."></textarea>
+              <label for="agent-mission-budget">Spend cap (USD)</label>
+              <input id="agent-mission-budget" type="number" min="0" max="100" step="0.01" value="1.00" required>
+              <button type="submit" class="nova-action">Plan mission (calls model provider)</button>
+            </form>
+            <div id="agent-mission-feedback" role="status" aria-live="polite"></div>
+            <div class="nova-mission-toolbar"><button id="agent-refresh-missions" class="nova-action" type="button">Refresh agent missions</button></div>
+            <div id="agent-mission-records" aria-live="polite">Agent missions not loaded.</div>
+          </div>
+
+          <div class="terminal-deck-card nova-ops" aria-labelledby="nova-ops-title">
+            <div class="terminal-deck-header"><div class="deck-title" id="nova-ops-title">NOVA 2.1 // DURABLE MISSION PLANS</div><span class="status-pill">LEGACY · LOCAL PLAN ONLY · NO AGENT EXECUTION</span></div>
+            <p class="nova-ops-caption">Submit a mission for review. Explicit approval creates a verifiable local Markdown plan. A second confirmation can run a bounded deterministic local task graph and generate an evidence manifest; neither action executes the business objective.</p>
+            <form id="nova-mission-form" class="nova-mission-form">
+              <label for="nova-mission-title">Mission title</label><input id="nova-mission-title" maxlength="120" minlength="3" required placeholder="Example: Client website delivery plan">
+              <label for="nova-mission-objective">Objective</label><textarea id="nova-mission-objective" minlength="10" maxlength="8000" rows="4" required placeholder="Describe intended outcome, requirements and boundaries..."></textarea>
+              <button type="submit" class="nova-action">Create pending mission</button>
+            </form>
+            <div id="nova-mission-feedback" role="status" aria-live="polite"></div>
+            <div class="nova-mission-toolbar"><button id="nova-refresh-missions" class="nova-action" type="button">Refresh mission records</button></div>
+            <div id="nova-mission-records" aria-live="polite">Mission records not loaded.</div>
+          </div>
+          <!-- Pending Governance Approvals Board -->
+          <div class="terminal-deck-card approvals-wrapper">
+            <div class="terminal-deck-header">
+              <div class="deck-title">
+                <span class="deck-title-icon">⚖️</span>
+                <span>CONSTITUTIONAL GOVERNANCE & PENDING APPROVALS</span>
+              </div>
+              <div class="deck-status">
+                <span class="status-pill">ZAK CONFIRMATION GATED</span>
+              </div>
+            </div>
+            <div id="approval-cards" class="approval-cards">
+              <div class="approval-empty">No actions pending owner approval. Financial and deployment policies enforced.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab View: Security Sentinel (Project Sentinel v1.3) -->
+        <div id="tab-sentinel" class="hud-tab-content">
+          <div class="terminal-deck-card">
+            <div class="terminal-deck-header">
+              <div class="deck-title">
+                <span class="deck-title-icon">🛡️</span>
+                <span>PROJECT SENTINEL — UNIFIED CYBERSECURITY HUB</span>
+              </div>
+              <button id="btn-open-sentinel-modal-direct" class="btn-hud-action action-sentinel">LAUNCH FULL AUDIT SUITE</button>
+            </div>
+            <div class="tab-body-grid">
+              <div class="info-card">
+                <h4>DEFENSIVE POSTURE</h4>
+                <div class="big-metric" id="tab-sentinel-posture" style="color: #00f2aa;">NOT YET VERIFIED</div>
+                <p>Inspect the actual host before relying on firewall or network assurances.</p>
+              </div>
+              <div class="info-card">
+                <h4>VULNERABILITY REGISTER</h4>
+                <div class="big-metric" id="tab-sentinel-vulns">UNVERIFIED</div>
+                <p>A trusted vulnerability scan and integrity baseline are still required.</p>
+              </div>
+              <div class="info-card">
+                <h4>X RED-TEAM EXECUTIVE</h4>
+                <div class="big-metric" id="tab-sentinel-x">DORMANT</div>
+                <p>Activation requires owner confirmation; runtime policy not independently verified. No ambient listening connected.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab View: Intelligence & Evolution -->
+        <div id="tab-intelligence" class="hud-tab-content">
+          <div class="terminal-deck-card">
+            <div class="terminal-deck-header">
+              <div class="deck-title">
+                <span class="deck-title-icon">🧠</span>
+                <span>3-LEVEL INTELLIGENCE ARCHITECTURE & ACCELERATION LAB</span>
+              </div>
+            </div>
+            <div class="tab-body-grid">
+              <div class="info-card">
+                <h4>LEVEL 1 — EXTERNAL FRONTIER</h4>
+                <div class="model-name">Gemini 2.5 Flash</div>
+                <div class="model-role">Primary Reasoning & General Synthesis</div>
+                <span class="tag-status val-green">NOT VERIFIED</span>
+              </div>
+              <div class="info-card">
+                <h4>LEVEL 2 — SELF-HOSTED</h4>
+                <div class="model-name">Local model (loopback endpoint)</div>
+                <div class="model-role">Offline Local Fallback & Fast Analysis</div>
+                <span class="tag-status val-cyan">NOT CONFIGURED</span>
+              </div>
+              <div class="info-card">
+                <h4>LEVEL 3 — HOOD PROPRIETARY</h4>
+                <div class="model-name">Hood-Code-v1</div>
+                <div class="model-role">Shadow Verification & Domain Specialist</div>
+                <span class="tag-status val-purple">SHADOW EVALUATION</span>
+              </div>
+            </div>
+            <div class="telemetry-info" style="margin-top: 15px;">
+              <div>Acceleration Engine: <strong>Evaluation mechanisms: not runtime verified</strong></div>
+              <div>Intelligence Measurement Lab: <strong>Frontier-gap figures are experimental</strong></div>
+              <div>GPU Topology: <strong>Intel Core i5 CPU / CUDA Hybrid Ready</strong></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab View: Economic Engine -->
+        <div id="tab-economic" class="hud-tab-content">
+          <div class="terminal-deck-card">
+            <div class="terminal-deck-header">
+              <div class="deck-title">
+                <span class="deck-title-icon">💰</span>
+                <span>ECONOMIC ENGINE & WEALTH CREATION</span>
+              </div>
+            </div>
+            <div class="tab-body-grid">
+              <div class="info-card">
+                <h4>FINANCIAL MODE</h4>
+                <div class="big-metric val-cyan" id="econ-mode-val">NORMAL</div>
+                <p>Balancing short-term cash flow with scalable long-term asset building.</p>
+              </div>
+              <div class="info-card">
+                <h4>FINANCIAL CONSTITUTION</h4>
+                <div class="big-metric val-green">SPEND UNVERIFIED</div>
+                <p>Autonomous spending must remain disabled until budget controls are verified.</p>
+              </div>
+              <div class="info-card">
+                <h4>RENT-VS-OWN GPU</h4>
+                <div class="big-metric val-purple">NOT CALCULATED</div>
+                <p>No GPU break-even calculation has been verified for this machine.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab View: Impossible List -->
+        <div id="tab-impossible" class="hud-tab-content">
+          <div class="terminal-deck-card">
+            <div class="terminal-deck-header">
+              <div class="deck-title">
+                <span class="deck-title-icon">🚧</span>
+                <span>IMPOSSIBLE LIST — PERSISTENT FRONTIER BARRIERS</span>
+              </div>
+            </div>
+            <div id="impossible-list-container" class="telemetry-info">
+              <div>Loading persistent frontier barriers from database...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab View: Desktop Operations -->
+        <div id="tab-desktop" class="hud-tab-content">
+          <div class="terminal-deck-card">
+            <div class="terminal-deck-header">
+              <div class="deck-title">
+                <span class="deck-title-icon">🖥️</span>
+                <span>GOVERNED COMPUTER CONTROL & PROCESS SUPERVISION</span>
+              </div>
+            </div>
+            <div class="tab-body-grid">
+              <div class="info-card">
+                <h4>ACTIVE WINDOW</h4>
+                <div class="detail-row" id="dt-active-window">Windows Desktop / Active Explorer</div>
+                <p>Supervised via Playwright, UI Automation, and Accessibility tree.</p>
+              </div>
+              <div class="info-card">
+                <h4>HUMAN HANDOFF BARRIERS</h4>
+                <div class="big-metric val-green">NONE (MONITORING)</div>
+                <p>Automated pauses on CAPTCHA, MFA tokens, or consequential transactions.</p>
+              </div>
+              <div class="info-card">
+                <h4>UNATTENDED / OVERNIGHT</h4>
+                <div class="big-metric val-cyan">0 RUNNING</div>
+                <p>Overnight execution branches report every morning with zero autonomous spend.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab View: Memory & Knowledge (Durable Sovereign Recall) -->
+        <div id="tab-memory" class="hud-tab-content">
+          <div class="terminal-deck-card">
+            <div class="terminal-deck-header">
+              <div class="deck-title">
+                <span class="deck-title-icon">📚</span>
+                <span>SOVEREIGN MEMORY & PERSISTENT KNOWLEDGE GRAPH</span>
+              </div>
+              <div class="deck-status">
+                <span class="status-pill" id="memory-count-badge">0 MEMORIES STORED</span>
+              </div>
+            </div>
+            <div class="tab-body-grid" style="margin-bottom: 16px;">
+              <div class="info-card">
+                <h4>MEMORY REPOSITORY</h4>
+                <div class="big-metric val-cyan" id="mem-stat-total">LOCAL DB</div>
+                <p>Immutable cryptographic entries grounded in SQLite database.</p>
+              </div>
+              <div class="info-card">
+                <h4>GOVERNANCE & PRIVACY</h4>
+                <div class="big-metric val-green">ZERO LEAK</div>
+                <p>No ambient cloud indexing. Root owner data never used for model training.</p>
+              </div>
+              <div class="info-card">
+                <h4>CONFIDENCE THRESHOLD</h4>
+                <div class="big-metric val-purple">1.0 HIGH</div>
+                <p>Grounded facts distinguished from inferred assumptions.</p>
+              </div>
+            </div>
+            <div class="user-table-wrapper">
+              <table class="user-table">
+                <thead>
+                  <tr>
+                    <th>Domain / Project</th>
+                    <th>Knowledge Key / Fact</th>
+                    <th>Confidence</th>
+                    <th>Source / Origin</th>
+                    <th>Timestamp</th>
+                  </tr>
+                </thead>
+                <tbody id="memory-table-body">
+                  <tr><td colspan="5" style="text-align:center; color:var(--text-muted);">Loading sovereign memory records...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Column: Real-Time Tactical Telemetry Hub (Matching Reference A & B) -->
+      <aside class="flank-panel flank-right" id="telemetry-flank">
+        <!-- System Status Card with Holographic Radar Globe -->
+        <div class="telemetry-deck-card system-status-hero-card">
+          <div class="card-glow-edge"></div>
+          <div class="section-title-tag">
+            <span>SYSTEM STATUS // TELEMETRY</span>
+            <button id="btn-collapse-telemetry" class="btn-subtle" title="Collapse Drawer" style="margin-left: auto;">✕</button>
+          </div>
+          
+          <!-- Mini Holographic Planet / Radar Visualizer -->
+          <div class="mini-radar-globe-wrapper">
+            <div class="mini-globe-stage">
+              <div class="mini-globe-sphere">
+                <div class="mini-globe-latitudes"></div>
+                <div class="mini-globe-longitudes"></div>
+                <div class="mini-globe-radar-sweep"></div>
+              </div>
+            </div>
+            <div class="mini-globe-stats">
+              <div class="stat-line"><span class="stat-k">Core:</span> <span class="stat-v val-green">UNVERIFIED</span></div>
+              <div class="stat-line"><span class="stat-k">Sentinel:</span> <span class="stat-v val-green" id="rt-sentinel-posture">UNVERIFIED</span></div>
+              <div class="stat-line"><span class="stat-k">Provider:</span> <span class="stat-v val-cyan" id="rt-provider-name">NOT VERIFIED</span></div>
+              <div class="stat-line"><span class="stat-k">Local:</span> <span class="stat-v" id="rt-local-model">NOT CONFIGURED</span></div>
+            </div>
+          </div>
+
+          <div id="sentinel-telemetry" class="telemetry-info compact-telemetry">
+            <div>Firewall: <span id="sentinel-firewall">UNVERIFIED</span></div>
+            <div>Vulnerabilities: <span id="sentinel-vulns">UNVERIFIED</span></div>
+            <div>Integrity: <span id="sentinel-integrity">BASELINE NOT VERIFIED</span></div>
+            <div>X Red-Team: <span id="sentinel-x-status">DORMANT</span></div>
+          </div>
+        </div>
+
+        <!-- 3-Level Intelligence Architecture Status Card -->
+        <div class="telemetry-deck-card">
+          <div class="card-glow-edge"></div>
+          <div class="section-title-tag">INTELLIGENCE LEVELS</div>
+          <div class="intelligence-levels-list">
+            <div class="level-indicator-item level-1 active">
+              <div class="level-header">
+                <span class="level-badge">L1</span>
+                <span class="level-title">External Frontier</span>
+                <span class="level-status val-green">UNVERIFIED</span>
+              </div>
+              <div class="level-desc">Gemini adapter (availability unverified)</div>
+            </div>
+            <div class="level-indicator-item level-2">
+              <div class="level-header">
+                <span class="level-badge">L2</span>
+                <span class="level-title">Self-Hosted</span>
+                <span class="level-status val-cyan">CONTAINED</span>
+              </div>
+              <div class="level-desc">Local model adapter (endpoint unverified)</div>
+            </div>
+            <div class="level-indicator-item level-3">
+              <div class="level-header">
+                <span class="level-badge">L3</span>
+                <span class="level-title">HOOD Proprietary</span>
+                <span class="level-status val-purple">SHADOW</span>
+              </div>
+              <div class="level-desc">Hood model candidate (not deployed)</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Mission Status & Task Activity Card -->
+        <div class="telemetry-deck-card">
+          <div class="card-glow-edge"></div>
+          <div class="section-title-tag">MISSION STATUS // AGENTS</div>
+          <div class="mission-quick-stats">
+            <div class="mission-stat-box">
+              <span class="stat-num val-cyan" id="quick-active-missions">0</span>
+              <span class="stat-lbl">Active</span>
+            </div>
+            <div class="mission-stat-box">
+              <span class="stat-num val-green" id="quick-active-agents">—</span>
+              <span class="stat-lbl">Specialists</span>
+            </div>
+            <div class="mission-stat-box">
+              <span class="stat-num val-purple">N/A</span>
+              <span class="stat-lbl">Safety</span>
+            </div>
+          </div>
+          <div id="desktop-telemetry" class="telemetry-info compact-telemetry" style="margin-top: 10px;">
+            <div>Desktop: Not verified on this machine</div>
+            <div>Spend: $0.00 / Pending: 0</div>
+          </div>
+        </div>
+
+        <!-- Pending Approvals Quick Card -->
+        <div class="telemetry-deck-card">
+          <div class="card-glow-edge"></div>
+          <div class="section-title-tag">PENDING APPROVALS</div>
+          <div id="approval-cards-sidebar" class="approval-cards-mini">
+            <div class="approval-empty" style="font-size: 0.72rem; padding: 6px;">No owner approvals loaded.</div>
+          </div>
+        </div>
+
+        <!-- Live Activity Feed Card -->
+        <div class="telemetry-deck-card">
+          <div class="card-glow-edge"></div>
+          <div class="section-title-tag">LIVE ACTIVITY FEED</div>
+          <div id="activity-feed-list" class="activity-feed-list">
+            <div class="feed-item"><span class="feed-time">NOW</span> Surface connected to HOOD runtime</div>
+            <div class="feed-item"><span class="feed-time">-1m</span> Constitutional policy verified ($0 hard cap)</div>
+            <div class="feed-item"><span class="feed-time">-2m</span> Project Sentinel baseline verified</div>
+          </div>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <!-- ==================================================== -->
+  <!-- MODALS & OVERLAYS (STRICTLY PRESERVED & ENHANCED)    -->
+  <!-- ==================================================== -->
+
+  <!-- Authentication Overlay (Login / First Run Root Setup / Recovery) -->
+  <div id="auth-modal" class="auth-modal-overlay" style="display: none;">
+    <div class="auth-card">
+      <div class="auth-header">
+        <div class="auth-logo">HOOD</div>
+        <div id="auth-subtitle" class="auth-subtitle">SECURE TERMINAL ACCESS</div>
+      </div>
+      
+      <!-- Login View -->
+      <form id="login-form" class="auth-form">
+        <div class="form-group">
+          <label for="login-username">IDENTITY / USERNAME</label>
+          <input type="text" id="login-username" required autocomplete="username" placeholder="Username">
+        </div>
+        <div class="form-group">
+          <label for="login-password">ACCESS KEY / PASSWORD</label>
+          <input type="password" id="login-password" required autocomplete="current-password" placeholder="Password">
+        </div>
+        <div id="login-error" class="auth-error-msg" style="display: none;"></div>
+        <button type="submit" id="btn-login-submit" class="btn-auth-primary">AUTHENTICATE</button>
+        <div class="auth-links">
+          <a href="#" id="link-show-recover">Forgot Password / Emergency Recovery</a>
+        </div>
+      </form>
+
+      <!-- First Run Root Owner Setup View -->
+      <form id="setup-form" class="auth-form" style="display: none;">
+        <div class="setup-notice">
+          INITIALIZATION REQUIRED: ESTABLISH PERMANENT ROOT OWNER
+        </div>
+        <div class="form-group">
+          <label for="setup-username">ROOT OWNER USERNAME</label>
+          <input type="text" id="setup-username" required value="zack" placeholder="Username (e.g. zack)">
+        </div>
+        <div class="form-group">
+          <label for="setup-display-name">FULL NAME / DISPLAY</label>
+          <input type="text" id="setup-display-name" required value="Zack (Zakaria)" placeholder="Display Name">
+        </div>
+        <div class="form-group">
+          <label for="setup-password">INITIAL MASTER PASSWORD</label>
+          <input type="password" id="setup-password" required minlength="10" placeholder="Min 10 chars, uppercase, lowercase, digit/symbol">
+        </div>
+        <div id="setup-error" class="auth-error-msg" style="display: none;"></div>
+        <button type="submit" id="btn-setup-submit" class="btn-auth-primary">INITIALIZE ROOT OWNER</button>
+      </form>
+
+      <!-- Recovery View -->
+      <form id="recover-form" class="auth-form" style="display: none;">
+        <div class="form-group">
+          <label for="recover-key">ONE-TIME RECOVERY KEY</label>
+          <input type="text" id="recover-key" required placeholder="HEX-RECOVERY-KEY">
+        </div>
+        <div class="form-group">
+          <label for="recover-new-password">NEW ROOT PASSWORD</label>
+          <input type="password" id="recover-new-password" required minlength="10" placeholder="Min 10 chars, uppercase, lowercase, digit/symbol">
+        </div>
+        <div id="recover-error" class="auth-error-msg" style="display: none;"></div>
+        <button type="submit" id="btn-recover-submit" class="btn-auth-primary">RESET ROOT CREDENTIALS</button>
+        <div class="auth-links">
+          <a href="#" id="link-back-to-login">Back to Login</a>
+        </div>
+      </form>
+
+      <!-- Recovery Key Notification Display -->
+      <div id="recovery-key-modal" class="recovery-notice-box" style="display: none;">
+        <div class="recovery-notice-title">IMPORTANT: SAVE YOUR ONE-TIME RECOVERY KEY</div>
+        <p class="recovery-notice-text">
+          This one-time key is required if you ever forget your Root Owner password. Store it securely offline.
+        </p>
+        <div id="displayed-recovery-key" class="recovery-key-text"></div>
+        <button type="button" id="btn-dismiss-recovery" class="btn-auth-primary">I HAVE SECURED MY RECOVERY KEY</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Root Owner Multi-User Administration Modal -->
+  <div id="admin-modal" class="auth-modal-overlay" style="display: none;">
+    <div class="admin-card">
+      <div class="admin-header">
+        <div class="admin-title">HOOD SECURITY & MULTI-USER GOVERNANCE</div>
+        <button id="btn-close-admin" class="btn-close-modal">✕</button>
+      </div>
+      <div class="admin-body">
+        <div class="admin-section">
+          <h3>CREATE USER IDENTITY</h3>
+          <form id="create-user-form" class="admin-create-form" autocomplete="off">
+            <input type="text" id="new-user-username" name="new_username_isolated" placeholder="New Username (e.g. alex)" autocomplete="off" required minlength="3">
+            <input type="text" id="new-user-display" name="new_display_isolated" placeholder="Display Name (e.g. Alex Mason)" autocomplete="off" required minlength="2">
+            <input type="password" id="new-user-pass" name="new_password_isolated" placeholder="Password (Min 10 chars, uppercase, lowercase, symbol)" autocomplete="new-password" required minlength="10">
+            <select id="new-user-role" name="new_role_isolated">
+              <option value="OPERATOR">OPERATOR (Standard Execution)</option>
+              <option value="ADMINISTRATOR">ADMINISTRATOR (Delegated Operations)</option>
+              <option value="MANAGER">MANAGER (Approvals & Oversight)</option>
+              <option value="VIEWER">VIEWER (Read-Only Telemetry)</option>
+            </select>
+            <button type="submit" id="btn-create-user-submit" class="btn-auth-primary">CREATE IDENTITY</button>
+          </form>
+          <div id="create-user-status" class="admin-status-msg"></div>
+        </div>
+        <div class="admin-section">
+          <h3>AUTHENTICATED USER REGISTRY</h3>
+          <div class="user-table-wrapper">
+            <table class="user-table">
+              <thead>
+                <tr>
+                  <th>Username</th>
+                  <th>Display Name</th>
+                  <th>Role</th>
+                  <th>Status</th>
+                  <th>Projects</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="user-table-body">
+                <!-- User rows rendered dynamically -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Root Owner Security Modal -->
+  <div id="security-modal" class="auth-modal-overlay" style="display: none;">
+    <div class="admin-card">
+      <div class="admin-header">
+        <div class="admin-title" style="color: var(--accent-cyan);">ROOT OWNER SECURITY & RECOVERY GOVERNANCE</div>
+        <button id="btn-close-security" class="btn-close-modal">✕</button>
+      </div>
+      <div class="admin-body">
+        <!-- Change Master Password -->
+        <div class="admin-section">
+          <h3>CHANGE ROOT OWNER PASSWORD</h3>
+          <p class="section-desc">Requires verification of current master password. Policy: Min 10 chars, uppercase, lowercase, digit/symbol.</p>
+          <form id="change-password-form" class="admin-create-form">
+            <input type="password" id="cp-current-pass" placeholder="Current Master Password" required>
+            <input type="password" id="cp-new-pass" placeholder="New Password (min 10 chars)" required minlength="10">
+            <button type="submit" class="btn-auth-primary">UPDATE ROOT PASSWORD</button>
+          </form>
+          <div id="change-password-status" class="admin-status-msg"></div>
+        </div>
+
+        <!-- Rotate One-Time Recovery Key -->
+        <div class="admin-section">
+          <h3>ROTATE ONE-TIME RECOVERY KEY</h3>
+          <p class="section-desc">Re-authenticates your current password, immediately invalidates the previous recovery key, and generates a fresh 32-character key. Stored only as a secure scrypt hash.</p>
+          <form id="rotate-key-form" class="admin-create-form">
+            <input type="password" id="rk-current-pass" placeholder="Confirm Current Password" required style="grid-column: span 2;">
+            <button type="submit" class="btn-auth-primary" style="background: linear-gradient(135deg, #f6d365, #fda085); color: #000;">GENERATE NEW RECOVERY KEY</button>
+          </form>
+          <div id="rotate-key-status" class="admin-status-msg"></div>
+          <div id="new-key-display-box" class="recovery-notice-box" style="display: none; margin-top: 12px;">
+            <div class="recovery-notice-title">NEW ONE-TIME RECOVERY KEY ISSUED</div>
+            <p class="recovery-notice-text">
+              Store this key offline immediately. It is only displayed once and cannot be retrieved again:
+            </p>
+            <div id="new-recovery-key-text" class="recovery-key-text"></div>
+            <button type="button" id="btn-ack-new-key" class="btn-auth-primary" style="margin-top: 8px;">KEY SAVED SECURELY</button>
+          </div>
+        </div>
+
+        <!-- Active Sessions & Remote Revocation -->
+        <div class="admin-section">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <h3 style="margin-bottom: 0;">ACTIVE SESSIONS GOVERNANCE</h3>
+            <button id="btn-revoke-other-sessions" class="btn-status-toggle" style="background: rgba(255, 0, 85, 0.2); border-color: #ff0055; color: #ff0055; font-weight: bold;">REVOKE ALL OTHER SESSIONS</button>
+          </div>
+          <div class="user-table-wrapper">
+            <table class="user-table">
+              <thead>
+                <tr>
+                  <th>Session Token</th>
+                  <th>IP Address</th>
+                  <th>Client / User Agent</th>
+                  <th>Established</th>
+                  <th>Expires</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="sessions-table-body">
+                <!-- Populated dynamically -->
+              </tbody>
+            </table>
+          </div>
+          <div id="session-revoke-status" class="admin-status-msg"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sentinel Security Center Modal (HOOD v1.3 Project Sentinel) -->
+  <div id="sentinel-modal" class="auth-modal-overlay" style="display: none;">
+    <div class="admin-card" style="width: 900px; max-height: 90vh;">
+      <div class="admin-header">
+        <div class="admin-title" style="color: #00f2aa; display: flex; align-items: center; gap: 10px;">
+          <span>PROJECT SENTINEL — UNIFIED CYBERSECURITY CENTER</span>
+          <span id="sentinel-center-posture-badge" class="indicator-badge" style="background: rgba(0,242,170,0.2); border: 1px solid #00f2aa; color: #00f2aa; font-size: 0.7rem;">NOT YET VERIFIED</span>
+        </div>
+        <button id="btn-close-sentinel" class="btn-close-modal">✕</button>
+      </div>
+      <div class="admin-body">
+        <!-- Sentinel Controls & Actions -->
+        <div style="display: flex; gap: 12px; margin-bottom: 8px;">
+          <button id="btn-run-sentinel-scan" class="btn-auth-primary" style="flex: 1; background: linear-gradient(135deg, #00f2fe, #4facfe);">RUN DEFENSIVE SCAN</button>
+          <button id="btn-activate-x-exercise" class="btn-auth-primary" style="flex: 1; background: linear-gradient(135deg, #f6d365, #fda085); color: #000;">ACTIVATE X RED-TEAM</button>
+          <button id="btn-standdown-x" class="btn-auth-primary" style="flex: 1; background: rgba(255, 0, 85, 0.2); border: 1px solid #ff0055; color: #ff0055;">STAND DOWN X</button>
+        </div>
+        <div id="sentinel-action-status" class="admin-status-msg" style="margin-bottom: 8px;"></div>
+
+        <!-- Section 1: Overview & Threats -->
+        <div class="admin-section">
+          <h3>VULNERABILITY REGISTER & ACTIVE THREATS</h3>
+          <div class="user-table-wrapper">
+            <table class="user-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Severity</th>
+                  <th>Category</th>
+                  <th>Component</th>
+                  <th>Status</th>
+                  <th>Description</th>
+                </tr>
+              </thead>
+              <tbody id="sentinel-findings-body">
+                <!-- Dynamically populated findings -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Section 2: Host Firewall & Network Stack -->
+        <div class="admin-section">
+          <h3>WINDOWS DEFENDER FIREWALL & EXPOSED INTERFACES</h3>
+          <div id="sentinel-firewall-details" class="telemetry-info" style="font-family: var(--font-mono); font-size: 0.8rem;">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+
+        <!-- Section 3: Self-Healing & Autonomous Repairs -->
+        <div class="admin-section">
+          <h3>GOVERNED SELF-HEALING & DEFENSIVE REPAIRS</h3>
+          <div id="sentinel-healing-details" class="telemetry-info" style="font-family: var(--font-mono); font-size: 0.8rem;">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=cinematic"></script>
+</body>
+</html>

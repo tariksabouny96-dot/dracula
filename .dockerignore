@@ -1,0 +1,18 @@
+.git
+.venv
+.hood
+.hood-live
+node_modules
+**/__pycache__
+**/*.pyc
+.claude
+release/evidence/live/*.zip
+artifacts/*.db
+artifacts/*.enc
+artifacts/*.json
+*.log
+.pytest_cache
+# Secrets never enter the image; compose injects them at run time.
+.env
+.env.*
+!env.example

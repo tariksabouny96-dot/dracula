@@ -1,0 +1,33 @@
+# HOOD X Offensive Security Scope Policy - Version 1
+# Governed by Master System Specification Section 5.5.
+# Owner-controlled external policy artifact. X cannot edit this file.
+
+engagement_id: "ENG-2026-LAB-01"
+version: 1
+authorization_confirmed: true
+authorized_by: "Zak"
+authorization_reference: "AUTH-REF-OWNER-LAB"
+status: "ACTIVE" # ACTIVE or CLOSED
+
+in_scope:
+  - "localhost"
+  - "127.0.0.1"
+  - "lab.hood.local"
+
+out_of_scope:
+  - "*.production.*"
+  - "client-external.com"
+  - "192.168.1.1"
+
+capabilities:
+  recon: true
+  scanning: true
+  exploitation: false # Scaffolding only - disabled for overnight milestone
+  exploit_development: false
+  auth_testing: true
+  privilege_escalation: false
+  vulnerability_chaining: false
+  proof_of_impact: false
+  destructive_testing: false
+  denial_of_service: false
+  real_customer_data_access: false

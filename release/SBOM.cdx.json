@@ -1,0 +1,620 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:3a852e43-aead-4c59-9dfa-1e5f397c9df6",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-10-09T15:01:35.981540+00:00",
+    "component": {
+      "type": "application",
+      "name": "hood-system",
+      "version": "6cdf0c8733f6a1cef1f3e0613df5c0988e809957"
+    },
+    "properties": [
+      {
+        "name": "hood:requirements_sha256",
+        "value": "ffcefbb2a5304cd7af0a9865e98b40339987000495b3f01772445878b4f0180d"
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "annotated-types",
+      "version": "0.8.0",
+      "purl": "pkg:pypi/annotated-types@0.8.0",
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "0.8.0"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "anyio",
+      "version": "4.15.1",
+      "purl": "pkg:pypi/anyio@4.15.1",
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "4.15.1"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "certifi",
+      "version": "2026.7.22",
+      "purl": "pkg:pypi/certifi@2026.7.22",
+      "licenses": [
+        {
+          "license": {
+            "name": "MPL-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "2026.7.22"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "cffi",
+      "version": "2.1.1",
+      "purl": "pkg:pypi/cffi@2.1.1",
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT-0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "2.1.1"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "colorama",
+      "version": "0.4.6",
+      "purl": "pkg:pypi/colorama@0.4.6",
+      "licenses": [
+        {
+          "license": {
+            "name": "UNKNOWN"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "0.4.6"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "cryptography",
+      "version": "50.0.2",
+      "purl": "pkg:pypi/cryptography@50.0.2",
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0 OR BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "50.0.2"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "greenlet",
+      "version": "3.5.6",
+      "purl": "pkg:pypi/greenlet@3.5.6",
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT AND PSF-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "3.5.6"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "h11",
+      "version": "0.16.0",
+      "purl": "pkg:pypi/h11@0.16.0",
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "0.16.0"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "httpcore",
+      "version": "1.0.9",
+      "purl": "pkg:pypi/httpcore@1.0.9",
+      "licenses": [
+        {
+          "license": {
+            "name": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "1.0.9"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "httpx",
+      "version": "0.28.1",
+      "purl": "pkg:pypi/httpx@0.28.1",
+      "licenses": [
+        {
+          "license": {
+            "name": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "0.28.1"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "idna",
+      "version": "3.20",
+      "purl": "pkg:pypi/idna@3.20",
+      "licenses": [
+        {
+          "license": {
+            "name": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "3.20"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "iniconfig",
+      "version": "2.3.0",
+      "purl": "pkg:pypi/iniconfig@2.3.0",
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "2.3.0"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "packaging",
+      "version": "26.3",
+      "purl": "pkg:pypi/packaging@26.3",
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0 OR BSD-2-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "26.3"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "playwright",
+      "version": "1.63.0",
+      "purl": "pkg:pypi/playwright@1.63.0",
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "1.63.0"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pluggy",
+      "version": "1.6.0",
+      "purl": "pkg:pypi/pluggy@1.6.0",
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "1.6.0"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "psutil",
+      "version": "7.2.2",
+      "purl": "pkg:pypi/psutil@7.2.2",
+      "licenses": [
+        {
+          "license": {
+            "name": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "7.2.2"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pycparser",
+      "version": "3.0",
+      "purl": "pkg:pypi/pycparser@3.0",
+      "licenses": [
+        {
+          "license": {
+            "name": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "3.0"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pydantic",
+      "version": "2.13.5",
+      "purl": "pkg:pypi/pydantic@2.13.5",
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "2.13.5"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pydantic_core",
+      "version": "2.46.5",
+      "purl": "pkg:pypi/pydantic_core@2.46.5",
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "2.46.5"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pyee",
+      "version": "13.0.1",
+      "purl": "pkg:pypi/pyee@13.0.1",
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "13.0.1"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "Pygments",
+      "version": "2.21.0",
+      "purl": "pkg:pypi/pygments@2.21.0",
+      "licenses": [
+        {
+          "license": {
+            "name": "BSD-2-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "2.21.0"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pytest",
+      "version": "9.1.1",
+      "purl": "pkg:pypi/pytest@9.1.1",
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "9.1.1"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pytest-asyncio",
+      "version": "1.4.0",
+      "purl": "pkg:pypi/pytest-asyncio@1.4.0",
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "1.4.0"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "PyYAML",
+      "version": "6.0.3",
+      "purl": "pkg:pypi/pyyaml@6.0.3",
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "6.0.3"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "typing-inspection",
+      "version": "0.4.4",
+      "purl": "pkg:pypi/typing-inspection@0.4.4",
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "0.4.4"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "typing_extensions",
+      "version": "4.16.0",
+      "purl": "pkg:pypi/typing_extensions@4.16.0",
+      "licenses": [
+        {
+          "license": {
+            "name": "PSF-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "hood:installed_version",
+          "value": "4.16.0"
+        },
+        {
+          "name": "hood:pin_matches_installed",
+          "value": "True"
+        }
+      ]
+    }
+  ]
+}

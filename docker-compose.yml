@@ -1,0 +1,53 @@
+# Production topology for HOOD.
+#
+# `hood` binds 127.0.0.1:8990 inside its own network namespace. `proxy` (Caddy)
+# shares that namespace (network_mode: service:hood), so it reaches HOOD over
+# loopback — exactly the reverse-proxy-in-front-of-a-loopback-service model the
+# RUNBOOK describes. HOOD never listens on a routable address itself; only
+# Caddy's 443 is published.
+#
+# Set HOOD_PUBLIC_HOST to the hostname you serve on; Caddy obtains a TLS cert
+# for it and HOOD's Host allowlist is pinned to it (HOOD_ALLOWED_HOSTS).
+#
+# First-run owner setup must come from loopback. Do it through the proxy (it
+# connects to HOOD over loopback) or with:
+#   docker compose exec hood curl -X POST -H "Host: 127.0.0.1:8990" \
+#       -H "Content-Type: application/json" http://127.0.0.1:8990/api/auth/init -d '{"username":"zak","password":"..."}'
+
+services:
+  hood:
+    build: .
+    image: hood:latest
+    environment:
+      # Caddy forwards the public Host header; HOOD only answers for it.
+      HOOD_ALLOWED_HOSTS: "${HOOD_PUBLIC_HOST:-hood.local}:443"
+      # Provider + secrets come from the host environment / secret manager.
+      HOOD_GEMINI_CREDENTIAL: "${HOOD_GEMINI_CREDENTIAL:-}"
+      HOOD_MODEL_PRICING: "${HOOD_MODEL_PRICING:-}"
+      HOOD_VAULT_KEY: "${HOOD_VAULT_KEY:-}"
+      HOOD_RECEIPT_KEY: "${HOOD_RECEIPT_KEY:-}"
+      HOOD_MIGRATION_KEY: "${HOOD_MIGRATION_KEY:-}"
+    volumes:
+      - hood-data:/data
+    restart: unless-stopped
+    # Uncomment to allow agent-execution sandboxing (unprivileged user namespaces):
+    # security_opt:
+    #   - seccomp:unconfined
+
+  proxy:
+    image: caddy:2.8-alpine
+    network_mode: "service:hood"   # share HOOD's netns -> reach it on 127.0.0.1
+    depends_on:
+      - hood
+    environment:
+      HOOD_PUBLIC_HOST: "${HOOD_PUBLIC_HOST:-hood.local}"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+
+volumes:
+  hood-data:
+  caddy-data:
+  caddy-config:
