@@ -12,8 +12,6 @@ from tests.hardening.test_remediation import request
 
 @pytest.fixture
 def server(tmp_path):
-    before = list(routes.ROUTES)
-
     @routes.route("GET", r"/api/test-feature/(?P<item>[a-z]+)", permission="VIEW_PROJECT_DATA")
     def get_item(ctx):
         if ctx.match["item"] == "missing":
@@ -41,7 +39,9 @@ def server(tmp_path):
         yield base, owner, viewer
     finally:
         srv.stop()
-        routes.ROUTES[:] = before
+        # Remove only this test's routes: the server loads the real feature modules on start, and
+        # restoring an earlier snapshot used to wipe them for every later test (order-dependent 404s).
+        routes.ROUTES[:] = [r for r in routes.ROUTES if r.handler not in (get_item, act, file)]
 
 
 def test_routes_require_auth_permission_and_csrf(server):
