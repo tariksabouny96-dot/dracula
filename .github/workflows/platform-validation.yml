@@ -106,7 +106,7 @@ jobs:
           " && c=works || c=FAILS
           echo "- headless Chromium inside gVisor: $c" >> "$GITHUB_STEP_SUMMARY"
           docker exec -e HOOD_DATA_DIR=/tmp/hood-test hood-val python -m pytest -q -p no:cacheprovider --tb=short \
-            tests/agents/test_agent_engine.py -k "sandbox or network" 2>&1 | tail -60 | tee sandbox.log || true
+            tests/agents/test_agent_engine.py tests/agents/test_netns_launcher.py -k "sandbox or network or loopback" 2>&1 | tail -60 | tee sandbox.log || true
           docker exec hood-val sh -c 'unshare -rn python3 -I /app/services/agents/netns_launcher.py /bin/sh -c "cat /proc/net/dev; echo launcher-ok"' 2>&1 | tail -8 || true
           echo "- HOOD sandbox tests inside gVisor: $(tail -1 sandbox.log)" >> "$GITHUB_STEP_SUMMARY"
           echo "- memory: $(docker stats --no-stream --format '{{.MemUsage}}' hood-val)" >> "$GITHUB_STEP_SUMMARY"
