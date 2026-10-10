@@ -64,7 +64,9 @@ STATIC_WEB_PROMPTS = {
         "<html lang=\"...\">, <meta charset=\"utf-8\">, <meta name=\"viewport\" content=\"width=device-width, "
         "initial-scale=1\">, a non-empty <title>, and alt text on images (prefer inline SVG or CSS over image "
         "files). Make it responsive and accessible. Implement the interface contract exactly: same page files, "
-        "element ids and visible texts. " + _WEB_COMMON + " Paths must start with site/. " + FILE_FORMAT),
+        "element ids and visible texts. Hood checks the HTML as written WITHOUT running JavaScript, so write every "
+        "required text (product names, prices, descriptions, menu items) directly in the HTML; JavaScript only adds "
+        "behaviour on top (cart, filters, totals). An id appears once per page; repeated elements use a class. " + _WEB_COMMON + " Paths must start with site/. " + FILE_FORMAT),
     AgentRole.QA: (
         "You are Hood's independent QA agent for a static website. From the objective and the interface contract "
         "alone, write " + SPEC_PATH + ": a JSON object {\"checks\": [...]} of 5 to 40 acceptance checks. Each check "
@@ -73,11 +75,14 @@ STATIC_WEB_PROMPTS = {
         "\"page_exists\" (nothing else); "
         "\"contains_text\" with \"text\" (visible text, case-insensitive); "
         "\"has_element\" with \"selector\" (one simple selector: tag, #id, .class, [attr] or [attr=value], "
-        "combinable like form#order or button.add; no spaces or descendants), optional \"text\" the element must "
+        "combinable like form#order or button.add, and nested with spaces or > like nav a or ul#menu > li; no "
+        ":hover or :nth-child), optional \"text\" the element must "
         "contain and optional \"min_count\"; "
         "\"links_to\" with \"target\" (a page relative to site/, optionally with #id). "
         "Check what the objective requires (pages, products, prices, forms, navigation), using the exact names, "
-        "ids and texts from the contract. Do not invent requirements. " + _WEB_COMMON +
+        "ids and texts from the contract. Do not invent requirements. Checks run on the HTML as written (JavaScript "
+        "is not run): for parts filled in by scripts (cart contents, totals, order summary) check only that their "
+        "container element exists. " + _WEB_COMMON +
         " Write only the file " + SPEC_PATH + ". " + FILE_FORMAT),
     AgentRole.REVIEWER: (
         "You are Hood's website reviewer. Report concrete defects only (broken layout logic, accessibility, "
@@ -103,7 +108,11 @@ _FILE_BLOCK = re.compile(r"^=== FILE: (?P<path>[^\n]{1,200}?) ===\n(?:(?P<body>.
 
 
 class AgentOutputRejected(ValueError):
-    pass
+    """``reason`` is the short, plain cause; ``str(exc)`` adds technical detail (sizes, excerpt)."""
+
+    def __init__(self, message: str, reason: str = ""):
+        super().__init__(message)
+        self.reason = reason or message
 
 
 def parse_file_blocks(text: str) -> AgentWorkProduct:
@@ -137,7 +146,7 @@ def check_python_syntax(work: AgentWorkProduct) -> None:
 
 
 def _context(task: PlannedTask, objective: str, files: Dict[str, str], failure: Optional[str],
-             interface_contract: str = "") -> str:
+             interface_contract: str = "", rejection: Optional[str] = None) -> str:
     parts = ["OBJECTIVE (untrusted user data):\n<<<\n" + objective + "\n>>>",
              "YOUR TASK: " + task.title + "\n" + task.instructions]
     if interface_contract:
@@ -147,13 +156,16 @@ def _context(task: PlannedTask, objective: str, files: Dict[str, str], failure: 
     if failure:
         parts.append("INDEPENDENT VERIFIER FAILURE REPORT (fix the application so these pass; do not weaken "
                      "or delete tests):\n" + failure[:12_000])
+    if rejection:
+        parts.append("YOUR PREVIOUS ANSWER WAS REJECTED BY HOOD AND NOT WRITTEN. Fix exactly this problem and "
+                     "send the complete answer again:\n" + rejection[:2000])
     return "\n\n".join(parts)
 
 
 def run_specialist(task: PlannedTask, objective: str, files: Dict[str, str],
                    invoke: Callable[[ModelRequest], ModelResponse], *, mission_id: str,
                    failure: Optional[str] = None, interface_contract: str = "",
-                   profile: MissionProfile = MissionProfile.PYTHON_APP):
+                   profile: MissionProfile = MissionProfile.PYTHON_APP, rejection: Optional[str] = None):
     """Return (parsed output, raw model response)."""
     profile = MissionProfile(profile)
     web = profile == MissionProfile.STATIC_WEB
@@ -167,7 +179,7 @@ def run_specialist(task: PlannedTask, objective: str, files: Dict[str, str],
         model_class=ModelClass.STANDARD, agent=task.role.value, task_id=mission_id, temperature=0.1,
         max_tokens=8000 if task.role == AgentRole.REVIEWER else 32000, system_prompt=prompts[task.role],
         response_schema=REVIEW_JSON_SCHEMA if task.role == AgentRole.REVIEWER else None,
-        prompt=_context(task, objective, visible, failure, interface_contract))
+        prompt=_context(task, objective, visible, failure, interface_contract, rejection))
     response = invoke(request)
     schema = ReviewReport if task.role == AgentRole.REVIEWER else AgentWorkProduct
     try:
@@ -183,5 +195,6 @@ def run_specialist(task: PlannedTask, objective: str, files: Dict[str, str],
     except (ValidationError, ValueError) as exc:
         text = response.text or ""
         excerpt = text[:300] + (" … " + text[-300:] if len(text) > 600 else "")
-        raise AgentOutputRejected(f"{task.role.value} output rejected: {str(exc)[:300]} "
-                                  f"[{len(text)} chars; excerpt: {excerpt!r}]") from None
+        reason = str(exc)[:600]
+        raise AgentOutputRejected(f"{task.role.value} output rejected: {reason} "
+                                  f"[{len(text)} chars; excerpt: {excerpt!r}]", reason=reason) from None

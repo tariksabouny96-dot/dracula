@@ -147,3 +147,53 @@ def test_remember_command_saves_the_owners_words_and_grounds_later_answers(tmp_p
     assert "Saved" not in svc.handle_text_input("Remember when we talked?", session_id="user:owner").text
     svc.handle_text_input("What should the homepage headline say?", session_id="user:owner")
     assert "The coffee shop is called Bean There" in router.requests[-1].prompt
+
+
+def test_owner_asking_to_plan_opens_the_plan_and_button_stays_available():
+    """Owner's run: HOOD said 'press the button below' with no button, then 'I can't create missions'."""
+    router = Router(text="Sure.")
+    svc = _chat(router)
+    sid = "user:owner"
+    first = svc.handle_text_input("Can you create a website for my perfume shop with a catalogue?", session_id=sid)
+    assert first.suggested_mission and not first.open_mission_draft
+    assert "button IS shown" in router.requests[-1].prompt
+    eta = svc.handle_text_input("Plan this as a mission and tell me its ETA", session_id=sid)
+    assert eta.suggested_mission == first.suggested_mission and eta.open_mission_draft
+    assert "opening the mission plan" in router.requests[-1].prompt
+    later = svc.handle_text_input("so did you start?", session_id=sid)
+    assert later.suggested_mission == first.suggested_mission and not later.open_mission_draft
+    off_topic = svc.handle_text_input("What's the capital of France?", session_id=sid)
+    assert off_topic.suggested_mission is None
+    assert "No mission button is shown" in router.requests[-1].prompt
+    assert svc.approval_service.list_pending() == []                       # still nothing started
+
+
+def test_wordpress_request_gets_honest_limits_before_planning():
+    router = Router(text="Here's what I can do.")
+    svc = _chat(router)
+    reply = svc.handle_text_input("Build a WordPress website for perfumes with a catalogue and checkout")
+    assert any("WordPress can't be built" in n for n in reply.scope_notes)
+    assert any("No real payments" in n for n in reply.scope_notes)
+    prompt = router.requests[-1].prompt
+    assert "LIMITS FOR THIS REQUEST" in prompt and "cannot install or run WordPress" in prompt
+    svc.handle_text_input("Build a WordPress site", session_id="user:o")
+    router.text = "Not possible here: WordPress. Build a static catalogue site."
+    svc.draft_mission_objective("user:o")
+    assert "Not possible here" in router.requests[-1].prompt
+
+
+def test_planned_request_is_not_offered_again():
+    router = Router(text="Sure.")
+    svc = _chat(router)
+    sid = "user:owner"
+    svc.handle_text_input("Create a website for my bakery", session_id=sid)
+    svc.mission_planned(sid)                                    # the owner planned it from the dialog
+    after = svc.handle_text_input("how long does a website mission take here?", session_id=sid)
+    assert after.suggested_mission is None
+    assert "No mission button is shown" in router.requests[-1].prompt
+
+
+def test_limits_ignore_things_the_brief_rules_out():
+    from services.agents.scope import scope_notes
+    assert scope_notes("Constraints:\n- No WordPress, PHP, databases, or npm packages\n- No real payments") == []
+    assert scope_notes("Use WordPress with a MySQL database")

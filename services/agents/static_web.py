@@ -41,10 +41,10 @@ _MUST_BE_LOCAL = {"script", "link", "iframe"}  # scripts, stylesheets and frames
 
 # ------------------------------------------------------------------ HTML model
 class Element:
-    __slots__ = ("tag", "attrs", "line", "text_parts")
+    __slots__ = ("tag", "attrs", "line", "text_parts", "parent")
 
-    def __init__(self, tag: str, attrs: Dict[str, str], line: int):
-        self.tag, self.attrs, self.line = tag, attrs, line
+    def __init__(self, tag: str, attrs: Dict[str, str], line: int, parent: "Optional[Element]" = None):
+        self.tag, self.attrs, self.line, self.parent = tag, attrs, line, parent
         self.text_parts: List[str] = []
 
     @property
@@ -94,7 +94,7 @@ class Page(HTMLParser):
     def _open(self, tag, attrs, self_closing):
         line = self.getpos()[0]
         values = {k.lower(): (v if v is not None else "") for k, v in attrs}
-        el = Element(tag.lower(), values, line)
+        el = Element(tag.lower(), values, line, self._stack[-1] if self._stack else None)
         self.elements.append(el)
         if el.tag in VOID_ELEMENTS or self_closing:
             return
@@ -157,11 +157,12 @@ class Page(HTMLParser):
         return out
 
     def select(self, selector: str) -> List[Element]:
-        match = _parse_selector(selector)
-        return [el for el in self.elements if _matches(el, match)]
+        chain = _parse_selector_chain(selector)
+        return [el for el in self.elements if _matches_chain(el, chain)]
 
 
-# Simple selectors only: tag, #id, .class, [attr] and [attr=value], combined (no descendants).
+# Compound selectors (tag, #id, .class, [attr], [attr=value], combined), joined by descendant
+# (space) or child (>) combinators. No pseudo-classes.
 _SELECTOR = re.compile(r"^(?P<tag>[a-zA-Z][a-zA-Z0-9-]*)?(?P<id>#[\w-]+)?(?P<classes>(?:\.[\w-]+)*)"
                        r"(?P<attrs>(?:\[[\w-]+(?:=(?:\"[^\"]*\"|'[^']*'|[^\]]*))?\])*)$")
 _ATTR = re.compile(r"\[([\w-]+)(?:=(\"[^\"]*\"|'[^']*'|[^\]]*))?\]")
@@ -175,11 +176,52 @@ def _parse_selector(selector: str) -> dict:
     sel = (selector or "").strip()
     m = _SELECTOR.fullmatch(sel)
     if not sel or not m:
-        raise SpecError(f"Unsupported selector {selector!r} (use tag, #id, .class, [attr], [attr=value])")
+        raise SpecError(f"Unsupported selector {selector!r} (use tag, #id, .class, [attr], [attr=value], "
+                        "combined, with spaces or > between them)")
     attrs = [(name.lower(), value.strip("\"'") if value is not None else None)
              for name, value in _ATTR.findall(m.group("attrs") or "")]
     return {"tag": (m.group("tag") or "").lower(), "id": (m.group("id") or "")[1:],
             "classes": [c for c in (m.group("classes") or "").split(".") if c], "attrs": attrs}
+
+
+def _parse_selector_chain(selector: str) -> List[Tuple[str, dict]]:
+    """'nav ul > li.item a' -> [(' ', nav), (' ', ul), ('>', li.item), (' ', a)]; raises SpecError."""
+    text = (selector or "").strip()
+    if not text:
+        raise SpecError("Empty selector")
+    if ":" in text.split("[")[0] or "," in text:
+        raise SpecError(f"Unsupported selector {selector!r}: no pseudo-classes (:hover, :nth-child) or commas")
+    tokens = re.findall(r'>|(?:[^\s>\[]|\[[^\]]*\])+', text)
+    chain, combinator = [], " "
+    for tok in tokens:
+        if tok == ">":
+            combinator = ">"
+            continue
+        chain.append((combinator, _parse_selector(tok)))
+        combinator = " "
+    if not chain:
+        raise SpecError(f"Unsupported selector {selector!r}")
+    return chain
+
+
+def _matches_chain(el: Element, chain: List[Tuple[str, dict]]) -> bool:
+    if not _matches(el, chain[-1][1]):
+        return False
+    node, i = el, len(chain) - 1
+    while i > 0:
+        combinator = chain[i][0]
+        want = chain[i - 1][1]
+        node = node.parent
+        if combinator == ">":
+            if node is None or not _matches(node, want):
+                return False
+        else:
+            while node is not None and not _matches(node, want):
+                node = node.parent
+            if node is None:
+                return False
+        i -= 1
+    return True
 
 
 def _matches(el: Element, sel: dict) -> bool:
@@ -405,8 +447,43 @@ def _resolve(page_rel: str, ref: str) -> Tuple[str, Optional[str], Optional[str]
 
 
 # ------------------------------------------------------------------ acceptance spec
+def normalize_page(value) -> Optional[str]:
+    """Accept the ways agents name a page: 'site/menu.html', '/menu.html', './menu.html', 'menu.html#x',
+    'menu.html?table=5', 'menu', 'products/' or '/'. Returns a path relative to site/, or None."""
+    if not isinstance(value, str):
+        return None
+    p = value.strip().replace("\\", "/").split("#", 1)[0].split("?", 1)[0]
+    p = re.sub(r"^(?:\./)+", "", p).lstrip("/")
+    if p.startswith(SITE_ROOT + "/"):
+        p = p[len(SITE_ROOT) + 1:]
+    if p in ("", ".", SITE_ROOT):
+        p = "index.html"
+    if p.endswith("/"):
+        p += "index.html"
+    if not posixpath.splitext(p)[1]:
+        p += ".html"
+    if not p.endswith((".html", ".htm")) or ".." in p.split("/"):
+        return None
+    return p
+
+
+def _normalize_target(value) -> Optional[str]:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw = value.strip()
+    if raw.startswith("#"):
+        return raw
+    page, _, frag = raw.partition("#")
+    norm = normalize_page(page)
+    return None if norm is None else norm + ("#" + frag if frag else "")
+
+
 def load_spec(text: str) -> List[dict]:
-    """Validate the QA agent's declarative acceptance spec; raises SpecError."""
+    """Validate the QA agent's declarative acceptance spec; raises SpecError.
+
+    Returns normalised copies (page paths relative to site/), so small naming variations are
+    accepted instead of failing the mission; each error names the check and the value received.
+    """
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -416,15 +493,21 @@ def load_spec(text: str) -> List[dict]:
         raise SpecError(f'{SPEC_PATH} must be an object with a non-empty "checks" list')
     if len(checks) > MAX_SPEC_CHECKS:
         raise SpecError(f"{SPEC_PATH} has more than {MAX_SPEC_CHECKS} checks")
-    seen = set()
+    seen, out = set(), []
     for n, chk in enumerate(checks, 1):
         if not isinstance(chk, dict):
             raise SpecError(f"check {n} is not an object")
-        kind, page = chk.get("type"), chk.get("page")
+        chk = dict(chk)
+        kind = chk.get("type")
         if kind not in CHECK_TYPES:
-            raise SpecError(f"check {n}: type must be one of {sorted(CHECK_TYPES)}")
-        if not isinstance(page, str) or not page.endswith(".html") or ".." in page or page.startswith("/"):
-            raise SpecError(f"check {n}: 'page' must be a page path relative to site/, e.g. index.html")
+            raise SpecError(f"check {n}: type is {kind!r}; it must be one of {sorted(CHECK_TYPES)}")
+        page = normalize_page(chk.get("page"))
+        if page is None:
+            raise SpecError(f"check {n}: 'page' is {chk.get('page')!r}; it must name an HTML page of the site, "
+                            "relative to site/, e.g. index.html or menu.html")
+        chk["page"] = page
+        if isinstance(chk.get("min_count"), str) and chk["min_count"].strip().isdigit():
+            chk["min_count"] = int(chk["min_count"])
         cid = chk.get("id") or f"check_{n}"
         if not isinstance(cid, str) or cid in seen:
             raise SpecError(f"check {n}: duplicate or invalid id")
@@ -432,14 +515,22 @@ def load_spec(text: str) -> List[dict]:
         if kind == "contains_text" and not (isinstance(chk.get("text"), str) and chk["text"].strip()):
             raise SpecError(f"check {cid}: contains_text needs a non-empty 'text'")
         if kind == "has_element":
-            _parse_selector(chk.get("selector", ""))
+            try:
+                _parse_selector_chain(chk.get("selector", ""))
+            except SpecError as exc:
+                raise SpecError(f"check {cid}: {exc}") from None
             if "min_count" in chk and not (isinstance(chk["min_count"], int) and chk["min_count"] >= 1):
                 raise SpecError(f"check {cid}: min_count must be a positive integer")
             if "text" in chk and not isinstance(chk["text"], str):
                 raise SpecError(f"check {cid}: text must be a string")
-        if kind == "links_to" and not (isinstance(chk.get("target"), str) and chk["target"].strip()):
-            raise SpecError(f"check {cid}: links_to needs a 'target' page (e.g. menu.html)")
-    return checks
+        if kind == "links_to":
+            target = _normalize_target(chk.get("target"))
+            if target is None:
+                raise SpecError(f"check {cid}: links_to 'target' is {chk.get('target')!r}; it must name a page "
+                                "of the site (e.g. menu.html or menu.html#drinks)")
+            chk["target"] = target
+        out.append(chk)
+    return out
 
 
 def _run_spec(checks: List[dict], pages: Dict[str, Page]) -> Tuple[List[str], int]:

@@ -3,6 +3,7 @@ HOOD Command-Line Interface & System Entrypoint
 Governed by Master System Specification Sections 1, 10, 16 & Build Instructions Section 23.
 """
 
+import re
 import sys
 import os
 import argparse
@@ -327,6 +328,42 @@ class HoodSystemRuntime:
         from services.tool_gateway.tools import DesktopControlTool
         self.tool_gateway.register_tool(DesktopControlTool(self.tool_gateway, self.desktop_service))
 
+    @staticmethod
+    def _mission_timing_fact(engine) -> str:
+        """Measured agent run times on this computer, so chat can give an honest ETA (never a guess)."""
+        import sqlite3
+        from datetime import datetime
+        runs: dict = {}
+        plans = []
+        with sqlite3.connect(engine.db_path) as db:
+            rows = db.execute(
+                "SELECT m.id, m.profile, m.state, m.updated, "
+                "(SELECT MIN(ts) FROM events e WHERE e.mission_id=m.id AND e.kind='TASK_STARTED'), "
+                "(SELECT MIN(ts) FROM events e WHERE e.mission_id=m.id AND e.kind='CREATED'), "
+                "(SELECT MIN(ts) FROM events e WHERE e.mission_id=m.id AND e.kind='STATE' "
+                " AND e.detail LIKE '%AWAITING_PLAN_APPROVAL%') FROM missions m").fetchall()
+        for _, profile, state, updated, started, created, planned in rows:
+            try:
+                if created and planned:
+                    plans.append((datetime.fromisoformat(planned) - datetime.fromisoformat(created)).total_seconds())
+                if started and state in ("COMPLETED", "FAILED", "UNVERIFIED"):
+                    secs = (datetime.fromisoformat(updated) - datetime.fromisoformat(started)).total_seconds()
+                    runs.setdefault(profile or "python_app", []).append(secs)
+            except ValueError:
+                continue
+
+        def span(values):
+            values = sorted(values)
+            fmt = lambda x: f"{x:.0f} s" if x < 90 else f"{x / 60:.0f} min"
+            mid = values[len(values) // 2]
+            return f"typically {fmt(mid)} (from {len(values)} run(s), {fmt(values[0])} to {fmt(values[-1])})"
+        parts = []
+        for profile, label in (("static_web", "website missions"), ("python_app", "Python missions")):
+            parts.append(f"{label} {span(runs[profile])}" if runs.get(profile) else f"{label}: no finished run yet")
+        plan = f"; planning {span(plans)}" if plans else ""
+        return ("Measured agent run time on this computer, from start to the independent check (excludes the "
+                "time waiting for the owner's approval): " + "; ".join(parts) + plan)
+
     def _chat_status_facts(self) -> list:
         """Live facts chat may state about HOOD (observed, cheap, never assumed)."""
         import sqlite3
@@ -349,8 +386,11 @@ class HoodSystemRuntime:
                 elif "sandbox" in why.lower():
                     why = ("the agents wrote the code, but it could not be tested here: Windows has no "
                            "sandbox (needs Linux/WSL2), so it is not verified")
-                facts.append(f"Recent mission \"{objective[:70]}\": {state}; {ok}/{total} agent tasks finished"
+                goal = re.search(r"^\s*goal\s*:\s*(.+)$", objective or "", re.I | re.M)
+                title = (goal.group(1) if goal else objective or "").strip()
+                facts.append(f"Recent mission \"{title[:70]}\": {state}; {ok}/{total} agent tasks finished"
                              + (f"; {why[:200]}" if why else ""))
+            facts.append(self._mission_timing_fact(engine))
             from services.agents.sandbox import network_isolation_available
             if not getattr(self, "_sandbox_ok_cached", None):
                 self._sandbox_ok_cached = ("yes" if network_isolation_available() else "no")

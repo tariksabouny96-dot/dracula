@@ -384,32 +384,47 @@
     clear(logEl).append(h('b', {}, (r.data.sender || 'Hood') + ': '), richText(r.data.text));
     app.debouncedOverview();  // the reply was a live model call: refresh the provider badge
     if (r.data.suggested_mission) {
-      // HOOD never starts work from chat: it offers a plan the owner approves.
+      // HOOD never starts work from chat: it opens a plan the owner reviews and approves.
       const objective = r.data.suggested_mission;
-      logEl.append(h('div', { class: 'form-actions' }, h('button', { class: 'btn small primary', type: 'button',
-        onclick: async (ev) => {
-          const btn = ev.currentTarget;
-          btn.disabled = true; btn.textContent = 'Writing the brief from our conversation…';
-          const d = await api.post('/api/chat/mission_draft', { fallback: objective });
-          btn.disabled = false; btn.textContent = 'Plan this as a mission';
-          if (d.ok && d.data.note) toast(d.data.note);
-          planMissionDialog(d.ok ? d.data.objective : objective);
-        } }, 'Plan this as a mission')));
+      const notes = r.data.scope_notes || [];
+      const btn = h('button', { class: 'btn primary plan-btn', type: 'button' }, '▶ Plan this as a mission');
+      const openPlan = async () => {
+        btn.disabled = true; btn.textContent = 'Writing the brief from our conversation…';
+        const d = await api.post('/api/chat/mission_draft', { fallback: objective });
+        btn.disabled = false; btn.textContent = '▶ Plan this as a mission';
+        if (d.ok && d.data.note) toast(d.data.note);
+        planMissionDialog(d.ok ? d.data.objective : objective);
+      };
+      btn.addEventListener('click', openPlan);
+      if (notes.length) logEl.append(h('div', { class: 'callout warn' }, h('b', {}, 'Not possible here'), h('ul', {}, notes.map((n) => h('li', {}, n)))));
+      logEl.append(h('div', { class: 'form-actions' }, btn, h('small', { class: 'small-note' }, 'Nothing runs until you approve the plan.')));
+      if (r.data.open_mission_draft) openPlan();   // the owner asked to plan it: open it for review
     }
     if (voice.autoSpeak) voice.speak(String(r.data.text).replace(/[*`#_]/g, ''), r.data.speaker_id);
   }
-  const WEBSITE_RE = /\b(web ?site|site ?web|landing ?page|web ?page|page ?web|home ?page|html|site)\b/i;
-  function planMissionDialog(objective) {
+  const WEBSITE_RE = /\b(web ?site|site ?web|landing ?page|web ?page|page ?web|home ?page|html|site|catalog(ue)?|boutique|shop|store|portfolio|blog)\b/i;
+  function planMissionDialog(objective, opts) {
     const obj = h('textarea', { class: 'big', 'aria-label': 'Objective', maxlength: '8000', rows: '12' });
     obj.value = objective || '';
+    const limits = h('div', {});
+    const showLimits = async () => {
+      const r = await api.post('/api/agents/scope', { objective: obj.value.slice(0, 8000), profile: kind.value });
+      clear(limits);
+      if (r.ok && r.data.notes.length) limits.append(h('div', { class: 'callout warn' }, h('b', {}, 'Not possible here (the plan will say so)'),
+        h('ul', {}, r.data.notes.map((n) => h('li', {}, n)))));
+    };
     const budget = h('input', { type: 'number', min: '0', max: '100', step: '0.01', value: '1.00', 'aria-label': 'Spend cap in USD' });
     const kind = h('select', { 'aria-label': 'Kind of work' },
       h('option', { value: 'static_web' }, 'Website (HTML, CSS, JavaScript): checked by reading the files, works on this PC'),
       h('option', { value: 'python_app' }, 'Python program: its tests must run (Linux/WSL2, or "Run on my PC" with your approval)'));
-    kind.value = WEBSITE_RE.test(obj.value) ? 'static_web' : 'python_app';
-    let touched = false;
-    kind.addEventListener('change', () => { touched = true; });
-    obj.addEventListener('input', () => { if (!touched) kind.value = WEBSITE_RE.test(obj.value) ? 'static_web' : 'python_app'; });
+    kind.value = (opts && opts.kind) || (WEBSITE_RE.test(obj.value) ? 'static_web' : 'python_app');
+    let touched = !!(opts && opts.kind), limitTimer = null;
+    kind.addEventListener('change', () => { touched = true; showLimits(); });
+    obj.addEventListener('input', () => {
+      if (!touched) kind.value = WEBSITE_RE.test(obj.value) ? 'static_web' : 'python_app';
+      clearTimeout(limitTimer); limitTimer = setTimeout(showLimits, 500);
+    });
+    showLimits();
     confirmDialog('Plan an agent mission', [
       'Review and edit the brief below: the agents only see this text, not our conversation.',
       'Hood sends this objective to the configured AI provider to draft a task plan.',
@@ -421,7 +436,7 @@
       missionsPage.selected = r.data.mission_id;
       app.render('Missions');
       return r;
-    }, h('div', { class: 'form' }, h('label', {}, 'Objective', obj), h('label', {}, 'Kind of work', kind), h('label', {}, 'Spend cap (USD)', budget)));
+    }, h('div', { class: 'form' }, h('label', {}, 'Objective', obj), limits, h('label', {}, 'Kind of work', kind), h('label', {}, 'Spend cap (USD)', budget)));
   }
 
   // ------------------------------------------------------------------ Command page widgets
@@ -491,7 +506,7 @@
         h('div', { class: 'metric' }, h('strong', {}, String(n('COMPLETED'))), h('small', {}, 'Verified complete'))),
       ov.missions.recent.length ? ov.missions.recent.slice(0, 4).map((m) => h('button', { class: 'list-row plain', type: 'button',
         style: { width: '100%', textAlign: 'left' }, onclick: () => { missionsPage.selected = m.id; app.render('Missions'); } },
-        h('div', { class: 'row-main' }, h('b', {}, clip(m.objective, 90)), h('small', {}, fmtTime(m.updated))),
+        h('div', { class: 'row-main' }, h('b', {}, clip(missionTitle(m.objective), 90)), h('small', {}, fmtTime(m.updated))),
         h('div', { class: 'row-meta' }, badge(m.state), h('br'), m.provider_mode === 'SIMULATED' ? badge('simulated') : null)))
         : emptyBox('No missions yet. Type /mission followed by an objective.'),
       h('button', { class: 'plain', type: 'button', onclick: () => app.render('Missions') }, 'Open mission control →'));
@@ -646,7 +661,35 @@
     const sec = Math.floor(ms / 1000);
     return sec < 60 ? sec + 's' : Math.floor(sec / 60) + 'm ' + (sec % 60) + 's';
   }
+  // A brief may open with "Not possible here: ..."; its "Goal:" line names the mission better.
+  function missionTitle(objective) {
+    const text = String(objective || '');
+    const goal = text.match(/^\s*(?:goal|objectif)\s*:\s*(.+)$/im);
+    if (goal) return goal[1].trim();
+    return (text.split('\n').find((l) => l.trim() && !/^\s*not possible here/i.test(l)) || text).trim();
+  }
   const missionUrl = (mid, rest) => '/api/agents/missions/' + encodeURIComponent(mid) + (rest || '');
+  // Plain words for known technical reasons; the original stays under "Technical details".
+  function friendlyReason(raw) {
+    const t = String(raw || '');
+    let m;
+    if (/only implemented for POSIX hosts|Windows has no agent sandbox/.test(t)) {
+      return 'This computer has no sandbox to run the tests (Windows). Website missions don’t need one; for a Python mission use WSL2 or turn on “Run on my PC” in Settings › Agents.';
+    }
+    if (/unshare -rn|Network namespace isolation/.test(t)) return 'Linux network isolation isn’t available here, so the tests could not run in the sandbox.';
+    if ((m = t.match(/AgentOutputRejected: (\w+) output rejected: (.*?)(?: \[\d+ chars|$)/s))) {
+      return 'The ' + (ROLE_LABEL[m[1]] || m[1]) + ' agent’s answer was rejected: ' + clip(m[2], 300);
+    }
+    if ((m = t.match(/Planner provider unavailable: (.*)/s))) return 'The AI model couldn’t be reached while planning: ' + clip(m[1], 240);
+    if ((m = t.match(/Planning failed: (.*)/s))) return 'Planning failed: ' + clip(m[1], 300);
+    return t;
+  }
+  function reasonBlock(raw, cls) {
+    const plain = friendlyReason(raw);
+    const technical = plain !== raw || String(raw).length > 320;
+    return h('div', { class: cls || '' }, clip(plain, 420),
+      technical ? h('details', { class: 'tech' }, h('summary', {}, 'Technical details'), h('pre', { class: 'file-view wrap' }, String(raw))) : null);
+  }
 
   function missionsView() {
     const list = h('div', {});
@@ -659,7 +702,7 @@
       return h('div', {}, r.data.map((m) => h('button', { type: 'button', class: 'list-row plain' + (m.id === missionsPage.selected ? ' active' : ''),
         style: { width: '100%', textAlign: 'left' }, 'aria-pressed': String(m.id === missionsPage.selected),
         onclick: () => { missionsPage.selected = m.id; loadList(); loadDetail(true); } },
-        h('div', { class: 'row-main' }, h('b', {}, clip(m.objective, 110)),
+        h('div', { class: 'row-main' }, h('b', {}, clip(missionTitle(m.objective), 110)),
           h('small', {}, (m.profile === 'static_web' ? 'Website' : 'Python program') + ' · ' + fmtTime(m.updated))),
         h('div', { class: 'row-meta' }, badge(m.state), ' ', m.provider_mode !== 'LIVE' && m.provider_mode !== 'NONE' ? badge(m.provider_mode) : null))));
     });
@@ -685,8 +728,8 @@
     h('div', { class: 'two-col missions-layout' }, card('Missions', list), card('Mission detail', detail)));
   }
 
-  function section(id, title, body, extra) {
-    const d = h('details', { class: 'mission-section', open: missionsPage.open.has(id) || null },
+  function section(id, title, body, extra, forceOpen) {
+    const d = h('details', { class: 'mission-section', open: forceOpen || missionsPage.open.has(id) || null },
       h('summary', {}, title, extra ? h('span', { class: 'section-extra' }, extra) : null));
     const holder = h('div', { class: 'section-body' });
     d.append(holder);
@@ -718,7 +761,7 @@
       h('div', { class: 'pipe-meta' }, h('span', { class: 'state ' + look(st.state) }, STEP_LABEL[st.state] || st.state),
         st.state === 'RUNNING' && st.since ? h('span', { class: 'tick', 'data-since': st.since }, ' ' + elapsed(st.since)) : null,
         st.attempts > 1 ? h('small', {}, ' · attempt ' + st.attempts) : null),
-      st.error && st.state !== 'COMPLETED' ? h('div', { class: 'small-note' }, clip(st.error, 260)) : null)));
+      st.error && st.state !== 'COMPLETED' ? reasonBlock(st.error, 'small-note') : null)));
   }
 
   async function viewFile(mid, path) {
@@ -848,15 +891,35 @@
       onclick: async (e) => { e.target.disabled = true; const r = await api.post(missionUrl(m.mission_id, path), body); e.target.disabled = false;
         if (!r.ok) toast(r.error); else toast(label + ': done'); reload(); } }, label);
     const actions = [];
-    if (m.state === 'AWAITING_PLAN_APPROVAL') actions.push(act('Approve plan & budget', '/approve', { confirm: true, plan_sha256: m.plan_sha256 }, true));
+    if (m.state === 'AWAITING_PLAN_APPROVAL') {
+      // One approval starts the work: approve this exact plan and budget, then the agents run.
+      actions.push(h('button', { class: 'btn small primary', type: 'button', onclick: async (e) => {
+        e.target.disabled = true;
+        const a = await api.post(missionUrl(m.mission_id, '/approve'), { confirm: true, plan_sha256: m.plan_sha256 });
+        if (!a.ok) { e.target.disabled = false; toast(a.error); return; }
+        const run = await api.post(missionUrl(m.mission_id, '/run'), { confirm: true });
+        toast(run.ok ? 'Plan approved; the agents are starting.' : 'Plan approved, but the agents did not start: ' + run.error);
+        reload();
+      } }, 'Approve plan & start agents'));
+    }
     if (['QUEUED', 'RUNNING', 'VERIFYING'].includes(m.state) && !m.background_run_active) actions.push(act('Run agents', '/run', { confirm: true }, true));
     if (m.state === 'BLOCKED' && m.approved_by && !(m.local_run && m.local_run.awaiting_approval)) actions.push(act('Retry blocked work', '/retry', { confirm: true }));
     if (!['COMPLETED', 'FAILED', 'UNVERIFIED', 'CANCELLED'].includes(m.state)) actions.push(act('Cancel', '/cancel', {}));
+    if (['FAILED', 'UNVERIFIED', 'CANCELLED'].includes(m.state)) {
+      // e.g. a website request from before website missions existed: plan it again as the right kind.
+      actions.push(h('button', { class: 'btn small', type: 'button', onclick: () => planMissionDialog(m.objective) },
+        WEBSITE_RE.test(m.objective) && m.profile !== 'static_web' ? 'Plan again as a website…' : 'Plan again…'));
+    }
+    const beforeApprove = m.state === 'AWAITING_PLAN_APPROVAL' && ((m.scope_notes || []).length || (m.plan && (m.plan.clarifications_needed || []).length))
+      ? h('div', { class: 'callout warn' }, h('b', {}, 'Before you approve'),
+        h('ul', {}, (m.scope_notes || []).map((n) => h('li', {}, n)),
+          ((m.plan && m.plan.clarifications_needed) || []).map((q) => h('li', {}, 'The planner assumed or asks: ' + q))))
+      : null;
     const running = m.tasks.find((t) => t.state === 'RUNNING');
     const now = m.state === 'PLANNING' ? 'The planner is drafting the task plan.'
       : running ? (ROLE_LABEL[running.role] || running.role) + ' is working on “' + running.title + '”.'
         : m.state === 'VERIFYING' ? 'The independent check is running.'
-          : m.state === 'AWAITING_PLAN_APPROVAL' ? 'Waiting for you to approve the plan below.'
+          : m.state === 'AWAITING_PLAN_APPROVAL' ? 'Waiting for you: read the plan below, then approve it to start the agents.'
             : m.local_run && m.local_run.awaiting_approval ? 'Waiting for your decision to run the checks on this PC.'
               : m.state === 'QUEUED' || (m.state === 'RUNNING' && !m.background_run_active) ? 'Ready: press “Run agents”.' : null;
     return h('div', {},
@@ -868,7 +931,8 @@
         h('dt', {}, 'Objective'), h('dd', {}, m.objective.length > 400 ? h('details', {}, h('summary', {}, clip(m.objective, 300)), h('p', { class: 'pre-wrap' }, m.objective)) : h('span', { class: 'pre-wrap' }, m.objective)),
         h('dt', {}, 'Spend / cap'), h('dd', {}, money(m.spend) + ' / ' + money(m.budget_usd)),
         h('dt', {}, 'Repairs'), h('dd', {}, String(m.repairs)),
-        m.error ? h('dt', {}, 'Reason') : null, m.error ? h('dd', {}, m.error) : null),
+        m.error ? h('dt', {}, 'Reason') : null, m.error ? h('dd', {}, reasonBlock(m.error)) : null),
+      beforeApprove,
       h('div', { class: 'form-actions' }, actions),
       m.local_run && m.local_run.awaiting_approval ? localRunPanel(m, reload) : null,
       m.artifact ? h('div', { class: 'callout good' }, h('b', {}, 'Verified result ready'),
@@ -877,9 +941,9 @@
           m.preview_path ? h('a', { class: 'btn small', href: m.preview_path, target: '_blank', rel: 'noopener noreferrer' }, 'Open website preview') : null),
         h('p', { class: 'mono small-note' }, 'SHA-256 ' + m.artifact.sha256)) : null,
       section('progress', 'Progress', () => pipeline(m)),
-      m.plan ? section('plan', 'Plan', () => h('div', {}, h('p', {}, m.plan.summary), h('p', { class: 'small-note' }, 'Deliverable: ' + m.plan.deliverable),
-        m.plan.interface_contract ? h('pre', { class: 'file-view' }, m.plan.interface_contract) : null,
-        m.plan_sha256 ? h('p', { class: 'mono small-note' }, 'Plan hash ' + m.plan_sha256) : null)) : null,
+      m.plan ? section('plan', 'Plan', () => h('div', {}, h('p', { class: 'pre-wrap' }, m.plan.summary), h('p', { class: 'small-note' }, 'Deliverable: ' + m.plan.deliverable),
+        m.plan.interface_contract ? h('pre', { class: 'file-view wrap' }, m.plan.interface_contract) : null,
+        m.plan_sha256 ? h('p', { class: 'mono small-note' }, 'Plan hash ' + m.plan_sha256) : null), null, m.state === 'AWAITING_PLAN_APPROVAL') : null,
       section('outputs', 'What the agents produced', () => agentOutputs(m)),
       section('checks', 'Independent check', () => checksSection(m), m.last_verification ? m.last_verification.verdict : null),
       section('files', 'Files and preview', () => filesSection(m)),
@@ -965,7 +1029,7 @@
         const busy = tasks.filter((t) => t.state === 'RUNNING').length;
         return { ...n, sub: busy ? busy + ' task running' : tasks.length + ' tasks done/queued', health: busy ? 'busy' : 'working' };
       }
-      if (n.type === 'mission') return { ...n, sub: String(n.state).replace(/_/g, ' ').toLowerCase(), health: healthOf(n.state) };
+      if (n.type === 'mission') return { ...n, label: missionTitle(n.description || n.label), sub: String(n.state).replace(/_/g, ' ').toLowerCase(), health: healthOf(n.state) };
       if (n.type === 'task') return { ...n, sub: (ROLE_LABEL[n.role] || n.role) + ' · ' + String(n.state).toLowerCase(), health: healthOf(n.state) };
       return { ...n, sub: String(n.state || '').replace(/_/g, ' '), health: healthOf(n.state) };
     },
@@ -1688,7 +1752,7 @@
     if (q.length < 2) { box.classList.add('hidden'); return; }
     const [m, c] = await Promise.all([api.get('/api/agents/missions'), api.get('/api/capabilities')]);
     const results = [];
-    if (m.ok) m.data.filter((x) => x.objective.toLowerCase().includes(q)).slice(0, 5).forEach((x) => results.push(['Mission', clip(x.objective, 80), () => { missionsPage.selected = x.id; app.render('Missions'); }]));
+    if (m.ok) m.data.filter((x) => x.objective.toLowerCase().includes(q)).slice(0, 5).forEach((x) => results.push(['Mission', clip(missionTitle(x.objective), 80), () => { missionsPage.selected = x.id; app.render('Missions'); }]));
     if (c.ok) c.data.items.filter((x) => (x.name + ' ' + x.description).toLowerCase().includes(q)).slice(0, 5).forEach((x) => results.push(['Capability', x.name, () => app.render('Integrations')]));
     PAGES.filter(([p]) => p.toLowerCase().includes(q)).forEach(([p]) => results.push(['Page', p, () => app.render(p)]));
     clear(box);

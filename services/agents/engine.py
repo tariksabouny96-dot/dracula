@@ -46,6 +46,7 @@ from .contracts import (PROFILE_WRITE_ROOTS, SCHEMA_VERSION, TERMINAL_MISSION_ST
 from .planner import PlanRejected, plan_mission
 from .sandbox import IGNORED_DIRS, SandboxUnavailable, SandboxViolation, Workspace, sandbox_problem
 from .specialists import AgentOutputRejected, run_specialist
+from .scope import scope_notes
 from .static_web import SITE_ROOT, verify_static_site
 from .verifier import verify
 from services.model_gateway.cost_controller import BudgetExceededError
@@ -55,6 +56,7 @@ LEASE_SECONDS = 600
 MAX_REPAIRS = 2
 MAX_TASK_ATTEMPTS = 3
 ACCEPTANCE_CHECKS = ("independent_acceptance_tests", "independent_acceptance_checks")
+ROLE_NAMES = {"engineer": "engineer", "qa": "QA", "reviewer": "reviewer"}
 PYTHON_CHECK_COMMANDS = ["python -m compileall app", "python -m pytest tests", "python -m pytest qa_tests"]
 LOCAL_RUN_WAITING = ("No sandbox on this computer: the checks need your approval to run directly on this PC "
                      "(\"Run on my PC\"), or run HOOD in WSL2/Linux.")
@@ -175,6 +177,9 @@ class AgentEngine:
                              ("local_run_sha", "TEXT"), ("local_run_by", "TEXT")):
                 if col not in have:
                     db.execute(f"ALTER TABLE missions ADD COLUMN {col} {ddl}")
+            # Why the agent's last answer was rejected: fed back into its next attempt.
+            if "last_rejection" not in {r[1] for r in db.execute("PRAGMA table_info(tasks)")}:
+                db.execute("ALTER TABLE tasks ADD COLUMN last_rejection TEXT")
 
     def _event(self, db, mission_id: str, actor: str, kind: str, detail: Any = ""):
         db.execute("INSERT INTO events (mission_id, ts, actor, kind, detail) VALUES (?,?,?,?,?)",
@@ -345,7 +350,7 @@ class AgentEngine:
         try:
             plan, response = plan_mission(objective.strip(),
                                           lambda req: self._call_model(mission, None, req), mission_id=mission_id,
-                                          profile=profile)
+                                          profile=profile, scope_notes=scope_notes(objective, profile.value))
         except (PlanRejected, AgentOutputRejected, MissionBudgetExceeded, BudgetExceededError,
                 EmergencyStopActive) as exc:
             with self._db() as db:
@@ -434,8 +439,10 @@ class AgentEngine:
             if not mission["approved_by"]:
                 db.execute("ROLLBACK")
                 raise MissionConflict("Mission was blocked before plan approval; create a new mission")
+            # An owner retry is a fresh round: the attempt counter restarts (the rejection reason is kept
+            # so the agent is told what went wrong).
             requeued = db.execute("UPDATE tasks SET state=?, fence=fence+1, lease_owner=NULL, error=NULL, "
-                                  "updated=? WHERE mission_id=? AND state=?",
+                                  "attempts=0, updated=? WHERE mission_id=? AND state=?",
                                   (TaskState.QUEUED.value, _now(), mission_id, TaskState.BLOCKED.value)).rowcount
             done = db.execute("SELECT COUNT(*) FROM tasks WHERE mission_id=? AND state=?",
                               (mission_id, TaskState.COMPLETED.value)).fetchone()[0]
@@ -584,7 +591,8 @@ class AgentEngine:
                     task, mission["objective"], ws.read_files(),
                     lambda req: self._call_model(mission, task.id, req), mission_id=mission_id,
                     failure=task_row["failure_context"], interface_contract=plan.get("interface_contract", ""),
-                    profile=mission["profile"] or MissionProfile.PYTHON_APP.value)
+                    profile=mission["profile"] or MissionProfile.PYTHON_APP.value,
+                    rejection=task_row.get("last_rejection"))
                 output = {"schema": "review" if task.role == AgentRole.REVIEWER else "work",
                           "data": parsed.model_dump(mode="json"),
                           "provider": getattr(response.provider, "value", str(response.provider)),
@@ -610,12 +618,23 @@ class AgentEngine:
             self._finish(mission_id, task.id, fence, TaskState.COMPLETED, result=json.dumps(result))
         except EmergencyStopActive:
             raise
-        except AgentOutputRejected as exc:
+        except (AgentOutputRejected, SandboxViolation) as exc:
+            # A rejected answer (malformed, or writing outside the agent's folder) was never applied:
+            # Workspace.apply validates every path before writing anything.
+            if isinstance(exc, SandboxViolation):
+                exc = AgentOutputRejected(f"{task.role.value} output rejected: {exc}", reason=str(exc))
             if task_row["attempts"] + 1 < MAX_TASK_ATTEMPTS:
-                self._retry(mission_id, task.id, fence, str(exc))
+                self._retry(mission_id, task.id, fence, str(exc), exc.reason)
             else:
-                self._fail_task(mission_id, task.id, fence, f"{type(exc).__name__}: {exc}")
-        except (SandboxViolation, PlanRejected, ValueError) as exc:
+                # Pause for the owner instead of failing the whole mission on one bad answer.
+                attempts = task_row["attempts"] + (0 if task_row["proposal"] else 1)
+                role = ROLE_NAMES.get(task.role.value, task.role.value)
+                self._block(mission_id, task.id, fence, f"{type(exc).__name__}: {exc}",
+                            mission_error=(f"The {role} agent's answer was rejected {attempts} times in a row "
+                                           f"({exc.reason[:300]}). Press \"Retry blocked work\" to give it another "
+                                           "round (it is told what was wrong), or cancel the mission."),
+                            rejection=exc.reason)
+        except (PlanRejected, ValueError) as exc:
             self._fail_task(mission_id, task.id, fence, f"{type(exc).__name__}: {exc}")
         except (MissionBudgetExceeded, BudgetExceededError, SandboxUnavailable) as exc:
             self._block(mission_id, task.id, fence, str(exc))
@@ -623,13 +642,13 @@ class AgentEngine:
             self._block(mission_id, task.id, fence, f"{type(exc).__name__}: {str(exc)[:300]}")
         return self.status(owner, mission_id)
 
-    def _retry(self, mission_id, task_id, fence, error):
-        """Malformed model output: discard it and queue one fresh attempt."""
+    def _retry(self, mission_id, task_id, fence, error, reason=None):
+        """Malformed model output: discard it and queue a fresh attempt that is told what was wrong."""
         with self._db() as db:
-            db.execute("UPDATE tasks SET state=?, proposal=NULL, lease_owner=NULL, error=?, updated=? "
-                       "WHERE mission_id=? AND task_id=? AND fence=? AND state=?",
-                       (TaskState.QUEUED.value, error[:1000], _now(), mission_id, task_id, fence,
-                        TaskState.RUNNING.value))
+            db.execute("UPDATE tasks SET state=?, proposal=NULL, lease_owner=NULL, error=?, last_rejection=?, "
+                       "updated=? WHERE mission_id=? AND task_id=? AND fence=? AND state=?",
+                       (TaskState.QUEUED.value, error[:1000], (reason or error)[:2000], _now(), mission_id, task_id,
+                        fence, TaskState.RUNNING.value))
             self._event(db, mission_id, self.worker_id, "TASK_RETRY", {"task_id": task_id, "error": error[:300]})
 
     def _fail_task(self, mission_id, task_id, fence, error):
@@ -638,11 +657,14 @@ class AgentEngine:
                 self._set_state(db, mission_id, MissionState.FAILED, self.worker_id,
                                 error=f"Task {task_id} failed: {error[:500]}")
 
-    def _block(self, mission_id, task_id, fence, error):
-        if self._finish(mission_id, task_id, fence, TaskState.BLOCKED, error=error[:1000]):
+    def _block(self, mission_id, task_id, fence, error, mission_error=None, rejection=None):
+        fields = {"error": error[:1000]}
+        if rejection is not None:
+            fields["last_rejection"] = rejection[:2000]
+        if self._finish(mission_id, task_id, fence, TaskState.BLOCKED, **fields):
             with self._db() as db:
                 self._set_state(db, mission_id, MissionState.BLOCKED, self.worker_id,
-                                error=f"Task {task_id} blocked: {error[:500]}")
+                                error=mission_error or f"Task {task_id} blocked: {error[:500]}")
 
     def _verify(self, owner: str, mission_id: str) -> Dict[str, Any]:
         ws = self._workspace(mission_id)
@@ -712,7 +734,9 @@ class AgentEngine:
                 elif profile == MissionProfile.STATIC_WEB:
                     role, repair_id, title = AgentRole.ENGINEER, f"repair_{n}", "Repair failing checks"
                     instructions = ("Fix the website so that the failing independent checks pass. Rewrite every "
-                                    "file you change completely. Do not remove required content.")
+                                    "file you change completely. Do not remove required content. Hood reads the "
+                                    "HTML without running JavaScript: required texts must be in the HTML itself, "
+                                    "and each id may appear only once per page (use classes for repeated items).")
                 else:
                     role, repair_id, title = AgentRole.ENGINEER, f"repair_{n}", "Repair failing checks"
                     instructions = ("Fix the application so that the failing independent checks pass. "
@@ -941,6 +965,7 @@ class AgentEngine:
         return {
             "mission_id": mission_id, "state": mission["state"], "objective": mission["objective"],
             "profile": profile, "created": mission["created"], "updated": mission["updated"],
+            "scope_notes": scope_notes(mission["objective"], profile),
             "preview_path": (f"/preview/{mission_id}/{self.preview_token(mission_id)}/index.html"
                              if web and site_index.is_file() else None),
             "local_run": {"awaiting_approval": mission["state"] == MissionState.BLOCKED.value

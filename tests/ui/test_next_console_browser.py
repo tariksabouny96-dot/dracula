@@ -86,10 +86,9 @@ def test_mission_flow_from_new_console(stack):  # noqa: F811
         page.fill("#commandInput", "/mission " + OBJECTIVE)
         page.press("#commandInput", "Enter")
         page.click("text=Plan mission")
-        page.wait_for_selector("text=Approve plan & budget", timeout=30000)
-        page.click("text=Approve plan & budget")
-        page.wait_for_selector("button:has-text('Run agents')", timeout=15000)
-        page.click("button:has-text('Run agents')")
+        # One approval starts the agents (owner's request: no second "Run agents" click).
+        page.wait_for_selector("button:has-text('Approve plan & start agents')", timeout=30000)
+        page.click("button:has-text('Approve plan & start agents')")
         page.wait_for_selector("text=Download verified result", timeout=120000)
         detail = page.inner_text(".mission-detail")
         assert "COMPLETED" in detail and "simulated" in detail.lower()

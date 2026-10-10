@@ -79,6 +79,8 @@ Listening (speech-to-text) stays on Gemini. Removing the key switches back to Ge
 | Gemini HTTP 404 | a retired model was configured (e.g. `gemini-2.5-flash`) | leave `HOOD_GEMINI_*_MODEL` blank to use the defaults |
 | Browser page from another device / `421 Misdirected` | Hood binds 127.0.0.1 and checks the Host header | open it on the same machine at `http://127.0.0.1:<port>`; remote access goes through the Docker + Caddy setup below |
 | Python mission `BLOCKED`: "needs your approval to run directly on this PC" | no sandbox on Windows | approve it on the mission page (after turning on **Settings › Agents › Run on my PC**), or run HOOD in WSL2 ([WSL2.md](WSL2.md)); website missions don't need either |
+| Mission `BLOCKED`: "the QA/engineer agent's answer was rejected 3 times" | the AI model kept making the same mistake (the reason is shown) | press **Retry blocked work**: the agent gets a fresh round and is told what was wrong; or cancel and plan again with a clearer brief |
+| "WordPress can't be built or run here" (or PHP, database, payments…) | the agents build HTML/CSS/JS websites and Python programs only | accept the static-site alternative shown, or wait for the Docker/WSL2 step for real WordPress |
 | Website preview: a cart or saved choice resets | the preview runs sandboxed (no storage, no internet) | open `site/index.html` from the mission folder (**Open folder** on the mission page) |
 | Voice page: `not_configured` | no key or no price for the voice models (or ElevenLabs key / voice ID / price missing) | set them in **Settings › Model provider** and **Settings › Voice** |
 | Voice: "Give consent for cloud audio first" | recordings are only sent to Google after you agree | press **Give consent for cloud audio** on the Voice page |

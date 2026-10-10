@@ -51,6 +51,19 @@ def mission_file(ctx):
     return _engine().read_file(ctx.user_id, ctx.match["mission_id"], path)
 
 
+@route("POST", r"/api/agents/scope", permission="EXECUTE_OBJECTIVE")
+def mission_scope(ctx):
+    """What can't be built for this objective, shown in the plan dialog before anything is planned."""
+    from services.agents.scope import scope_notes
+    objective = ctx.payload.get("objective")
+    profile = ctx.payload.get("profile", "static_web")
+    if not isinstance(objective, str) or len(objective) > 8000:
+        raise ValueError("objective must be text (up to 8000 characters)")
+    if profile not in ("static_web", "python_app"):
+        raise ValueError("profile must be static_web or python_app")
+    return {"notes": scope_notes(objective, profile)}
+
+
 @route("POST", MISSION + r"/approve_local_run", permission="OWNERSHIP_ADMIN")
 @_conflicts
 def approve_local_run(ctx):

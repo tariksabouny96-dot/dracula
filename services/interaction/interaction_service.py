@@ -55,6 +55,10 @@ class ConversationMessage(BaseModel):
     speaker_id: str = "hood"  # "hood", "x", "zak", "system"
     # Objective HOOD offers to plan as an agent mission (owner approves in the UI).
     suggested_mission: Optional[str] = None
+    # The owner asked to plan it now: the UI opens the plan dialog (nothing runs before plan approval).
+    open_mission_draft: bool = False
+    # What can't be built for that request (WordPress, real payments...), said before planning.
+    scope_notes: List[str] = Field(default_factory=list)
 
 
 class TaskProgressItem(BaseModel):
@@ -73,6 +77,11 @@ class InteractionSession(BaseModel):
     active_tasks: List[TaskProgressItem] = Field(default_factory=list)
     ui_state: UIState = UIState.IDLE
     current_speaking_message_id: Optional[str] = None
+    # Build request still open in this conversation (re-offered on follow-ups like "plan it", "ETA?").
+    pending_mission: Optional[str] = None
+    # Decided before the model call so the reply can say truthfully what the UI shows.
+    offer: Optional[str] = None
+    plan_now: bool = False
 
 
 class InteractionService:
@@ -171,6 +180,8 @@ class InteractionService:
 
         # Transition to Thinking / Executing
         session.ui_state = UIState.THINKING
+        session.offer = self._mission_suggestion(text, session)
+        session.plan_now = bool(session.offer and self._PLAN_NOW_RE.search(text))
         response_text, speaker_id, approval_ref = self._synthesize_response_with_speaker(text, session)
 
         sender_label = "X" if speaker_id == "x" else ("System" if speaker_id == "system" else "Hood")
@@ -181,8 +192,13 @@ class InteractionService:
             speaker_id=speaker_id,
             approval_ref=approval_ref
         )
-        if speaker_id == "hood" and not approval_ref:
-            reply_msg.suggested_mission = self._mission_suggestion(text, session)
+        if speaker_id == "hood" and not approval_ref and session.offer:
+            from services.agents.scope import scope_notes
+            reply_msg.suggested_mission = session.offer
+            reply_msg.open_mission_draft = session.plan_now
+            reply_msg.scope_notes = scope_notes(session.offer, self.guess_profile(session.offer))
+            session.pending_mission = session.offer
+        session.offer, session.plan_now = None, False
         self._append(session, reply_msg)
         if session.ui_state != UIState.EMERGENCY_STOP:
             # If X is active, preserve X_ACTIVE ui_state
@@ -568,6 +584,23 @@ class InteractionService:
                            re.IGNORECASE | re.DOTALL)
     _AFFIRM = {"yes", "yep", "yeah", "sure", "ok", "okay", "go ahead", "do it", "proceed", "please do",
                "yes please", "oui", "vas-y", "go", "start", "let's go", "lets go"}
+    # Follow-ups about the open build request ("plan it", "ETA?", "did you start?"): offer it again.
+    _ABOUT_MISSION_RE = re.compile(
+        r"\b(plan|mission|start(?:ed)?|begin|launch|proceed|go ahead|do it|build it|create it|eta|how long|"
+        r"when will|ready|agents?|lance[rz]?|commence[rz]?|d[ée]marre[rz]?|vas-y|combien de temps|planifie[rz]?)\b",
+        re.IGNORECASE)
+    # The owner explicitly asks to plan it now: open the plan dialog for review.
+    _PLAN_NOW_RE = re.compile(
+        r"\b(plan (?:this|it|that)|(?:create|start|make|open|launch|begin) (?:the |a |this )?mission|"
+        r"as a mission|go ahead|proceed|let'?s (?:go|start|do it)|start (?:it|now|building)|build it|"
+        r"lance[rz]? (?:la |une )?mission|planifie[rz]?|commence[rz]?|d[ée]marre[rz]?|vas-y)\b",
+        re.IGNORECASE)
+    _WEBSITE_RE = re.compile(r"\b(web ?site|site ?web|landing ?page|web ?page|home ?page|html|site|"
+                             r"catalog(?:ue)?|boutique|shop|store|portfolio|blog)\b", re.IGNORECASE)
+
+    @classmethod
+    def guess_profile(cls, objective: str) -> str:
+        return "static_web" if cls._WEBSITE_RE.search(objective or "") else "python_app"
 
     def _owner_name(self, session: InteractionSession) -> str:
         sid = session.session_id
@@ -614,21 +647,28 @@ class InteractionService:
                 facts.extend(self.status_facts())
             except Exception as exc:
                 facts.append(f"Some live status could not be read ({type(exc).__name__})")
-        facts.append("From chat HOOD cannot run any action: chat only talks. "
-                     "Real work runs as agent missions the owner approves.")
+        from services.agents.scope import AGENT_CAN_BUILD
+        facts.append(AGENT_CAN_BUILD)
+        facts.append("Chat itself never runs actions. When the owner asks to plan a build, HOOD opens the mission "
+                     "plan for their review; the agents start only after the owner approves that plan.")
         return facts
 
     def _mission_suggestion(self, text: str, session: InteractionSession) -> Optional[str]:
-        """Objective to offer as an agent mission, or None. Never starts anything."""
+        """Objective to offer as an agent mission, or None. Never starts anything.
+
+        A build request opens it; while it is open, follow-ups about it ("yes", "plan it", "ETA?",
+        "did you start?") offer the same mission again, so the button is always there when HOOD
+        refers to it.
+        """
         cleaned = text.strip()
         if self._BUILD_RE.search(cleaned):
             return cleaned[:8000]
-        if cleaned.lower().rstrip(".! ") in self._AFFIRM:
-            for msg in reversed(session.messages):
-                if msg.speaker_id == "hood" and msg.suggested_mission:
-                    return msg.suggested_mission
-                if msg.speaker_id == "hood":
-                    break
+        pending = session.pending_mission
+        if pending is None:   # older sessions: the last HOOD reply's offer
+            pending = next((m.suggested_mission for m in reversed(session.messages)
+                            if m.speaker_id == "hood" and m.suggested_mission), None)
+        if pending and (cleaned.lower().rstrip(".! ") in self._AFFIRM or self._ABOUT_MISSION_RE.search(cleaned)):
+            return pending
         return None
 
     def _build_grounded_introduction(self) -> str:
@@ -656,12 +696,21 @@ class InteractionService:
             rows.append(f"{who}: {m.text[:self.HISTORY_CHARS]}")
         return "\n".join(rows)
 
+    def mission_planned(self, session_id: str) -> None:
+        """The owner planned the open build request: stop offering it again in this conversation."""
+        session = self.sessions.get(session_id)
+        if session is not None:
+            session.pending_mission = None
+            for m in session.messages:
+                m.suggested_mission = None
+
     def draft_mission_objective(self, session_id: str, fallback: str = "") -> Dict[str, Any]:
         """Write an agent-mission objective from the whole conversation (the owner edits it).
 
         Never invents requirements: the model is told to use only what the owner said and to list
         open questions as assumptions. On model failure, return the owner's own recent messages.
         """
+        from services.agents.scope import AGENT_CAN_BUILD
         session = self._get_or_create_session(session_id)
         owner = self._owner_name(session)
         transcript = "\n".join(
@@ -675,7 +724,10 @@ class InteractionService:
             "- Structure: one-sentence goal; 'Features:' bullet list; 'Constraints:' (runs locally on the "
             "owner's computer, no deployment, no real payments or personal data); 'Assumptions:' for anything "
             "unclear, chosen conservatively; 'Done when:' 3-5 checkable acceptance criteria.\n"
+            "- If the owner asked for something the agents can't build (see below), start with a line "
+            "'Not possible here: ...' and write the brief for the closest buildable alternative.\n"
             "- Under 1500 characters, plain text, in English.\n\n"
+            f"What agents can build: {AGENT_CAN_BUILD}\n\n"
             f"Conversation:\n{transcript}\n\nObjective:")
         try:
             resp = self.commander.model_router.invoke(ModelRequest(
@@ -706,6 +758,25 @@ class InteractionService:
                 pass
 
         facts = "\n".join(f"- {f}" for f in self._live_facts())
+        offer = session.offer
+        if offer and session.plan_now:
+            ui_line = ("You are opening the mission plan for them right now: a brief drafted from this conversation "
+                       "that they can edit, then approve. Tell them so in one short sentence of your own (speak to "
+                       "them directly, never about 'the owner'); don't say you can't create missions.")
+        elif offer:
+            ui_line = ("A \"Plan this as a mission\" button IS shown under this reply. Saying \"plan it\" also "
+                       "opens the plan.")
+        else:
+            ui_line = ("No mission button is shown under this reply and no plan is being opened now. Don't mention "
+                       "buttons or opening a plan (missions already planned are listed in LIVE STATUS); if they want "
+                       "something new built, ask what it should do.")
+        limits = ""
+        if offer:
+            from services.agents.scope import scope_notes
+            notes = scope_notes(offer, self.guess_profile(offer))
+            if notes:
+                limits = ("LIMITS FOR THIS REQUEST (say them plainly before the owner plans it; offer the closest "
+                          "alternative):\n" + "\n".join(f"- {n}" for n in notes) + "\n")
         memory_block = "\n".join(f"- {m}" for m in memories) or "- (nothing recorded yet)"
         history = self._history_for_model(session, owner)
         system_instruction = (
@@ -717,13 +788,15 @@ class InteractionService:
             "don't know or can't check it from chat. Never invent monitoring, scans, protections or results, "
             "and don't call systems \"green\", \"nominal\" or \"secure\": mention status only when asked.\n"
             "2. Never claim you ran, built, changed, tested or verified anything. From chat you can only talk.\n"
-            f"3. If {owner} wants something built or done (a website, an app, a script...), help shape the "
-            "requirements, then say a mission plan is offered below the reply: pressing \"Plan this as a mission\" "
-            "lets the agents build it after the owner approves the plan.\n"
+            f"3. If {owner} wants something built (a website, an app, a script...), help shape the requirements. "
+            "Follow the UI line below exactly when you mention the mission plan. Never promise what agents can't "
+            "build (see LIVE STATUS); say it and offer the closest option. Give a time estimate only when asked, "
+            "using only the measured run times in LIVE STATUS; if there are none, say so.\n"
             f"4. Personal facts about {owner} or other people come only from MEMORY; otherwise say you don't "
             "know yet.\n"
             "5. Never create or offer accounts, passwords or roles in chat: the owner does that in Settings.\n\n"
             f"LIVE STATUS (observed now):\n{facts}\n\n"
+            f"UI: {ui_line}\n{limits}\n"
             f"MEMORY (declared by the owner):\n{memory_block}\n"
         )
         full_prompt = (f"{system_instruction}\nConversation so far:\n{history}\n\n" if history

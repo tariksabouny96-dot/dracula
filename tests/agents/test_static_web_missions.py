@@ -2,6 +2,8 @@
 sandbox (the owner's Windows PC); Python missions there wait for the owner's "Run on my PC"
 approval, bound to the exact files, instead of ending UNVERIFIED."""
 import io
+import tempfile
+from pathlib import Path
 import json
 import sqlite3
 import zipfile
@@ -71,16 +73,21 @@ def test_website_roles_write_only_their_own_folders(tmp_path):
     engine = _engine(tmp_path, model)
     mid = _approved(engine, WEB_OBJECTIVE, "static_web")["mission_id"]
     final = engine.run(OWNER, mid)
-    assert final["state"] == "FAILED" and "may not write app/server.py" in final["error"]
+    assert final["state"] == "BLOCKED" and "may not write app/server.py" in final["error"]
+    assert not (engine.root / "workspaces" / mid / "app").exists()
+    # Every retry told the engineer what was wrong.
+    retries = [r for r in model.requests if r.agent == "engineer"][1:]
+    assert retries and all("YOUR PREVIOUS ANSWER WAS REJECTED" in r.prompt and "app/server.py" in r.prompt
+                           for r in retries)
 
 
 def test_malformed_acceptance_spec_is_rejected_before_it_is_written():
     bad = AgentWorkProduct(files=[FileWrite(path="qa_checks/acceptance.json",
                                             content=json.dumps({"checks": [{"type": "magic", "page": "x.html"}]}))])
-    with pytest.raises(ValueError, match="type must be one of"):
+    with pytest.raises(ValueError, match="type is .magic.; it must be one of"):
         check_acceptance_spec(bad)
     with pytest.raises(SpecError, match="Unsupported selector"):
-        load_spec(json.dumps({"checks": [{"type": "has_element", "page": "index.html", "selector": "nav a"}]}))
+        load_spec(json.dumps({"checks": [{"type": "has_element", "page": "index.html", "selector": "a:hover"}]}))
     assert len(load_spec(json.dumps(ACCEPTANCE))) == len(ACCEPTANCE["checks"])
 
 
@@ -215,3 +222,60 @@ def test_local_run_settings_are_off_by_default_and_persist(tmp_path):
 def test_unknown_mission_kind_is_refused(tmp_path):
     with pytest.raises(ValueError, match="python_app or static_web"):
         _engine(tmp_path, ScriptedModel()).create_mission(OWNER, WEB_OBJECTIVE, profile="rocket")
+
+
+def test_qa_mistake_is_fed_back_and_fixed_instead_of_failing_the_mission(tmp_path):
+    """Owner's run: 'check 4: page must be a page path relative to site/' three times -> FAILED."""
+    bad = {"checks": [dict(c) for c in ACCEPTANCE["checks"]]}
+    bad["checks"][3]["page"] = "style.css"                                  # not a page: must be rejected
+    bad["checks"][0]["page"] = "site/index.html"                            # harmless variant: accepted
+    bad["checks"][1]["page"] = "/index.html#top"
+    tries = {"qa": 0}
+
+    def qa(request):
+        tries["qa"] += 1
+        spec = ACCEPTANCE if "YOUR PREVIOUS ANSWER WAS REJECTED" in request.prompt else bad
+        if tries["qa"] > 1:
+            assert "'page' is 'style.css'" in request.prompt                # told exactly what was wrong
+        return json.dumps({"files": [{"path": "qa_checks/acceptance.json", "content": json.dumps(spec)}],
+                           "notes": "", "uncertainty": ""})
+    engine = _engine(tmp_path, ScriptedWebModel(overrides={"qa": qa}))
+    final = engine.run(OWNER, _approved(engine, WEB_OBJECTIVE, "static_web")["mission_id"])
+    assert final["state"] == "COMPLETED", final["error"]
+    assert tries["qa"] == 2
+
+
+def test_tolerant_page_names_and_nested_selectors_in_acceptance_checks(tmp_path):
+    spec = {"checks": [
+        {"id": "a", "type": "links_to", "page": "/", "target": "site/menu.html"},
+        {"id": "b", "type": "has_element", "page": "menu", "selector": "ul#menu > li.item", "min_count": "3"},
+        {"id": "c", "type": "has_element", "page": "./order.html?table=5", "selector": "form#order button#add"},
+        {"id": "d", "type": "contains_text", "page": "menu.html#drinks", "text": "Cappuccino 3.20"}]}
+    decision = verify_static_site(_site(tmp_path, site_files(fixed=True), spec=spec))
+    assert decision.verdict.value == "PASS", decision.checks[-1].output_tail
+
+
+def test_blocked_agent_gets_a_fresh_round_when_the_owner_retries(tmp_path):
+    always_bad = json.dumps({"files": [{"path": "qa_checks/acceptance.json", "content": "{not json"}],
+                             "notes": "", "uncertainty": ""})
+    model = ScriptedWebModel(overrides={"qa": always_bad})
+    engine = _engine(tmp_path, model)
+    mid = _approved(engine, WEB_OBJECTIVE, "static_web")["mission_id"]
+    blocked = engine.run(OWNER, mid)
+    assert blocked["state"] == "BLOCKED" and "QA agent's answer was rejected 3 times" in blocked["error"]
+    assert "Retry blocked work" in blocked["error"] and "[" not in blocked["error"].split("(")[0]
+    model.overrides.pop("qa")                                               # the model gets it right now
+    engine.retry_blocked(OWNER, mid, "owner")
+    assert engine.run(OWNER, mid)["state"] == "COMPLETED"
+
+
+def test_planner_is_told_what_cannot_be_built_and_the_owner_sees_it():
+    model = ScriptedWebModel()
+    engine = _engine(Path(tempfile.mkdtemp()), model)
+    status = engine.create_mission(OWNER, "Create a website using WordPress for perfumes, with a catalogue",
+                                   profile="static_web")
+    assert any("WordPress can't be built" in n for n in status["scope_notes"])
+    planner_prompt = next(r for r in model.requests if r.agent == "planner").prompt
+    assert "HOOD SCOPE NOTES" in planner_prompt and "WordPress" in planner_prompt
+    plain = engine.create_mission(OWNER, WEB_OBJECTIVE, profile="static_web")
+    assert plain["scope_notes"] == []

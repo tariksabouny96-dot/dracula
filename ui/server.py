@@ -617,7 +617,9 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
                 "tasks": tasks,
                 "approval_ref": getattr(resp, "approval_ref", None),
                 "approval": approval_data,
-                "suggested_mission": getattr(resp, "suggested_mission", None)
+                "suggested_mission": getattr(resp, "suggested_mission", None),
+                "open_mission_draft": bool(getattr(resp, "open_mission_draft", False)),
+                "scope_notes": list(getattr(resp, "scope_notes", []) or [])
             })
 
         elif self.path == "/api/interrupt":
@@ -1124,7 +1126,10 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
                     self._send_json({"error": "Explicit confirmation required: planning calls a model provider"}, status=400)
                     return
                 profile = payload.get("profile", "python_app")
-                self._send_json(engine.create_mission(owner, objective, budget, profile=profile), status=201)
+                created = engine.create_mission(owner, objective, budget, profile=profile)
+                if self.interaction_service is not None and hasattr(self.interaction_service, "mission_planned"):
+                    self.interaction_service.mission_planned("user:" + owner)   # stop re-offering it in chat
+                self._send_json(created, status=201)
                 return
             rest = self.path.removeprefix("/api/agents/missions/")
             mission_id = self._agent_mission_id(rest)
