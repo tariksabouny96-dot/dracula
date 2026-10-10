@@ -51,8 +51,8 @@ def save_settings(update: Dict[str, Any]) -> Dict[str, Any]:
     current = load_settings()
     new = dict(current)
     if "tts_provider" in update:
-        if update["tts_provider"] not in ("gemini", "elevenlabs"):
-            raise ValueError("tts_provider must be 'gemini' or 'elevenlabs'")
+        if update["tts_provider"] not in ("gemini", "elevenlabs", "browser"):
+            raise ValueError("tts_provider must be 'gemini', 'elevenlabs' or 'browser'")
         new["tts_provider"] = update["tts_provider"]
     for key in ("voice_id", "x_voice_id"):
         if key in update:

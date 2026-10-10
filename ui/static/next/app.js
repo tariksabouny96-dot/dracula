@@ -904,14 +904,44 @@
 
   // ------------------------------------------------------------------ Voice
   const voice = {
-    autoSpeak: false, recorder: null, chunks: [],
+    autoSpeak: false, recorder: null, chunks: [], provider: null,
     async status() { return api.get('/api/voice/status'); },
+    // This computer's built-in speech engine: free, offline, no quota. Voice choice is per browser.
+    localAvailable() { return 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined'; },
+    localVoices() { return this.localAvailable() ? window.speechSynthesis.getVoices() : []; },
+    localVoiceName(speaker) {
+      try { return localStorage.getItem(speaker === 'x' ? 'hood-next:browser-voice-x' : 'hood-next:browser-voice') || ''; } catch (e) { return ''; }
+    },
+    speakLocally(text, speaker) {
+      if (!this.localAvailable()) { toast('This browser has no built-in voice.'); return; }
+      const u = new SpeechSynthesisUtterance(String(text).slice(0, 4000));
+      const voices = this.localVoices();
+      const wanted = this.localVoiceName(speaker);
+      u.voice = voices.find((v) => v.name === wanted)
+        || (speaker === 'x' && voices.length > 1 ? voices[1] : null) || null;
+      u.onstart = () => setAvatar('speaking');
+      u.onend = u.onerror = () => setAvatar('idle');
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(u);
+    },
     async speak(text, speaker) {
+      if (this.provider === null) {
+        const st = await this.status();
+        this.provider = st.ok ? st.data.tts_provider : 'gemini';
+      }
+      if (this.provider === 'browser') { this.speakLocally(text, speaker); return; }
       const r = await fetch('/api/voice/speak', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': api.csrf || '' }, body: JSON.stringify({ text: String(text).slice(0, 2000), speaker: speaker === 'x' ? 'x' : 'hood' }) });
       if (!r.ok) {
         let why = 'HTTP ' + r.status;
         try { why = (await r.json()).error || why; } catch (e) { /* not JSON */ }
-        toast('Hood voice unavailable: ' + why); return;
+        if (this.localAvailable()) {
+          // The cloud voice failed (quota, plan, network): keep talking with this computer's voice.
+          toast('Cloud voice unavailable (' + why + '). Using this computer\'s voice instead.');
+          this.speakLocally(text, speaker);
+        } else {
+          toast('Hood voice unavailable: ' + why);
+        }
+        return;
       }
       const url = URL.createObjectURL(await r.blob());
       const audio = new Audio(url);
@@ -1068,7 +1098,18 @@
       if (!r.ok) return unavailable(r, 'Voice settings');
       const v = r.data;
       const provider = h('select', { 'aria-label': 'Voice provider' },
-        h('option', { value: 'gemini' }, 'Google Gemini voice'), h('option', { value: 'elevenlabs' }, 'ElevenLabs (my voice)'));
+        h('option', { value: 'gemini' }, 'Google Gemini voice'), h('option', { value: 'elevenlabs' }, 'ElevenLabs (my voice)'),
+        h('option', { value: 'browser' }, "This computer's voice (free, offline, no quota)"));
+      const localPick = (speaker) => {
+        const sel = h('select', { 'aria-label': speaker === 'x' ? 'X computer voice' : 'HOOD computer voice' },
+          h('option', { value: '' }, 'System default'),
+          voice.localVoices().map((lv) => h('option', { value: lv.name }, lv.name + ' (' + lv.lang + ')')));
+        sel.value = voice.localVoiceName(speaker);
+        sel.addEventListener('change', () => {
+          try { localStorage.setItem(speaker === 'x' ? 'hood-next:browser-voice-x' : 'hood-next:browser-voice', sel.value); } catch (e) { /* storage blocked */ }
+        });
+        return sel;
+      };
       provider.value = v.tts_provider;
       const key = secretInput('ElevenLabs API key', 'Paste your ElevenLabs API key (starts with sk_)');
       const vid = h('input', { value: v.voice_id || '', placeholder: 'e.g. 21m00Tcm4TlvDq8ikWAM', 'aria-label': 'HOOD voice ID' });
@@ -1076,7 +1117,7 @@
       const model = h('input', { value: v.model_id || v.default_model, 'aria-label': 'ElevenLabs model' });
       const price = h('input', { type: 'number', min: '0', max: '10', step: '0.0001', value: v.price_per_1k_chars === null ? '' : v.price_per_1k_chars, 'aria-label': 'Price per 1,000 characters' });
       return h('div', {},
-        h('dl', { class: 'kv' }, h('dt', {}, 'Speaking voice'), h('dd', {}, v.tts_provider === 'elevenlabs' ? 'ElevenLabs' : 'Google Gemini'),
+        h('dl', { class: 'kv' }, h('dt', {}, 'Speaking voice'), h('dd', {}, { elevenlabs: 'ElevenLabs', browser: "This computer's voice" }[v.tts_provider] || 'Google Gemini'),
           h('dt', {}, 'ElevenLabs key'), h('dd', {}, v.key.set ? 'Set (' + v.key.hint + ')' : 'Not set')),
         h('div', { class: 'form' },
           h('label', {}, (v.key.set ? 'Replace ElevenLabs API key' : 'ElevenLabs API key') + ' (the secret value starting with sk_, not the key ID)', key),
@@ -1092,6 +1133,8 @@
               ['HOOD goes back to the Gemini voice.'], 'Remove key',
               async () => { const res = await api.post('/api/settings/voice/key/remove', { confirm: true }); load(); return res; }) }, 'Remove key') : null),
           h('label', {}, 'Speaking voice', provider),
+          voice.localAvailable() ? h('label', {}, "This computer's voice for HOOD (also used automatically if a cloud voice fails)", localPick('hood')) : null,
+          voice.localAvailable() ? h('label', {}, "This computer's voice for X", localPick('x')) : null,
           h('label', {}, 'HOOD voice ID (from ElevenLabs › Voices)', vid),
           h('label', {}, 'X voice ID (optional)', xvid),
           h('label', {}, 'Model (eleven_multilingual_v2 = best quality, eleven_flash_v2_5 = fastest)', model),
@@ -1101,13 +1144,17 @@
               const res = await api.post('/api/settings/voice', { tts_provider: provider.value, voice_id: vid.value.trim(),
                 x_voice_id: xvid.value.trim(), model_id: model.value.trim(), price_per_1k_chars: price.value, confirm: true });
               toast(res.ok ? 'Voice settings saved.' : 'Not saved: ' + res.error);
-              if (res.ok) load();
+              if (res.ok) { voice.provider = provider.value; load(); }
             } }, 'Save voice settings'),
             h('button', { class: 'btn small', type: 'button', onclick: () => voice.speak('Hello Zak, this is HOOD. Can you hear me clearly?') }, '▶ Test HOOD voice'),
-            v.x_voice_id ? h('button', { class: 'btn small', type: 'button', onclick: () => voice.speak('This is X.', 'x') }, '▶ Test X voice') : null)));
+            h('button', { class: 'btn small', type: 'button', onclick: () => voice.speak('This is X.', 'x') }, '▶ Test X voice'))));
     });
+    if (voice.localAvailable() && !voice.localVoices().length) {
+      // Chrome loads its voice list asynchronously; redraw once it is ready.
+      window.speechSynthesis.addEventListener('voiceschanged', () => load(), { once: true });
+    }
     load();
-    return card('Voice (ElevenLabs)', box);
+    return card('Voice', box);
   }
 
   // ------------------------------------------------------------------ Settings › Security and Users

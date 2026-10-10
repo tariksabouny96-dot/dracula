@@ -49,7 +49,7 @@ billing account; if billing is enabled on your Google project, put the real pric
 ## Voice: use your ElevenLabs voice (optional)
 
 HOOD speaks with Gemini's voice by default. To use a voice you chose on ElevenLabs, open
-**Settings › Voice (ElevenLabs)** as the Root Owner:
+**Settings › Voice** as the Root Owner:
 1. Paste your ElevenLabs API key and press **Save key** (stored encrypted, never shown again;
    HOOD adds `api.elevenlabs.io` to the firewall allow-list as your action).
 2. Choose **ElevenLabs (my voice)**, paste your **HOOD voice ID** (ElevenLabs › Voices), and

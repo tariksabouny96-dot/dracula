@@ -68,6 +68,7 @@ class GeminiVoice:
         self.consent_file = base / "consent.json"
         self._lock = threading.Lock()
         self.last_error: Optional[str] = None
+        self.last_error_from: Optional[str] = None   # "gemini-tts" | "gemini-stt" | "elevenlabs"
 
     # ----------------------------------------------------------------- consent
     def _consents(self) -> Dict[str, Any]:
@@ -114,17 +115,20 @@ class GeminiVoice:
         configured = bool(g and g.enabled and g.is_healthy())
         cfg = eleven.load_settings()
         use_eleven = cfg["tts_provider"] == "elevenlabs"
-        needed = (stt_model(),) if use_eleven else (stt_model(), tts_model())
+        use_browser = cfg["tts_provider"] == "browser"
+        needed = (stt_model(),) if (use_eleven or use_browser) else (stt_model(), tts_model())
         missing = [m for m in needed if self._price(m) is None]
         eleven_problem = self._elevenlabs_problem(cfg) if use_eleven else None
         if not configured or missing or eleven_problem:
             state = "not_configured"
-        elif self.last_error:
+        elif self._current_error(cfg["tts_provider"]):
             state = "degraded"
         else:
             state = "available"
         provider = (f"ElevenLabs voice {cfg['voice_id']} ({cfg['model_id']}) to speak; Google Gemini to listen"
-                    if use_eleven else "Google Gemini (speech-to-text + text-to-speech)")
+                    if use_eleven else
+                    "This computer's built-in voice to speak (free, offline); Google Gemini to listen"
+                    if use_browser else "Google Gemini (speech-to-text + text-to-speech)")
         if not configured:
             problem = "No Gemini API key: set it in Settings"
         elif missing:
@@ -133,8 +137,15 @@ class GeminiVoice:
             problem = eleven_problem
         return {"state": state, "provider": provider, "tts_provider": cfg["tts_provider"],
                 "consent": self.has_consent(user_id), "stt_model": stt_model(),
-                "tts_model": cfg["model_id"] if use_eleven else tts_model(),
-                "last_error": problem or self.last_error}
+                "tts_model": cfg["model_id"] if use_eleven else ("browser" if use_browser else tts_model()),
+                "last_error": problem or self._current_error(cfg["tts_provider"])}
+
+    def _current_error(self, tts_provider: str) -> Optional[str]:
+        """The last error, unless it came from a speaking voice that is no longer selected."""
+        if (self.last_error_from == "gemini-tts" and tts_provider != "gemini") or \
+                (self.last_error_from == "elevenlabs" and tts_provider != "elevenlabs"):
+            return None
+        return self.last_error
 
     # ----------------------------------------------------------------- calls
     def _preflight(self, model: str):
@@ -169,7 +180,9 @@ class GeminiVoice:
                     data = json.loads(resp.read(40_000_000))
                 break
             except urllib.error.HTTPError as exc:
-                last = f"Gemini HTTP {exc.code}"
+                last = (f"Gemini HTTP {exc.code}" if exc.code != 429 else
+                        "Gemini HTTP 429: the free voice quota is used up for now; it resets after a "
+                        "short wait or daily. Use the browser voice (Settings > Voice) meanwhile")
                 if exc.code not in TRANSIENT:
                     break
             except (urllib.error.URLError, TimeoutError, OSError) as exc:
@@ -215,13 +228,20 @@ class GeminiVoice:
             {"text": "Transcribe this audio verbatim in its original language. "
                      "Reply with only the transcript, or nothing if there is no speech."}]}],
             "generationConfig": {"temperature": 0, "maxOutputTokens": 2048}}
-        data = self._post(g, model, body, est_in=max(1000, len(audio) // 50), est_out=2048, price=price)
+        try:
+            data = self._post(g, model, body, est_in=max(1000, len(audio) // 50), est_out=2048, price=price)
+        except Exception:
+            self.last_error_from = "gemini-stt"
+            raise
         parts = ((data.get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
         return "".join(p.get("text", "") for p in parts).strip()
 
     def speak_audio(self, text: str, speaker: str = "hood") -> tuple:
         """Speak with the owner's chosen provider; returns (audio bytes, mime type)."""
         cfg = eleven.load_settings()
+        if cfg["tts_provider"] == "browser":
+            raise VoiceRefused("The speaking voice is set to this computer's built-in voice; "
+                               "the browser speaks locally, nothing is sent")
         if cfg["tts_provider"] != "elevenlabs":
             return self.speak(text), "audio/wav"
         text = (text or "").strip()
@@ -246,7 +266,7 @@ class GeminiVoice:
         except Exception as exc:
             # The request may have been processed: charge the reservation, never release it.
             cc.settle(reservation, ModelUsage(), cost_measured=False, provider="elevenlabs", model=cfg["model_id"])
-            self.last_error = str(exc)[:300]
+            self.last_error, self.last_error_from = str(exc)[:300], "elevenlabs"
             raise
         cc.settle(reservation, ModelUsage(estimated_cost_usd=cost),  # billed per character, not per token
                   cost_measured=True, provider="elevenlabs", model=cfg["model_id"],
@@ -266,7 +286,11 @@ class GeminiVoice:
         body = {"contents": [{"parts": [{"text": text}]}],
                 "generationConfig": {"responseModalities": ["AUDIO"], "speechConfig": {
                     "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": self.voice_name}}}}}
-        data = self._post(g, model, body, est_in=len(text), est_out=max(512, len(text) * 4), price=price)
+        try:
+            data = self._post(g, model, body, est_in=len(text), est_out=max(512, len(text) * 4), price=price)
+        except Exception:
+            self.last_error_from = "gemini-tts"
+            raise
         parts = ((data.get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
         inline = next((p.get("inlineData") or p.get("inline_data") for p in parts
                        if p.get("inlineData") or p.get("inline_data")), None)

@@ -242,3 +242,31 @@ def test_elevenlabs_voice_from_settings(stack, monkeypatch):
         assert j(r)["key"]["set"] is False and j(r)["tts_provider"] == "gemini"
     finally:
         routes.SERVICES.pop("firewall", None)
+
+
+def test_computer_voice_option_and_clear_quota_message(stack, monkeypatch):
+    import urllib.error
+    base, owner, _, router, _ = stack
+    request(base, "/api/settings/model/key", owner, {"api_key": KEY, "confirm": True})
+    request(base, "/api/settings/model/pricing", owner, {"mode": "free", "confirm": True})
+
+    # Gemini's free voice quota exhausted: the error says so instead of a bare HTTP code.
+    real_urlopen = cloud.urllib.request.urlopen
+
+    def quota_exhausted(req, timeout=0):
+        if cloud.HOST not in getattr(req, "full_url", str(req)):
+            return real_urlopen(req, timeout=timeout)
+        raise urllib.error.HTTPError(req.full_url, 429, "Too Many Requests", {}, io.BytesIO(b"{}"))
+
+    monkeypatch.setattr(cloud.urllib.request, "urlopen", quota_exhausted)
+    monkeypatch.setattr(cloud.time, "sleep", lambda s: None)
+    r = request(base, "/api/voice/speak", owner, {"text": "Hello"})
+    assert r[0] == 503 and b"free voice quota is used up" in r[1]
+
+    # This computer's voice: free and local, so the server never sends text anywhere.
+    r = request(base, "/api/settings/voice", owner, {"tts_provider": "browser", "confirm": True})
+    assert r[0] == 200 and j(r)["tts_provider"] == "browser"
+    st = j(request(base, "/api/voice/status", owner))
+    assert st["tts_provider"] == "browser" and st["state"] == "available" and "built-in voice" in st["provider"]
+    r = request(base, "/api/voice/speak", owner, {"text": "Hello"})
+    assert r[0] == 400 and b"speaks locally" in r[1]
