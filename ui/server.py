@@ -1372,7 +1372,8 @@ class JarvisServer:
         for name, value in (("agents", engine), ("router", getattr(runtime, "model_router", None)),
                             ("approvals", shared_approvals), ("x", self.x_session_manager),
                             ("emergency_stop", emergency_stop), ("auth", self.auth_service),
-                            ("firewall", getattr(runtime, "firewall", None))):
+                            ("firewall", getattr(runtime, "firewall", None)),
+                            ("selfdev", getattr(runtime, "self_dev", None))):
             if value is not None:
                 feature_routes.SERVICES[name] = value
             else:

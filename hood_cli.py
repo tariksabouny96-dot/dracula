@@ -101,6 +101,15 @@ class HoodSystemRuntime:
         if _seed:
             self.firewall.seed_defaults(_seed)
         self.model_router.firewall = self.firewall
+
+        # Governed self-development: HOOD may propose and test changes to its own
+        # code, but can only apply them with the Root Owner's hash-bound approval,
+        # with rollback, and never to its guardrail files.
+        from services.evolution.self_development import SelfDevelopmentController
+        self.self_dev = SelfDevelopmentController(
+            workspace_root=Path.cwd(), approval_service=self.approval_service,
+            audit_service=self.audit_service, data_dir=self.data_dir / "self_dev",
+            stop_latch=self.stop_latch)
         self.tool_gateway = ToolGateway(self.config, self.approval_service, self.audit_service,
                                         stop_latch=self.stop_latch)
 

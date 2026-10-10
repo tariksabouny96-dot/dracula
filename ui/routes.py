@@ -128,4 +128,5 @@ API_MODULES: List[str] = [
     "services.console.api",
     "services.exports.api",
     "services.firewall.api",
+    "services.evolution.self_development_api",
 ]
