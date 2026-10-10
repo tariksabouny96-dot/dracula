@@ -24,6 +24,8 @@ from typing import Any, Dict, Optional
 
 from packages.contracts import ModelUsage, ProviderName
 
+from . import elevenlabs as eleven
+
 HOST = "generativelanguage.googleapis.com"
 AUDIO_MIME = {"audio/webm", "audio/ogg", "audio/wav", "audio/x-wav", "audio/mp4", "audio/mpeg", "audio/aac", "audio/flac"}
 MAX_AUDIO_BYTES = 700 * 1024            # fits the server's 1 MB request cap; ~3 min of browser speech
@@ -95,23 +97,44 @@ class GeminiVoice:
     def _price(self, model: str):
         return (getattr(self.router, "price_table", {}) or {}).get("gemini", {}).get(model)
 
+    def _elevenlabs_problem(self, cfg: Dict[str, Any]) -> Optional[str]:
+        """Why ElevenLabs can't be used right now, or None when it is ready."""
+        g = self._gemini()
+        if g is None or not g.vault.get_secret(eleven.SECRET_REF):
+            return "No ElevenLabs API key: set it in Settings > Voice"
+        if not cfg.get("voice_id"):
+            return "No ElevenLabs voice ID: set it in Settings > Voice"
+        if cfg.get("price_per_1k_chars") is None:
+            return ("No ElevenLabs price on file: set USD per 1,000 characters in Settings > Voice "
+                    "(0 if your plan covers it)")
+        return None
+
     def status(self, user_id: str) -> Dict[str, Any]:
         g = self._gemini()
         configured = bool(g and g.enabled and g.is_healthy())
-        missing = [m for m in (stt_model(), tts_model()) if self._price(m) is None]
-        if not configured:
-            state = "not_configured"
-        elif missing:
+        cfg = eleven.load_settings()
+        use_eleven = cfg["tts_provider"] == "elevenlabs"
+        needed = (stt_model(),) if use_eleven else (stt_model(), tts_model())
+        missing = [m for m in needed if self._price(m) is None]
+        eleven_problem = self._elevenlabs_problem(cfg) if use_eleven else None
+        if not configured or missing or eleven_problem:
             state = "not_configured"
         elif self.last_error:
             state = "degraded"
         else:
             state = "available"
-        return {"state": state, "provider": "Google Gemini (speech-to-text + text-to-speech)",
-                "consent": self.has_consent(user_id), "stt_model": stt_model(), "tts_model": tts_model(),
-                "last_error": self.last_error if configured and not missing else (
-                    "No Gemini API key: set it in Settings" if not configured else
-                    "No price on file for " + ", ".join(missing) + ": set prices in Settings")}
+        provider = (f"ElevenLabs voice {cfg['voice_id']} ({cfg['model_id']}) to speak; Google Gemini to listen"
+                    if use_eleven else "Google Gemini (speech-to-text + text-to-speech)")
+        if not configured:
+            problem = "No Gemini API key: set it in Settings"
+        elif missing:
+            problem = "No price on file for " + ", ".join(missing) + ": set prices in Settings"
+        else:
+            problem = eleven_problem
+        return {"state": state, "provider": provider, "tts_provider": cfg["tts_provider"],
+                "consent": self.has_consent(user_id), "stt_model": stt_model(),
+                "tts_model": cfg["model_id"] if use_eleven else tts_model(),
+                "last_error": problem or self.last_error}
 
     # ----------------------------------------------------------------- calls
     def _preflight(self, model: str):
@@ -195,6 +218,42 @@ class GeminiVoice:
         data = self._post(g, model, body, est_in=max(1000, len(audio) // 50), est_out=2048, price=price)
         parts = ((data.get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
         return "".join(p.get("text", "") for p in parts).strip()
+
+    def speak_audio(self, text: str, speaker: str = "hood") -> tuple:
+        """Speak with the owner's chosen provider; returns (audio bytes, mime type)."""
+        cfg = eleven.load_settings()
+        if cfg["tts_provider"] != "elevenlabs":
+            return self.speak(text), "audio/wav"
+        text = (text or "").strip()
+        if not text:
+            raise VoiceRefused("Nothing to say")
+        if len(text) > MAX_SPEAK_CHARS:
+            raise VoiceRefused(f"Text too long (max {MAX_SPEAK_CHARS} characters)")
+        if self.emergency_stop is not None and getattr(self.emergency_stop, "is_active", False):
+            from packages.security import EmergencyStopActive
+            raise EmergencyStopActive("Emergency stop is engaged; voice is halted")
+        problem = self._elevenlabs_problem(cfg)
+        if problem:
+            raise VoiceRefused(problem)
+        voice_id = (cfg.get("x_voice_id") if speaker == "x" else None) or cfg["voice_id"]
+        cost = len(text) / 1000.0 * float(cfg["price_per_1k_chars"])
+        cc = self.router.cost_controller
+        reservation = cc.reserve(None, cost)
+        started = time.monotonic()
+        try:
+            audio = eleven.synthesize(text, api_key=self._gemini().vault.get_secret(eleven.SECRET_REF),
+                                      voice_id=voice_id, model_id=cfg["model_id"], firewall=self.firewall)
+        except Exception as exc:
+            # The request may have been processed: charge the reservation, never release it.
+            cc.settle(reservation, ModelUsage(), cost_measured=False, provider="elevenlabs", model=cfg["model_id"])
+            self.last_error = str(exc)[:300]
+            raise
+        cc.settle(reservation, ModelUsage(estimated_cost_usd=cost),  # billed per character, not per token
+                  cost_measured=True, provider="elevenlabs", model=cfg["model_id"],
+                  latency_ms=int((time.monotonic() - started) * 1000),
+                  price_source=f"owner-declared ${cfg['price_per_1k_chars']}/1k characters (Settings)")
+        self.last_error = None
+        return audio, "audio/mpeg"
 
     def speak(self, text: str) -> bytes:
         text = (text or "").strip()

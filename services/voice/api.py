@@ -57,7 +57,9 @@ def speak(ctx):
     text = ctx.payload.get("text")
     if not isinstance(text, str):
         raise ValueError("text is required")
-    return Raw(body=_call(_voice().speak, text), content_type="audio/wav")
+    speaker = "x" if ctx.payload.get("speaker") == "x" else "hood"
+    audio, mime = _call(_voice().speak_audio, text, speaker)
+    return Raw(body=audio, content_type=mime)
 
 
 def _capability_state():

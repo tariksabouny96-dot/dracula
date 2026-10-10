@@ -367,7 +367,7 @@
       logEl.append(h('div', { class: 'form-actions' }, h('button', { class: 'btn small primary', type: 'button',
         onclick: () => planMissionDialog(objective) }, 'Plan this as a mission')));
     }
-    if (voice.autoSpeak) voice.speak(String(r.data.text).replace(/[*`#_]/g, ''));
+    if (voice.autoSpeak) voice.speak(String(r.data.text).replace(/[*`#_]/g, ''), r.data.speaker_id);
   }
   function planMissionDialog(objective) {
     const obj = h('textarea', { class: 'big', 'aria-label': 'Objective', maxlength: '8000' });
@@ -906,9 +906,13 @@
   const voice = {
     autoSpeak: false, recorder: null, chunks: [],
     async status() { return api.get('/api/voice/status'); },
-    async speak(text) {
-      const r = await fetch('/api/voice/speak', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': api.csrf || '' }, body: JSON.stringify({ text: String(text).slice(0, 2000) }) });
-      if (!r.ok) { toast('Hood voice unavailable (' + r.status + ')'); return; }
+    async speak(text, speaker) {
+      const r = await fetch('/api/voice/speak', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': api.csrf || '' }, body: JSON.stringify({ text: String(text).slice(0, 2000), speaker: speaker === 'x' ? 'x' : 'hood' }) });
+      if (!r.ok) {
+        let why = 'HTTP ' + r.status;
+        try { why = (await r.json()).error || why; } catch (e) { /* not JSON */ }
+        toast('Hood voice unavailable: ' + why); return;
+      }
       const url = URL.createObjectURL(await r.blob());
       const audio = new Audio(url);
       setAvatar('speaking');
@@ -1049,6 +1053,56 @@
     return card('Model provider (Gemini)', box);
   }
 
+  // ------------------------------------------------------------------ Settings › Voice (owner only)
+  function voiceSettingsCard() {
+    const box = h('div', {});
+    const load = () => fill(box, async () => {
+      const r = await api.get('/api/settings/voice');
+      if (!r.ok) return unavailable(r, 'Voice settings');
+      const v = r.data;
+      const provider = h('select', { 'aria-label': 'Voice provider' },
+        h('option', { value: 'gemini' }, 'Google Gemini voice'), h('option', { value: 'elevenlabs' }, 'ElevenLabs (my voice)'));
+      provider.value = v.tts_provider;
+      const key = h('input', { type: 'password', autocomplete: 'off', spellcheck: 'false', placeholder: 'Paste your ElevenLabs API key', 'aria-label': 'ElevenLabs API key' });
+      const vid = h('input', { value: v.voice_id || '', placeholder: 'e.g. 21m00Tcm4TlvDq8ikWAM', 'aria-label': 'HOOD voice ID' });
+      const xvid = h('input', { value: v.x_voice_id || '', placeholder: 'optional: a different voice for X', 'aria-label': 'X voice ID' });
+      const model = h('input', { value: v.model_id || v.default_model, 'aria-label': 'ElevenLabs model' });
+      const price = h('input', { type: 'number', min: '0', max: '10', step: '0.0001', value: v.price_per_1k_chars === null ? '' : v.price_per_1k_chars, 'aria-label': 'Price per 1,000 characters' });
+      return h('div', {},
+        h('dl', { class: 'kv' }, h('dt', {}, 'Speaking voice'), h('dd', {}, v.tts_provider === 'elevenlabs' ? 'ElevenLabs' : 'Google Gemini'),
+          h('dt', {}, 'ElevenLabs key'), h('dd', {}, v.key.set ? 'Set (' + v.key.hint + ')' : 'Not set')),
+        h('div', { class: 'form' },
+          h('label', {}, v.key.set ? 'Replace ElevenLabs API key' : 'ElevenLabs API key', key),
+          h('div', { class: 'form-actions' },
+            h('button', { class: 'btn small primary', type: 'button', onclick: async () => {
+              if (!key.value.trim()) { toast('Paste a key first.'); return; }
+              const res = await api.post('/api/settings/voice/key', { api_key: key.value.trim(), confirm: true });
+              key.value = '';
+              toast(res.ok ? 'ElevenLabs key saved; api.elevenlabs.io allowed in the firewall.' : 'Key not saved: ' + res.error);
+              if (res.ok) load();
+            } }, 'Save key'),
+            v.key.set ? h('button', { class: 'btn small', type: 'button', onclick: () => confirmDialog('Remove ElevenLabs key',
+              ['HOOD goes back to the Gemini voice.'], 'Remove key',
+              async () => { const res = await api.post('/api/settings/voice/key/remove', { confirm: true }); load(); return res; }) }, 'Remove key') : null),
+          h('label', {}, 'Speaking voice', provider),
+          h('label', {}, 'HOOD voice ID (from ElevenLabs › Voices)', vid),
+          h('label', {}, 'X voice ID (optional)', xvid),
+          h('label', {}, 'Model (eleven_multilingual_v2 = best quality, eleven_flash_v2_5 = fastest)', model),
+          h('label', {}, 'Price, USD per 1,000 characters (0 if your ElevenLabs plan covers it)', price),
+          h('div', { class: 'form-actions' },
+            h('button', { class: 'btn small primary', type: 'button', onclick: async () => {
+              const res = await api.post('/api/settings/voice', { tts_provider: provider.value, voice_id: vid.value.trim(),
+                x_voice_id: xvid.value.trim(), model_id: model.value.trim(), price_per_1k_chars: price.value, confirm: true });
+              toast(res.ok ? 'Voice settings saved.' : 'Not saved: ' + res.error);
+              if (res.ok) load();
+            } }, 'Save voice settings'),
+            h('button', { class: 'btn small', type: 'button', onclick: () => voice.speak('Hello Zak, this is HOOD. Can you hear me clearly?') }, '▶ Test HOOD voice'),
+            v.x_voice_id ? h('button', { class: 'btn small', type: 'button', onclick: () => voice.speak('This is X.', 'x') }, '▶ Test X voice') : null)));
+    });
+    load();
+    return card('Voice (ElevenLabs)', box);
+  }
+
   // ------------------------------------------------------------------ Settings › Security and Users
   function securityCard() {
     const cur = h('input', { type: 'password', autocomplete: 'current-password', 'aria-label': 'Current password' });
@@ -1130,6 +1184,7 @@
         card('Display', h('div', {}, h('label', { class: 'switchline' }, reduce, ' Reduce motion'),
           h('div', { class: 'form-actions' }, h('button', { class: 'btn', type: 'button', onclick: () => { widgets.layout = DEFAULT_LAYOUT.map((w) => ({ ...w })); widgets.save(); toast('Layout reset.'); } }, 'Reset dashboard layout'))))),
       session.role === 'ROOT_OWNER' ? h('div', { style: { marginTop: '14px' } }, modelProviderCard()) : null,
+      session.role === 'ROOT_OWNER' ? h('div', { style: { marginTop: '14px' } }, voiceSettingsCard()) : null,
       h('div', { class: 'two-col', style: { marginTop: '14px' } }, securityCard(),
         session.role === 'ROOT_OWNER' ? usersCard() : null),
       h('div', { style: { marginTop: '14px' } }, card('Active sessions', sessions)));

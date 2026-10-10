@@ -172,3 +172,69 @@ def test_voice_transcribes_and_speaks_only_when_allowed(stack, monkeypatch):
 
     r = j(request(base, "/api/voice/consent", owner, {"confirm": True, "revoke": True}))
     assert r == {"consent": False}
+
+
+class AudioResp(FakeResp):
+    def __init__(self, data):
+        self.data = data
+
+
+def test_elevenlabs_voice_from_settings(stack, monkeypatch):
+    import urllib.error
+    from services.firewall.policy import NetworkFirewall
+    from services.voice import elevenlabs as eleven
+    base, owner, viewer, router, tmp = stack
+    routes.SERVICES["firewall"] = NetworkFirewall(tmp / "fw")
+    try:
+        request(base, "/api/settings/model/key", owner, {"api_key": KEY, "confirm": True})
+        request(base, "/api/settings/model/pricing", owner, {"mode": "free", "confirm": True})
+        calls, real_urlopen, mode = [], cloud.urllib.request.urlopen, {"status": 200}
+        el_key = "elevenlabs-test-key-not-real-0001"
+
+        def fake_urlopen(req, timeout=0):
+            if eleven.HOST not in getattr(req, "full_url", str(req)):
+                return real_urlopen(req, timeout=timeout)
+            calls.append(req)
+            if mode["status"] != 200:
+                raise urllib.error.HTTPError(req.full_url, mode["status"], "x", {},
+                                             io.BytesIO(b'{"detail": {"message": "invalid api key"}}'))
+            return AudioResp(b"ID3fake-mp3-bytes")
+
+        monkeypatch.setattr(eleven.urllib.request, "urlopen", fake_urlopen)
+        v = j(request(base, "/api/settings/voice", owner))
+        assert v["tts_provider"] == "gemini" and v["key"]["set"] is False
+        assert request(base, "/api/settings/voice", viewer)[0] == 403
+        assert request(base, "/api/settings/voice", owner, {"tts_provider": "elevenlabs", "confirm": True})[0] == 400
+
+        r = request(base, "/api/settings/voice/key", owner, {"api_key": el_key, "confirm": True})
+        assert r[0] == 200 and el_key.encode() not in r[1] and j(r)["key"]["hint"] == "…0001"
+        assert any(rule["host"] == eleven.HOST for rule in routes.SERVICES["firewall"].list_rules())
+
+        hood_voice, x_voice = "21m00Tcm4TlvDq8ikWAM", "AZnzlk1XvdvUeBnXmlld"
+        r = request(base, "/api/settings/voice", owner, {"tts_provider": "elevenlabs", "voice_id": hood_voice,
+                                                         "x_voice_id": x_voice, "confirm": True})
+        assert r[0] == 200
+        r = request(base, "/api/voice/speak", owner, {"text": "Hello"})
+        assert r[0] == 400 and b"price" in r[1] and not calls            # unknown cost: refused, nothing sent
+
+        request(base, "/api/settings/voice", owner, {"price_per_1k_chars": 0, "confirm": True})
+        status, audio, headers = request(base, "/api/voice/speak", owner, {"text": "Hello Zak"})
+        assert status == 200 and headers["Content-Type"] == "audio/mpeg" and audio == b"ID3fake-mp3-bytes"
+        sent = calls[-1]
+        assert f"/v1/text-to-speech/{hood_voice}?output_format=" in sent.full_url
+        assert sent.headers["Xi-api-key"] == el_key
+        assert json.loads(sent.data) == {"text": "Hello Zak", "model_id": eleven.DEFAULT_MODEL}
+        request(base, "/api/voice/speak", owner, {"text": "This is X.", "speaker": "x"})
+        assert f"/text-to-speech/{x_voice}?" in calls[-1].full_url           # X speaks with its own voice
+
+        st = j(request(base, "/api/voice/status", owner))
+        assert st["tts_provider"] == "elevenlabs" and "ElevenLabs" in st["provider"] and st["state"] == "available"
+
+        mode["status"] = 401
+        r = request(base, "/api/voice/speak", owner, {"text": "Hello"})
+        assert r[0] == 503 and b"rejected" in r[1]
+
+        r = request(base, "/api/settings/voice/key/remove", owner, {"confirm": True})
+        assert j(r)["key"]["set"] is False and j(r)["tts_provider"] == "gemini"
+    finally:
+        routes.SERVICES.pop("firewall", None)

@@ -46,6 +46,21 @@ python hood_cli.py status  # expect "gemini: ONLINE"
 The shipped `config/model_pricing.free-tier.json` declares $0 for a free-tier key with no
 billing account; if billing is enabled on your Google project, put the real prices in it first.
 
+## Voice: use your ElevenLabs voice (optional)
+
+HOOD speaks with Gemini's voice by default. To use a voice you chose on ElevenLabs, open
+**Settings › Voice (ElevenLabs)** as the Root Owner:
+1. Paste your ElevenLabs API key and press **Save key** (stored encrypted, never shown again;
+   HOOD adds `api.elevenlabs.io` to the firewall allow-list as your action).
+2. Choose **ElevenLabs (my voice)**, paste your **HOOD voice ID** (ElevenLabs › Voices), and
+   optionally an **X voice ID** so X sounds different.
+3. Model: `eleven_multilingual_v2` (best quality, many languages) or `eleven_flash_v2_5` (fastest).
+4. Price per 1,000 characters: what ElevenLabs charges you (0 if your plan covers it). HOOD
+   refuses to speak without a price, like every other paid call.
+5. **Save voice settings**, then **▶ Test HOOD voice**.
+
+Listening (speech-to-text) stays on Gemini. Removing the key switches back to Gemini's voice.
+
 ## Troubleshooting: "it's not working"
 
 | What you see | Cause | Fix |
@@ -61,7 +76,7 @@ billing account; if billing is enabled on your Google project, put the real pric
 | Gemini HTTP 404 | a retired model was configured (e.g. `gemini-2.5-flash`) | leave `HOOD_GEMINI_*_MODEL` blank to use the defaults |
 | Browser page from another device / `421 Misdirected` | Hood binds 127.0.0.1 and checks the Host header | open it on the same machine at `http://127.0.0.1:<port>`; remote access goes through the Docker + Caddy setup below |
 | Agent missions end `UNVERIFIED` on Windows | no sandbox on Windows | run missions on Linux or WSL2 |
-| Voice page: `not_configured` | no key or no price for the voice models | set both in **Settings › Model provider** |
+| Voice page: `not_configured` | no key or no price for the voice models (or ElevenLabs key / voice ID / price missing) | set them in **Settings › Model provider** and **Settings › Voice** |
 | Voice: "Give consent for cloud audio first" | recordings are only sent to Google after you agree | press **Give consent for cloud audio** on the Voice page |
 | Voice: "Microphone permission denied" | the browser blocked the microphone | allow the microphone for `127.0.0.1` in the browser's site settings |
 | PowerShell shows `ConnectionAbortedError [WinError 10053]` | (older versions) the browser closed a connection; harmless | update: these are no longer printed |

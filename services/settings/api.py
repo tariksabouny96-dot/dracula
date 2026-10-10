@@ -167,3 +167,53 @@ def test_connection(ctx):
     except (ProviderError, BudgetExceededError) as exc:
         return {"ok": False, "error": str(exc)[:400]}
     return {"ok": True, "model": resp.model_name, "latency_ms": resp.latency_ms, "reply": resp.text[:80]}
+
+
+# ---------------------------------------------------------------- Settings > Voice (ElevenLabs)
+def _voice_view():
+    from services.voice import elevenlabs as eleven
+    cfg = eleven.load_settings()
+    stored = _gemini().vault.get_secret(eleven.SECRET_REF)
+    return {**cfg, "key": {"set": bool(stored), "hint": ("…" + stored[-4:]) if stored else None},
+            "default_model": eleven.DEFAULT_MODEL}
+
+
+@route("GET", r"/api/settings/voice", permission="OWNERSHIP_ADMIN")
+def get_voice_settings(ctx):
+    return _voice_view()
+
+
+@route("POST", r"/api/settings/voice/key", permission="OWNERSHIP_ADMIN")
+def set_voice_key(ctx):
+    from services.voice import elevenlabs as eleven
+    ctx.require_confirm("store this ElevenLabs API key in HOOD's encrypted vault and allow api.elevenlabs.io")
+    key = ctx.payload.get("api_key")
+    if not isinstance(key, str) or not KEY_RE.match(key.strip()):
+        raise ValueError("That doesn't look like an API key (20-200 letters, digits, - _ .)")
+    _gemini().vault.set_secret(eleven.SECRET_PROVIDER, eleven.SECRET_NAME, key.strip(),
+                               description="ElevenLabs voice, set in Settings > Voice")
+    fw = SERVICES.get("firewall")
+    if fw is not None and not any(r.get("host") == eleven.HOST for r in fw.list_rules()):
+        # The owner saving the key is the owner allowing this destination.
+        fw.allow(eleven.HOST, [443], note="ElevenLabs voice (owner, Settings > Voice)",
+                 added_by=ctx.username, is_root_owner=True)
+    return _voice_view()
+
+
+@route("POST", r"/api/settings/voice/key/remove", permission="OWNERSHIP_ADMIN")
+def remove_voice_key(ctx):
+    from services.voice import elevenlabs as eleven
+    ctx.require_confirm("remove the ElevenLabs API key")
+    _gemini().vault.delete_secret(eleven.SECRET_REF)
+    if eleven.load_settings()["tts_provider"] == "elevenlabs":
+        eleven.save_settings({"tts_provider": "gemini"})     # fall back to Gemini's voice
+    return _voice_view()
+
+
+@route("POST", r"/api/settings/voice", permission="OWNERSHIP_ADMIN")
+def set_voice_settings(ctx):
+    from services.voice import elevenlabs as eleven
+    ctx.require_confirm("save the voice settings")
+    allowed = ("tts_provider", "voice_id", "x_voice_id", "model_id", "price_per_1k_chars")
+    eleven.save_settings({k: ctx.payload[k] for k in allowed if k in ctx.payload})
+    return _voice_view()
