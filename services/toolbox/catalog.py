@@ -5,8 +5,8 @@ Owner's rules (2026-10-10):
 - HOOD asks once per tool; after that it may reuse and update that tool without asking;
 - HOOD never answers "no" when a tool listed here would make the work possible: it asks.
 
-Every source is official. System packages come from Ubuntu's signed repositories through a
-root-owned helper that only accepts the packages listed here (scripts/wsl/hood-pkg). Downloads
+Every source is official. System packages come from Ubuntu's signed repositories, and only the
+packages listed here are ever installed (also enforced by scripts/wsl/hood-pkg). Downloads
 are checked against the checksums their publisher serves over HTTPS before anything is unpacked.
 """
 from __future__ import annotations

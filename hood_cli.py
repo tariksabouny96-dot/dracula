@@ -256,14 +256,34 @@ class HoodSystemRuntime:
         # Multi-agent engine: live providers via the router (budgets, pricing), sandboxed tools,
         # independent verification. Simulated output is refused here.
         from services.agents import AgentEngine
+        from services.agents.sandbox import set_windows_sandbox
         from services.toolbox import Toolbox
+        from services.toolbox.wsl import WslSandbox
+        # Windows: HOOD's own Linux sandbox (WSL2). The owner approves it once; HOOD sets it up, finishes
+        # after a restart if Windows needs one, and runs agent code and installs only inside it.
+        self.wsl_sandbox = None
+        if os.name == "nt":
+            self.wsl_sandbox = WslSandbox(self.data_dir, firewall=self.firewall, stop_latch=self.stop_latch)
+            set_windows_sandbox(self.wsl_sandbox)
+            self.emergency_stop.attach("wsl_sandbox", self.wsl_sandbox.terminate)
         # Installs what missions need (WordPress: PHP, WordPress...), only with the owner's OK, once per
         # tool, and only inside WSL2/Linux; downloads go through the egress firewall.
-        self.toolbox = Toolbox(self.data_dir, firewall=self.firewall, stop_latch=self.stop_latch)
+        self.toolbox = Toolbox(self.data_dir, firewall=self.firewall, stop_latch=self.stop_latch,
+                               wsl=self.wsl_sandbox)
         self.agent_engine = AgentEngine(self.data_dir / "agents", router=self.model_router,
                                         stop_latch=self.stop_latch, on_outcome=self._on_mission_outcome,
                                         toolbox=self.toolbox)
         self.emergency_stop.attach("agent_engine", self.agent_engine.halt_all)
+
+        def _environment_changed():
+            # Missions that waited only for the sandbox/tools the owner approved continue by themselves.
+            self.agent_engine.resume_waiting()
+        self.toolbox.listeners.append(_environment_changed)
+        if self.wsl_sandbox is not None:
+            self.wsl_sandbox.listeners.append(_environment_changed)
+            # Finish what the owner already approved (e.g. after the restart Windows asked for).
+            self.wsl_sandbox.resume_if_approved()
+            self.toolbox.resume_pending()
         self.commander = HoodCommander(
             self.config,
             self.model_router,
@@ -387,24 +407,31 @@ class HoodSystemRuntime:
                 ok, total = done.get(mid, (0, 0))
                 why = str(error or "")
                 if "Run on my PC" in why:
-                    why = ("the agents wrote the code; its checks wait for the owner to approve running them "
-                           "on this PC (no sandbox here), or for HOOD in WSL2")
+                    why = ("the agents wrote the code; its checks wait for the owner's OK: either HOOD's Linux "
+                           "sandbox (approve once, HOOD sets it up) or running them on this PC")
                 elif "sandbox" in why.lower():
-                    why = ("the agents wrote the code, but it could not be tested here: Windows has no "
-                           "sandbox (needs Linux/WSL2), so it is not verified")
+                    why = ("the agents wrote the code, but it could not be tested yet: HOOD's Linux sandbox "
+                           "isn't set up (the owner approves it once; HOOD does the rest), so it is not verified")
                 goal = re.search(r"^\s*goal\s*:\s*(.+)$", objective or "", re.I | re.M)
                 title = (goal.group(1) if goal else objective or "").strip()
                 facts.append(f"Recent mission \"{title[:70]}\": {state}; {ok}/{total} agent tasks finished"
                              + (f"; {why[:200]}" if why else ""))
             facts.append(self._mission_timing_fact(engine))
-            from services.agents.sandbox import network_isolation_available
-            if not getattr(self, "_sandbox_ok_cached", None):
-                self._sandbox_ok_cached = ("yes" if network_isolation_available() else "no")
+            from services.agents.sandbox import sandbox_problem
+            problem = sandbox_problem()
             facts.append("Website missions (HTML/CSS/JS) work on this computer: they are verified by reading "
                          "the files, nothing is run")
-            facts.append("Python missions can run their tests in a sandbox here: " + self._sandbox_ok_cached +
-                         ("" if self._sandbox_ok_cached == "yes" else
-                          " - they wait for the owner's \"Run on my PC\" approval (Settings > Agents) or HOOD in WSL2"))
+            if problem is None:
+                facts.append("Python and WordPress missions run their checks in HOOD's sandbox here "
+                             "(no internet, no access to the owner's files, limited CPU and memory)")
+            elif os.name == "nt":
+                facts.append("HOOD's Linux sandbox (WSL2) is not set up yet: " + problem + " The owner approves "
+                             "once (Settings > Agents, or the mission's \"Allow & set up\" button); HOOD does "
+                             "everything else itself. Until then Python missions can also use the owner's "
+                             "per-mission \"Run on my PC\" approval")
+            else:
+                facts.append("Python missions can't run their tests in a sandbox here (" + problem + "); they "
+                             "wait for the owner's \"Run on my PC\" approval (Settings > Agents)")
         if getattr(self, "firewall", None) is not None:
             facts.append(f"Egress firewall: default deny, {len(self.firewall.list_rules())} owner-allowed destination(s)")
         if getattr(self, "learning", None) is not None:

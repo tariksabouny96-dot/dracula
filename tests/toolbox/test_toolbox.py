@@ -84,6 +84,7 @@ def php_present(argv, timeout):
 
 @pytest.fixture
 def linux(monkeypatch):
+    monkeypatch.setattr(Toolbox, "on_windows", lambda self: False)      # also when the owner runs this on Windows
     monkeypatch.setattr(Toolbox, "platform_problem", lambda self: None)
     monkeypatch.setattr(svc.shutil, "which", lambda name: "/usr/bin/" + name if name == "php" else None)
 
@@ -166,12 +167,13 @@ def test_windows_asks_for_wsl2_instead_of_installing(tmp_path, monkeypatch):
 
 
 def test_system_packages_go_through_the_allowlisted_helper(tmp_path, monkeypatch):
+    """HOOD reaches root by itself (root, or WSL's own root access); the owner never types a command."""
+    monkeypatch.setattr(Toolbox, "on_windows", lambda self: False)
     monkeypatch.setattr(Toolbox, "platform_problem", lambda self: None)
-    helper = tmp_path / "hood-pkg"
-    helper.write_text("#!/bin/sh\n")
-    monkeypatch.setenv("HOOD_PKG_HELPER", str(helper))
     installed = set()
-    monkeypatch.setattr(svc.shutil, "which", lambda name: "/usr/bin/" + name if name in installed else None)
+    exe = {"wsl.exe": "/mnt/c/Windows/System32/wsl.exe"}
+    monkeypatch.setattr(svc.shutil, "which",
+                        lambda name: exe.get(name) or ("/usr/bin/" + name if name in installed else None))
     calls = []
 
     def runner(argv, timeout):
@@ -182,15 +184,31 @@ def test_system_packages_go_through_the_allowlisted_helper(tmp_path, monkeypatch
             installed.add("sqlite3")
             return 0, "Setting up sqlite3"
         return 0, "3.45.1"
+    # HOOD running inside WSL as a normal user: WSL itself grants root in its distro, no password.
+    monkeypatch.setattr(svc.os, "geteuid", lambda: 1000, raising=False)
+    monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu-24.04")
     tb = Toolbox(tmp_path / "data", runner=runner, fetcher=FakeNet())
+    assert tb.helper_problem() is None
     job = tb.run_job_now(tb.request_install(["sqlite3"], "zak")["id"])
     assert job["state"] == "done", job["error"]
     install = next(c for c in calls if "install" in c)
-    assert install[-3:] == [str(helper), "install", "sqlite3"] or install[-2:] == ["install", "sqlite3"]
+    assert install == [exe["wsl.exe"], "-d", "Ubuntu-24.04", "-u", "root", "-e", "bash", str(svc.REPO_HELPER),
+                       "install", "sqlite3"]
     assert next(t for t in tb.status()["tools"] if t["id"] == "sqlite3")["installed_by_hood"]
-    # Not switched on yet -> a clear instruction, not a silent failure.
+    with pytest.raises(ValueError):
+        tb._apt("install", ["sqlite3", "openssh-server"])      # only catalogued packages, ever
+    # HOOD running as root (e.g. its own sandbox): the repo helper directly.
+    monkeypatch.setattr(svc.os, "geteuid", lambda: 0)
+    assert tb._root_route() == ["bash", str(svc.REPO_HELPER)]
+    # A plain Linux server: only an admin-enabled helper; otherwise an honest explanation.
+    monkeypatch.setattr(svc.os, "geteuid", lambda: 1000)
+    monkeypatch.delenv("WSL_DISTRO_NAME")
+    helper = tmp_path / "hood-pkg"
+    helper.write_text("#!/bin/sh\n")
+    monkeypatch.setenv("HOOD_PKG_HELPER", str(helper))
+    assert tb._root_route() == ["sudo", "-n", str(helper)]
     monkeypatch.setenv("HOOD_PKG_HELPER", str(tmp_path / "missing"))
-    assert "enable_installs.sh" in Toolbox(tmp_path / "x", runner=runner).helper_problem()
+    assert "plain Linux server" in Toolbox(tmp_path / "x", runner=runner).helper_problem()
 
 
 def test_hood_only_removes_what_it_installed(tmp_path, linux):

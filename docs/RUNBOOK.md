@@ -17,11 +17,14 @@ py -3.13 -m venv .venv; .\.venv\Scripts\python.exe -m pip install -r requirement
 .\.venv\Scripts\python.exe -m pytest -q -rs
 .\.venv\Scripts\python.exe hood_cli.py ui --port 8999
 ```
-On Windows there is no sandbox for agent-written code:
-- **Website missions** (HTML/CSS/JS) work anyway: they are verified by reading the files; nothing is run.
-- **Python missions** stop before their checks and ask you. Either turn on **Settings › Agents › Run on
-  my PC** (each mission then asks you to run its fixed check commands directly on your PC, with no
-  isolation), or run HOOD in WSL2, where they get the Linux sandbox: see [WSL2.md](WSL2.md).
+Agent-written code runs in a sandbox. On Windows, HOOD sets up **its own Linux sandbox (WSL2)** after
+you press **Allow & set up** once (Settings › Agents, or on a mission that needs it); HOOD does every
+step itself and waiting missions continue on their own. Windows may show its administrator prompt and
+ask for a restart the first time, if WSL isn't installed yet: see [WSL2.md](WSL2.md).
+- **Website missions** (HTML/CSS/JS) never need it: they are verified by reading the files.
+- **Python missions** wait for the sandbox, or you approve running their checks directly on your PC
+  (**Settings › Agents › Run on my PC**, no isolation, asked per mission).
+- **WordPress missions**: PHP and WordPress are installed inside the sandbox (one approval covers both).
 
 First run: open http://127.0.0.1:8999, create the Root Owner, store the one-time recovery key offline.
 
@@ -78,11 +81,12 @@ Listening (speech-to-text) stays on Gemini. Removing the key switches back to Ge
 | Top bar `PROVIDER DEGRADED` | the last AI call failed; the reason is shown in the sidebar and in Settings | fix the cause shown, then **Test connection** |
 | Gemini HTTP 404 | a retired model was configured (e.g. `gemini-2.5-flash`) | leave `HOOD_GEMINI_*_MODEL` blank to use the defaults |
 | Browser page from another device / `421 Misdirected` | Hood binds 127.0.0.1 and checks the Host header | open it on the same machine at `http://127.0.0.1:<port>`; remote access goes through the Docker + Caddy setup below |
-| Python mission `BLOCKED`: "needs your approval to run directly on this PC" | no sandbox on Windows | approve it on the mission page (after turning on **Settings › Agents › Run on my PC**), or run HOOD in WSL2 ([WSL2.md](WSL2.md)); website missions don't need either |
+| Python mission `BLOCKED`: "The checks need a sandbox…" | HOOD's Linux sandbox isn't set up on this PC yet | press **Allow & set up** on the mission page (recommended: HOOD does the rest and the mission continues by itself), or approve **Run on my PC** for this mission |
+| "Waiting for HOOD's Linux sandbox…" / "Windows needs a restart" | you approved the sandbox; HOOD is setting it up, or Windows must restart to finish installing WSL | nothing, or press **Restart now**; after the restart start HOOD again and it continues by itself |
+| "Virtualization is switched off in this PC's firmware" | WSL2 needs CPU virtualization (a BIOS/UEFI setting) | enable Intel VT-x / AMD SVM in the BIOS/UEFI, then **Try again** ([WSL2.md](WSL2.md)) |
 | Mission `BLOCKED`: "the QA/engineer agent's answer was rejected 3 times" | the AI model kept making the same mistake (the reason is shown) | press **Retry blocked work**: the agent gets a fresh round and is told what was wrong; or cancel and plan again with a clearer brief |
-| "Needs your OK to install PHP, WordPress…" | a WordPress mission needs tools that aren't installed | press **Allow & install** (chat, plan dialog, mission page or **Settings › Tools**); you allow each tool once |
-| "Installs happen only inside WSL2" | HOOD is running on Windows itself | run HOOD in WSL2 ([WSL2.md](WSL2.md)); website missions still work on Windows |
-| "Installs aren't switched on yet" | the WSL2 package helper isn't set up | in Ubuntu: `sudo bash ~/hood/scripts/wsl/enable_installs.sh` (once) |
+| "Needs your OK to install PHP, WordPress…" / "Needs your OK once: HOOD sets up its own Linux sandbox…" | a WordPress mission needs tools that aren't installed | press **Allow & install** / **Allow & set up** (chat, plan dialog, mission page or **Settings › Tools**); you allow each tool once and HOOD does the rest |
+| "HOOD is running on a plain Linux server where it has no administrator rights" | Linux server, not WSL, not root | an administrator runs `sudo bash scripts/wsl/enable_installs.sh` once (the helper accepts only HOOD's package list); on Windows and in WSL2 nothing is needed |
 | Website preview: a cart or saved choice resets | the preview runs sandboxed (no storage, no internet) | open `site/index.html` from the mission folder (**Open folder** on the mission page) |
 | Voice page: `not_configured` | no key or no price for the voice models (or ElevenLabs key / voice ID / price missing) | set them in **Settings › Model provider** and **Settings › Voice** |
 | Voice: "Give consent for cloud audio first" | recordings are only sent to Google after you agree | press **Give consent for cloud audio** on the Voice page |

@@ -113,7 +113,11 @@ def prepare_runtime(runtime: Path, workspace_root: Path, toolbox: Any) -> Dict[s
     shutil.rmtree(plugin_dest, ignore_errors=True)
     shutil.copytree(plugin_src, plugin_dest)
     dropin = (plugin_dest / "db.copy").read_text(encoding="utf-8")
-    dropin = dropin.replace("{SQLITE_IMPLEMENTATION_FOLDER_PATH}", str(plugin_dest)).replace(
+    # Paths relative to the files themselves: the runtime is written on this computer but may run inside
+    # HOOD's Linux sandbox, where the same folder has a different path.
+    dropin = dropin.replace("'{SQLITE_IMPLEMENTATION_FOLDER_PATH}'",
+                            "__DIR__ . '/plugins/sqlite-database-integration'")
+    dropin = dropin.replace("{SQLITE_IMPLEMENTATION_FOLDER_PATH}", "' . __DIR__ . '/plugins/sqlite-database-integration").replace(
         "{SQLITE_PLUGIN}", "sqlite-database-integration/load.php")
     (wp / "wp-content" / "db.php").write_text(dropin, encoding="utf-8")
     db_dir = runtime / "db"
@@ -126,7 +130,7 @@ def prepare_runtime(runtime: Path, workspace_root: Path, toolbox: Any) -> Dict[s
 // Written by HOOD for one verification run. SQLite database, no network, no file changes.
 define('DB_NAME', 'wordpress'); define('DB_USER', ''); define('DB_PASSWORD', ''); define('DB_HOST', '');
 define('DB_CHARSET', 'utf8'); define('DB_COLLATE', '');
-define('DB_DIR', {json.dumps(str(db_dir) + "/")}); define('DB_FILE', 'site.sqlite');
+define('DB_DIR', __DIR__ . '/../db/'); define('DB_FILE', 'site.sqlite');
 {salts}
 $table_prefix = 'wp_';
 define('WP_DEBUG', true); define('WP_DEBUG_DISPLAY', true); define('WP_DEBUG_LOG', false);

@@ -101,7 +101,7 @@ class FakeToolbox:
 
 def fake_wordpress_run(original):
     """Stand-in for the sandboxed harness: renders the agents' pages the way WordPress would."""
-    def run(self, name, argv, timeout=120, *, unisolated=False):
+    def run(self, name, argv, timeout=120, *, unisolated=False, extra_writable=(), extra_readonly=()):
         if name != "wordpress_render":
             return original(self, name, argv, timeout, unisolated=unisolated)
         runtime = Path(argv[argv.index("--runtime") + 1])
@@ -150,11 +150,34 @@ def test_tools_need_the_owners_ok_before_the_plan_can_be_approved(wp_engine):
     assert any("Needs your OK to install" in n for n in created["scope_notes"])
     with pytest.raises(MissionConflict, match="Needs your OK to install PHP, WordPress"):
         engine.approve_plan(OWNER, created["mission_id"], created["plan_sha256"], "owner")
-    toolbox.approved_ = True                                    # allowed earlier: HOOD installs without asking
-    with pytest.raises(MissionConflict, match="Installing"):
-        engine.approve_plan(OWNER, created["mission_id"], created["plan_sha256"], "owner")
-    toolbox.ready = True
+    toolbox.approved_ = True              # allowed: the plan can be approved; HOOD installs while the agents work
     assert engine.approve_plan(OWNER, created["mission_id"], created["plan_sha256"], "owner")["state"] == "QUEUED"
+    assert toolbox.ensured == [["php", "wordpress", "wp_sqlite", "wp_cli"]]
+
+
+def test_mission_waiting_for_approved_tools_continues_by_itself(wp_engine):
+    """Owner's rule: once approved, nothing manual. No "Retry" click after the install finishes."""
+    engine, toolbox, _ = wp_engine
+    toolbox.ready, toolbox.approved_ = False, True
+    created = engine.create_mission(OWNER, OBJECTIVE, profile="wordpress_site")
+    mid = engine.approve_plan(OWNER, created["mission_id"], created["plan_sha256"], "owner")["mission_id"]
+    waiting = engine.run(OWNER, mid)
+    assert waiting["state"] == "BLOCKED" and "continues by itself" in waiting["error"]
+    started = []
+    engine.continue_runner = lambda owner, mission_id: started.append((owner, mission_id))
+    assert engine.resume_waiting() == []                          # still installing: nothing to do yet
+    toolbox.ready = True                                          # the install finished
+    assert engine.resume_waiting() == [(OWNER, mid)] and started == [(OWNER, mid)]
+    assert engine.status(OWNER, mid)["state"] == "VERIFYING"
+    assert engine.run(OWNER, mid)["state"] == "COMPLETED"
+    assert engine.resume_waiting() == []
+    # A mission the owner blocked for another reason (e.g. budget) is never resumed this way.
+    other = engine.create_mission(OWNER, OBJECTIVE, profile="wordpress_site")
+    engine.approve_plan(OWNER, other["mission_id"], other["plan_sha256"], "owner")
+    import sqlite3
+    with sqlite3.connect(engine.db_path) as db:
+        db.execute("UPDATE missions SET state='BLOCKED', error='Budget reached' WHERE id=?", (other["mission_id"],))
+    assert engine.resume_waiting() == []
 
 
 def test_wordpress_mission_is_rendered_checked_repaired_and_delivered(wp_engine):
@@ -201,10 +224,12 @@ def test_runtime_is_a_fresh_sqlite_wordpress_outside_the_workspace(tmp_path):
     prepare_runtime(runtime, ws, toolbox)
     wp = runtime / "wordpress"
     config = (wp / "wp-config.php").read_text()
-    assert "DB_DIR" in config and str(runtime / "db") in config and "WP_HTTP_BLOCK_EXTERNAL" in config
+    assert "__DIR__ . '/../db/'" in config and "WP_HTTP_BLOCK_EXTERNAL" in config
+    assert str(runtime) not in config                    # no absolute paths: it may run inside the WSL sandbox
     assert "DISALLOW_FILE_MODS" in config and "put your unique phrase" not in config
     dropin = (wp / "wp-content" / "db.php").read_text()
     assert "{SQLITE" not in dropin and "sqlite-database-integration/load.php" in dropin
+    assert "$p = __DIR__ . '/plugins/sqlite-database-integration';" in dropin
     assert (wp / "wp-content" / "themes" / "hood-theme" / "style.css").read_text() == STYLE
     assert (wp / "hood-router.php").is_file()
     (runtime / "db" / "site.sqlite").write_text("old data")

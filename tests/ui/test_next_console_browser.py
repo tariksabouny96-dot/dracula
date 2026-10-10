@@ -119,3 +119,43 @@ def test_layout_persists_per_user(stack):  # noqa: F811
         page.click("text=Restore widgets")
         page.wait_for_selector("[data-widget=cost]")
         browser.close()
+
+
+def test_sandbox_is_one_approval_then_hood_does_the_rest(stack, tmp_path):  # noqa: F811
+    """Settings › Agents on a (simulated) Windows PC: the owner approves once, sees what HOOD is doing,
+    and is offered the restart Windows asks for; no command to type."""
+    from ui import routes
+    from services.toolbox.wsl import WslSandbox
+    from tests.toolbox.test_wsl_sandbox import WSL_EXE, FakeWindows, fetcher
+    base, _, _, _ = stack
+    win = FakeWindows(wsl_installed=False, needs_restart=True)
+    sbx = WslSandbox(tmp_path / "wsl-data", runner=win, fetcher=fetcher())
+    sbx.wsl_exe = lambda: WSL_EXE
+    routes.SERVICES["wsl_sandbox"] = sbx
+    shots = os.environ.get("HOOD_SCREENSHOT_DIR")
+    try:
+        with playwright.sync_playwright() as p:
+            browser = _launch(p)
+            page = browser.new_page(viewport={"width": 1440, "height": 900})
+            errors = _errors(page)
+            _login(page, base)
+            page.click("#nav [data-page=Settings]")
+            panel = page.locator(".sandbox-panel")
+            panel.locator("button:has-text('Allow & set up')").wait_for()
+            assert "administrator prompt" in panel.inner_text()           # highlighted before approving
+            if shots:
+                panel.screenshot(path=os.path.join(shots, "sandbox-approve.png"))
+            panel.locator("button:has-text('Allow & set up')").click()
+            page.locator("#modalBody button:has-text('Allow & set up')").click()
+            panel.locator("button:has-text('Restart now')").wait_for(timeout=20000)
+            assert "Windows needs a restart" in panel.inner_text()
+            assert "WSL isn't installed" in panel.text_content()          # what HOOD did, in its log
+            assert "null" not in panel.inner_text()
+            if shots:
+                panel.screenshot(path=os.path.join(shots, "sandbox-restart.png"))
+            browser.close()
+        real = [e for e in errors if all(s not in e for s in ("401", "403", "404", "429", "503"))]
+        assert not real, real
+        assert sbx.approved() and sum(c[0] == "powershell.exe" for c in win.calls) == 1
+    finally:
+        routes.SERVICES.pop("wsl_sandbox", None)

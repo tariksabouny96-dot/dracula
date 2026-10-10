@@ -1102,15 +1102,29 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             raise KeyError("Mission not found")
         return mission_id
 
-    def _agent_background_run(self, owner, mission_id):
-        engine = self.agent_engine
+    @classmethod
+    def _agent_background_run(cls, owner, mission_id):
+        engine = cls.agent_engine
         try:
             engine.run(owner, mission_id)
         except Exception:
             pass  # state and errors are persisted by the engine; status shows them
         finally:
-            with self._agent_runs_lock:
-                self._agent_runs.pop(mission_id, None)
+            with cls._agent_runs_lock:
+                cls._agent_runs.pop(mission_id, None)
+
+    @classmethod
+    def start_agent_run(cls, owner, mission_id):
+        """Start a mission's background run: "started", "already" (running) or "busy" (too many)."""
+        with cls._agent_runs_lock:
+            if mission_id in cls._agent_runs:
+                return "already"
+            if len(cls._agent_runs) >= MAX_BACKGROUND_RUNS:
+                return "busy"
+            worker = threading.Thread(target=cls._agent_background_run, args=(owner, mission_id), daemon=True)
+            cls._agent_runs[mission_id] = worker
+        worker.start()
+        return "started"
 
     def _agent_post(self, session, payload):
         engine = self._agent_engine_or_503()
@@ -1149,15 +1163,12 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
                 status = engine.status(owner, mission_id)
                 if status["state"] not in ("QUEUED", "RUNNING", "VERIFYING"):
                     raise AgentMissionConflict(f"Mission is {status['state']}; it cannot run")
-                with self._agent_runs_lock:
-                    if mission_id in self._agent_runs:
-                        raise AgentMissionConflict("Mission is already running")
-                    if len(self._agent_runs) >= MAX_BACKGROUND_RUNS:
-                        self._send_json({"error": "Too many missions running; try again later"}, status=429)
-                        return
-                    worker = threading.Thread(target=self._agent_background_run, args=(owner, mission_id), daemon=True)
-                    self._agent_runs[mission_id] = worker
-                worker.start()
+                started = self.start_agent_run(owner, mission_id)
+                if started == "already":
+                    raise AgentMissionConflict("Mission is already running")
+                if started == "busy":
+                    self._send_json({"error": "Too many missions running; try again later"}, status=429)
+                    return
                 self._send_json({"status": "RUN_STARTED", "mission_id": mission_id}, status=202)
             elif action == "/cancel":
                 self._send_json(engine.cancel(owner, mission_id, session.username))
@@ -1441,7 +1452,8 @@ class JarvisServer:
                             ("selfdev", getattr(runtime, "self_dev", None)),
                             ("memory", getattr(runtime, "memory_service", None)),
                             ("learning", getattr(runtime, "learning", None)),
-                            ("toolbox", getattr(runtime, "toolbox", None) or getattr(engine, "toolbox", None))):
+                            ("toolbox", getattr(runtime, "toolbox", None) or getattr(engine, "toolbox", None)),
+                            ("wsl_sandbox", getattr(runtime, "wsl_sandbox", None))):
             if value is not None:
                 feature_routes.SERVICES[name] = value
             else:
@@ -1454,6 +1466,16 @@ class JarvisServer:
         JarvisUIHandler._streams_per_user = {}
         if engine is not None:
             engine.recover()  # reconcile work interrupted by a previous crash before serving
+
+            def _continue(owner, mission_id):
+                # A mission that continues by itself (its sandbox/tools became ready): if too many
+                # are running, it stays in VERIFYING and the owner's Run (or the next start) picks it up.
+                JarvisUIHandler.start_agent_run(owner, mission_id)
+            engine.continue_runner = _continue
+            try:
+                engine.resume_waiting()   # e.g. HOOD's sandbox finished while HOOD was stopped
+            except Exception:
+                pass
         JarvisUIHandler.auth_service = self.auth_service
         JarvisUIHandler.sentinel_service = self.sentinel_service
         JarvisUIHandler.x_session_manager = self.x_session_manager

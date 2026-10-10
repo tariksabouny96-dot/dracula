@@ -2,8 +2,10 @@
 
 - Owner approval is recorded once per tool (and covers the tool's dependencies, listed in
   the same request). After that HOOD may reuse and update the tool without asking.
-- System packages go through the root-owned helper (scripts/wsl/hood-pkg), which accepts only
-  the packages in the catalog: HOOD never holds root rights or the owner's password.
+- System packages: only the packages in the catalog, ever. On Windows they go into HOOD's own Linux
+  sandbox (services/toolbox/wsl.py); inside WSL2 through WSL's own root access running the allowlisted
+  helper (scripts/wsl/hood-pkg); on a plain Linux server only through that helper once an
+  administrator enabled it. The owner never types a command and HOOD never sees a password.
 - Downloads go through HOOD's egress firewall (the owner's approval allows the tool's hosts),
   are verified against the publisher's checksums before unpacking, and are unpacked safely into
   <HOOD_DATA_DIR>/tools. Nothing downloaded is run by the toolbox itself.
@@ -18,6 +20,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -34,10 +37,15 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from .catalog import PROFILE_TOOLS, TOOLS, Tool, with_dependencies
 
 HELPER_DEFAULT = "/usr/local/sbin/hood-pkg"
+REPO_HELPER = Path(__file__).resolve().parents[2] / "scripts" / "wsl" / "hood-pkg"
 MAX_ARCHIVE = 120 * 1024 * 1024
 MAX_FILE = 30 * 1024 * 1024
-ENABLE_HINT = ("Installs aren't switched on yet. In Ubuntu (WSL2) run once: "
-               "sudo bash ~/hood/scripts/wsl/enable_installs.sh  (it asks your Linux password; HOOD never sees it)")
+# Only on a plain Linux server (not WSL, not root) is there no way for HOOD to install system packages
+# by itself; HOOD on Windows uses its own Linux sandbox and HOOD inside WSL uses WSL's own root access.
+ENABLE_HINT = ("HOOD is running on a plain Linux server where it has no administrator rights, so it can't "
+               "install system packages by itself here. Run HOOD on Windows (it manages its own Linux sandbox) "
+               "or inside WSL2; on this server an administrator can run once: "
+               "sudo bash scripts/wsl/enable_installs.sh")
 
 
 class ToolUnavailable(RuntimeError):
@@ -55,14 +63,17 @@ def _now() -> str:
 class Toolbox:
     def __init__(self, data_dir: Path, *, firewall: Any = None, stop_latch: Any = None,
                  runner: Optional[Callable[[List[str], int], Tuple[int, str]]] = None,
-                 fetcher: Optional[Callable[[str, int], bytes]] = None):
+                 fetcher: Optional[Callable[[str, int], bytes]] = None, wsl: Any = None):
         self.root = Path(data_dir) / "tools"
         self.root.mkdir(parents=True, exist_ok=True)
         self.state_path = self.root / "state.json"
         self.firewall = firewall
         self.stop_latch = stop_latch
+        # Windows: HOOD's own Linux sandbox (services/toolbox/wsl.py); tools are installed inside it.
+        self.wsl = wsl
         self._run = runner or self._subprocess_run
         self._fetch = fetcher or self._http_get
+        self.listeners: List[Callable[[], None]] = []      # told when a job ends (missions waiting on tools)
         self._lock = threading.RLock()
         self._jobs: Dict[str, Dict[str, Any]] = {}
 
@@ -77,10 +88,16 @@ class Toolbox:
     def is_wsl() -> bool:
         return "microsoft" in platform.release().lower()
 
+    def on_windows(self) -> bool:
+        return os.name == "nt"
+
     def platform_problem(self) -> Optional[str]:
-        if os.name == "nt":
-            return ("Installs happen only inside WSL2 (your setting), and HOOD is running on Windows itself. "
-                    "Start HOOD in WSL2 (scripts\\windows\\hood-wsl.ps1, see docs/WSL2.md) and ask again.")
+        """Why nothing can be installed right now (installs happen only inside WSL2/Linux)."""
+        if self.on_windows():
+            if self.wsl is None:
+                return ("Installs happen only inside WSL2 (your setting), and HOOD's Linux sandbox isn't "
+                        "available in this version.")
+            return None if self.wsl.ready() else self.wsl.problem()
         if not sys.platform.startswith("linux"):
             return "Installs are set up for WSL2 / Ubuntu only."
         return None
@@ -88,21 +105,52 @@ class Toolbox:
     def helper(self) -> str:
         return os.environ.get("HOOD_PKG_HELPER") or HELPER_DEFAULT
 
+    def _root_route(self) -> Optional[List[str]]:
+        """How to reach root for package installs WITHOUT the owner doing anything (None: no way here)."""
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            return ["bash", str(REPO_HELPER)]
+        distro, exe = os.environ.get("WSL_DISTRO_NAME"), shutil.which("wsl.exe")
+        if distro and exe:                      # inside WSL: Windows grants root in its distros, no password
+            return [exe, "-d", distro, "-u", "root", "-e", "bash", str(REPO_HELPER)]
+        helper = self.helper()                  # plain Linux server where an admin enabled the helper
+        if os.path.isfile(helper) and self._run(["sudo", "-n", helper, "check"], 30)[0] == 0:
+            return ["sudo", "-n", helper]
+        return None
+
     def helper_problem(self) -> Optional[str]:
-        """Why system packages can't be installed yet (None when the helper is ready)."""
+        """Why system packages can't be installed by HOOD right now (None when it can, by itself)."""
         if self.platform_problem():
             return self.platform_problem()
-        helper = self.helper()
-        if not os.path.isfile(helper):
-            return ENABLE_HINT
-        rc, _ = self._run(self._helper_argv("check"), 30)
-        return None if rc == 0 else ENABLE_HINT
+        if self.on_windows():
+            return None                         # inside HOOD's own Linux sandbox, as root
+        return None if self._root_route() else ENABLE_HINT
 
-    def _helper_argv(self, *args: str) -> List[str]:
-        helper = self.helper()
-        if hasattr(os, "geteuid") and os.geteuid() == 0:
-            return [helper, *args]
-        return ["sudo", "-n", helper, *args]
+    def _apt(self, verb: str, packages: List[str], timeout: int = 1800) -> Tuple[int, str]:
+        allowed = {p for t in TOOLS.values() for p in t.packages}
+        if verb not in ("install", "upgrade", "remove") or not packages or not set(packages) <= allowed:
+            raise ValueError("Only catalogued packages can be installed")
+        if self.on_windows():
+            command = {"install": "apt-get update -qq && apt-get install -y -qq --no-install-recommends ",
+                       "upgrade": "apt-get update -qq && apt-get install -y -qq --only-upgrade ",
+                       "remove": "apt-get remove -y -qq "}[verb]
+            return self.wsl.in_distro("export DEBIAN_FRONTEND=noninteractive; " + command + " ".join(packages),
+                                      timeout=timeout)
+        route = self._root_route()
+        if route is None:
+            raise ToolUnavailable(ENABLE_HINT)
+        return self._run([*route, verb, *packages], timeout)
+
+    def _linux(self, argv: List[str], timeout: int = 30) -> Tuple[int, str]:
+        """Run a command where the tools live (here, or inside HOOD's Linux sandbox on Windows)."""
+        if self.on_windows():
+            return self.wsl.in_distro(" ".join(shlex.quote(a) for a in argv), timeout=timeout)
+        return self._run(argv, timeout)
+
+    def _which(self, binary: str) -> bool:
+        if self.on_windows():
+            return self.wsl is not None and self.wsl.ready() and \
+                self.wsl.in_distro("command -v " + shlex.quote(binary), timeout=30)[0] == 0
+        return bool(shutil.which(binary))
 
     # ------------------------------------------------------------------ state
     def _state(self) -> Dict[str, Any]:
@@ -152,19 +200,19 @@ class Toolbox:
         return {"installed": False, "version": None}
 
     def _detect_apt(self, tool: Tool) -> Dict[str, Any]:
-        if os.name == "nt" or not tool.binary or not shutil.which(tool.binary):
+        if not tool.binary or not self._which(tool.binary):
             return {"installed": False, "version": None}
         if tool.id == "php":
-            rc, out = self._run(["php", "-r", "echo PHP_VERSION;"], 20)
+            rc, out = self._linux(["php", "-r", "echo PHP_VERSION;"], 20)
             version = out.strip().splitlines()[-1] if rc == 0 and out.strip() else None
-            rc, mods = self._run(["php", "-m"], 20)
+            rc, mods = self._linux(["php", "-m"], 20)
             have = {m.strip().lower() for m in mods.splitlines()} if rc == 0 else set()
             missing = [m for m in tool.php_modules if m not in have]
             if missing:
                 return {"installed": False, "version": version,
                         "detail": "PHP is here but missing: " + ", ".join(missing)}
             return {"installed": True, "version": version}
-        rc, out = self._run([tool.binary, "--version"], 20)
+        rc, out = self._linux([tool.binary, "--version"], 20)
         first = out.strip().splitlines()[0] if out.strip() else ""
         return {"installed": True, "version": first[:80] or None}
 
@@ -205,7 +253,20 @@ class Toolbox:
             problem = self.helper_problem()
         return {"tools": order, "missing": missing, "unapproved": unapproved,
                 "names": {t: TOOLS[t].name for t in order}, "ready": not missing,
-                "problem": problem if missing else None, "running": self._running_job(missing)}
+                "problem": problem if missing else None, "running": self._running_job(missing),
+                "sandbox": self.sandbox_brief() if missing else None}
+
+    def sandbox_brief(self) -> Optional[Dict[str, Any]]:
+        """Windows: HOOD's Linux sandbox, which tools are installed into (None elsewhere)."""
+        if not self.on_windows() or self.wsl is None:
+            return None
+        st = self.wsl.status()
+        return {"approved": bool(st.get("approved_by")), "phase": st["phase"], "ready": st["ready"],
+                "approval_text": st["approval_text"], "last_error": st.get("last_error")}
+
+    def waiting_for_sandbox(self) -> bool:
+        """The owner approved HOOD's Linux sandbox and it isn't ready yet (HOOD is on it)."""
+        return self.on_windows() and self.wsl is not None and self.wsl.approved() and not self.wsl.ready()
 
     def needs_for_profile(self, profile: str) -> Optional[Dict[str, Any]]:
         tools = PROFILE_TOOLS.get(profile)
@@ -228,8 +289,9 @@ class Toolbox:
     def request_install(self, tool_ids: List[str], actor: str) -> Dict[str, Any]:
         """The owner allows these tools (and their dependencies) once, then HOOD installs what's missing."""
         order = with_dependencies(list(tool_ids))
-        if self.platform_problem():
-            raise ToolUnavailable(self.platform_problem())
+        problem = self.platform_problem()
+        if problem and not self.waiting_for_sandbox():
+            raise ToolUnavailable(problem)
         with self._lock:
             state = self._state()
             for tid in order:
@@ -249,7 +311,9 @@ class Toolbox:
             raise ToolNotApproved("Needs your OK first: " + ", ".join(TOOLS[t].name for t in need["unapproved"]))
         if not need["missing"]:
             return None
-        if need["problem"]:
+        if need["running"]:
+            return self.job(need["running"])
+        if need["problem"] and not self.waiting_for_sandbox():
             raise ToolUnavailable(need["problem"])
         return self._start(need["missing"], actor, "install")
 
@@ -271,7 +335,7 @@ class Toolbox:
                                       "HOOD only removes what it installed.")
             if self.helper_problem():
                 raise ToolUnavailable(self.helper_problem())
-            rc, out = self._run(self._helper_argv("remove", *tool.packages), 900)
+            rc, out = self._apt("remove", list(tool.packages), 900)
             if rc != 0:
                 raise RuntimeError(f"Removing {tool.name} failed: {out[-400:]}")
         else:
@@ -312,8 +376,40 @@ class Toolbox:
             job["log"].append(line)
             job["log"] = job["log"][-200:]
 
+    def _wait_for_sandbox(self, job: Dict[str, Any]) -> bool:
+        """Windows: the owner approved the sandbox and the tools together; install once it's ready.
+        If Windows needs a restart first, remember the tools and finish after the restart."""
+        if not self.on_windows() or self.wsl is None or self.wsl.ready(fresh=True):
+            return True
+        self._log(job, "Waiting for HOOD's Linux sandbox to be ready…")
+        self.wsl.wait()
+        if self.wsl.ready(fresh=True):
+            return True
+        with self._lock:
+            state = self._state()
+            state["pending_install"] = {"tools": job["tools"], "actor": job["actor"], "since": _now()}
+            self._save(state)
+        job["state"] = "waiting"
+        self._log(job, self.wsl.problem() or "The sandbox isn't ready yet.")
+        self._log(job, "HOOD will install these automatically as soon as the sandbox is ready.")
+        return False
+
+    def resume_pending(self) -> Optional[Dict[str, Any]]:
+        """At start-up (e.g. after the restart Windows asked for): finish the approved installs."""
+        pending = self._state().get("pending_install")
+        if not pending:
+            return None
+        with self._lock:
+            state = self._state()
+            state.pop("pending_install", None)
+            self._save(state)
+        missing = [t for t in pending.get("tools", []) if not self.detect(t)["installed"]]
+        return self._start(missing, pending.get("actor") or "owner", "install") if missing else None
+
     def _work(self, job: Dict[str, Any]) -> None:
         try:
+            if not self._wait_for_sandbox(job):
+                return
             for tid in job["tools"]:
                 if self.stop_latch is not None:
                     self.stop_latch.check()
@@ -343,6 +439,14 @@ class Toolbox:
                 self._record(job["actor"], job["action"], failed, "failed: " + job["error"])
         finally:
             job["finished"] = _now()
+            self._notify()
+
+    def _notify(self) -> None:
+        for listener in list(self.listeners):
+            try:
+                listener()
+            except Exception:  # a listener's failure never breaks an install
+                pass
 
     def _install_one(self, tool: Tool, job: Dict[str, Any]) -> Optional[str]:
         if tool.kind == "apt":
@@ -350,7 +454,7 @@ class Toolbox:
             if problem:
                 raise ToolUnavailable(problem)
             verb = "upgrade" if job["action"] == "update" else "install"
-            rc, out = self._run(self._helper_argv(verb, *tool.packages), 1800)
+            rc, out = self._apt(verb, list(tool.packages))
             self._log(job, out.strip().splitlines()[-1][:200] if out.strip() else f"apt exit code {rc}")
             if rc != 0:
                 raise RuntimeError(f"apt could not {verb} {', '.join(tool.packages)} (exit {rc}): {out[-300:]}")

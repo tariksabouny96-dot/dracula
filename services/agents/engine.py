@@ -36,7 +36,7 @@ import zipfile
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from packages.contracts import ModelRequest, ModelResponse
 from packages.security import EmergencyStopActive, PathConfinementError, StopLatch, confine_path
@@ -65,8 +65,11 @@ WORDPRESS_CHECK_COMMANDS = ["php -l (each theme file)", "WP-CLI: install WordPre
 def check_commands(profile) -> List[str]:
     return {MissionProfile.WORDPRESS.value: WORDPRESS_CHECK_COMMANDS,
             MissionProfile.STATIC_WEB.value: []}.get(getattr(profile, "value", profile), PYTHON_CHECK_COMMANDS)
-LOCAL_RUN_WAITING = ("No sandbox on this computer: the checks need your approval to run directly on this PC "
-                     "(\"Run on my PC\"), or run HOOD in WSL2/Linux.")
+LOCAL_RUN_WAITING = ("The checks need a sandbox, which isn't ready on this computer yet. Approve HOOD's Linux "
+                     "sandbox once (HOOD sets it up and this mission continues by itself), or approve running "
+                     "the checks directly on this PC (\"Run on my PC\").")
+SANDBOX_SETTING_UP = ("Waiting for HOOD's Linux sandbox, which you approved: HOOD is setting it up and this mission "
+                      "continues by itself when it's ready.")
 MAX_VIEW_BYTES = 200_000
 PREVIEW_TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
                  ".js": "text/javascript; charset=utf-8", ".json": "application/json",
@@ -123,6 +126,9 @@ class AgentEngine:
         # Installs what a mission kind needs (WordPress: PHP, WordPress, SQLite plugin, WP-CLI),
         # only with the owner's permission (once per tool) and only inside WSL2/Linux.
         self.toolbox = toolbox
+        # Starts a background run for a mission that continues by itself (the UI server sets its own,
+        # so the run shows up as active there).
+        self.continue_runner: Optional[Callable[[str, str], None]] = None
         self._workspaces: Dict[str, Workspace] = {}
         self._ws_lock = threading.Lock()
         self._receipt_key = self._load_receipt_key()
@@ -185,7 +191,9 @@ class AgentEngine:
             # Additive columns (older databases keep working): mission kind and "Run on my PC" approval.
             have = {r[1] for r in db.execute("PRAGMA table_info(missions)")}
             for col, ddl in (("profile", "TEXT NOT NULL DEFAULT 'python_app'"), ("local_run_request", "TEXT"),
-                             ("local_run_sha", "TEXT"), ("local_run_by", "TEXT")):
+                             ("local_run_sha", "TEXT"), ("local_run_by", "TEXT"),
+                             # 1 = stopped only until the sandbox/tools the owner approved are ready
+                             ("waiting_env", "INTEGER NOT NULL DEFAULT 0")):
                 if col not in have:
                     db.execute(f"ALTER TABLE missions ADD COLUMN {col} {ddl}")
             # Why the agent's last answer was rejected: fed back into its next attempt.
@@ -403,7 +411,7 @@ class AgentEngine:
             if not isinstance(plan_sha256, str) or not hmac.compare_digest(plan_sha256, mission["plan_sha256"]):
                 db.execute("ROLLBACK")
                 raise MissionConflict("Approval does not match the current plan")
-            missing = self._tools_problem(mission["profile"])
+            missing = self._tools_gate(mission["profile"])
             if missing:
                 db.execute("ROLLBACK")
                 raise MissionConflict(missing)
@@ -422,6 +430,7 @@ class AgentEngine:
                           "role_write_roots": {r.value: list(v) for r, v in roots.items()}}})
             self._set_state(db, mission_id, MissionState.QUEUED, approver, approved_by=approver, approved_at=_now())
             db.execute("COMMIT")
+        self._tools_problem(mission["profile"], install_approved=True)   # allowed tools install while agents work
         return self.status(owner, mission_id)
 
     def cancel(self, owner: str, mission_id: str, actor: str) -> Dict[str, Any]:
@@ -696,8 +705,10 @@ class AgentEngine:
             if profile == MissionProfile.WORDPRESS:
                 missing = self._tools_problem(profile.value, install_approved=True)
                 if missing:
+                    # Continues by itself once the tools are ready (they can't be without the owner's OK).
                     with self._db() as db:
-                        self._set_state(db, mission_id, MissionState.BLOCKED, "verifier", error=missing)
+                        self._set_state(db, mission_id, MissionState.BLOCKED, "verifier", error=missing,
+                                        waiting_env=1)
                     return self.status(owner, mission_id)
             unisolated = False
             problem = sandbox_problem(self.require_network_isolation)
@@ -822,8 +833,11 @@ class AgentEngine:
             if mission["state"] != MissionState.VERIFYING.value:
                 db.execute("ROLLBACK")
                 return self.status(owner, mission_id)
+            setting_up = self._sandbox_setting_up()
             self._set_state(db, mission_id, MissionState.BLOCKED, "verifier",
-                            error=f"{LOCAL_RUN_WAITING} [{problem}]", local_run_request=digest)
+                            error=(f"{SANDBOX_SETTING_UP} [{problem}]" if setting_up
+                                   else f"{LOCAL_RUN_WAITING} [{problem}]"),
+                            local_run_request=digest, waiting_env=1)
             self._event(db, mission_id, "verifier", "LOCAL_RUN_REQUESTED",
                         {"workspace_sha256": digest, "commands": check_commands(self._profile(mission_id)),
                          "reason": problem})
@@ -925,6 +939,66 @@ class AgentEngine:
         return target.read_bytes(), mime
 
     # ================================================================ WordPress missions
+    def _sandbox_setting_up(self) -> bool:
+        return bool(self.toolbox is not None and getattr(self.toolbox, "waiting_for_sandbox", None)
+                    and self.toolbox.waiting_for_sandbox())
+
+    def _tools_gate(self, profile: Optional[str]) -> Optional[str]:
+        """What stops plan approval: only tools the owner hasn't allowed yet. Allowed tools (and the
+        sandbox they go into) are installed by HOOD while the agents work."""
+        if self.toolbox is None or profile != MissionProfile.WORDPRESS.value:
+            return None
+        need = self.toolbox.needs_for_profile(profile)
+        if need is None or need["ready"]:
+            return None
+        names = ", ".join(need["names"][t] for t in need["missing"])
+        if need["unapproved"]:
+            return (f"Needs your OK to install {names} (inside WSL2, once per tool). Press \"Allow & install\" "
+                    "on this mission or in Settings > Tools.")
+        if need["problem"] and not self._sandbox_setting_up():
+            return f"Needs {names} installed first. {need['problem']}"
+        return None
+
+    def resume_waiting(self, actor: str = "hood") -> List[Tuple[str, str]]:
+        """Missions that stopped only because the sandbox or tools weren't ready continue by themselves
+        once they are: the owner already approved the plan and the setup (owner's rule, 2026-10-10)."""
+        if self.stop_latch.engaged or sandbox_problem(self.require_network_isolation):
+            return []
+        with self._db() as db:
+            rows = db.execute("SELECT id, owner, profile FROM missions WHERE state=? AND approved_by IS NOT NULL "
+                              "AND (waiting_env=1 OR local_run_request IS NOT NULL)",
+                              (MissionState.BLOCKED.value,)).fetchall()
+        resumed: List[Tuple[str, str]] = []
+        for row in rows:
+            if row["profile"] == MissionProfile.WORDPRESS.value and self._tools_problem(row["profile"]):
+                continue
+            with self._db() as db:
+                db.execute("BEGIN IMMEDIATE")
+                mission = db.execute("SELECT * FROM missions WHERE id=?", (row["id"],)).fetchone()
+                if mission["state"] != MissionState.BLOCKED.value or not (
+                        mission["waiting_env"] or mission["local_run_request"]):
+                    db.execute("ROLLBACK")
+                    continue
+                self._receipt(db, row["id"], None, "ENVIRONMENT_READY", {
+                    "continued_by": actor, "previous_error": mission["error"],
+                    "execution": "sandbox (network-isolated)"})
+                self._set_state(db, row["id"], MissionState.VERIFYING, actor, error=None, waiting_env=0,
+                                local_run_request=None)
+                db.execute("COMMIT")
+            resumed.append((row["owner"], row["id"]))
+        runner = self.continue_runner or self._run_in_background
+        for owner, mission_id in resumed:
+            runner(owner, mission_id)
+        return resumed
+
+    def _run_in_background(self, owner: str, mission_id: str) -> None:
+        def go():
+            try:
+                self.run(owner, mission_id)
+            except Exception:  # persisted in the mission; status shows it
+                pass
+        threading.Thread(target=go, daemon=True).start()
+
     def _tools_problem(self, profile: Optional[str], install_approved: bool = False) -> Optional[str]:
         """Plain reason the mission can't proceed for lack of tools, or None when they're ready.
 
@@ -935,7 +1009,7 @@ class AgentEngine:
         if need is None or need["ready"]:
             return None
         names = ", ".join(need["names"][t] for t in need["missing"])
-        if need["problem"]:
+        if need["problem"] and not (self._sandbox_setting_up() and not need["unapproved"]):
             return f"Needs {names} installed first. {need['problem']}"
         if need["unapproved"]:
             return (f"Needs your OK to install {names} (inside WSL2, once per tool). Press \"Allow & install\" "
@@ -945,7 +1019,10 @@ class AgentEngine:
                 self.toolbox.ensure(list(need["missing"]), actor="hood")
             except Exception as exc:  # reported, never hidden
                 return f"Installing {names} failed: {exc}"
-        return f"Installing {names} (you allowed them earlier). Retry when the install finishes."
+        if self._sandbox_setting_up():
+            return (f"Waiting for HOOD's Linux sandbox, then installing {names} (you allowed them). The mission "
+                    "continues by itself when they're ready.")
+        return f"Installing {names} (you allowed them). The mission continues by itself when they're ready."
 
     def runtime_dir(self, mission_id: str) -> Path:
         return self.root / "runtime" / mission_id
@@ -956,7 +1033,8 @@ class AgentEngine:
         prepare_runtime(runtime, ws.root, self.toolbox)
         port = 8080 if (ws.network_isolated and not unisolated) else self._free_port()
         result = ws.run("wordpress_render", harness_argv(runtime, self.toolbox, ws.root, port), timeout=600,
-                        unisolated=unisolated)
+                        unisolated=unisolated, extra_writable=[str(runtime)],
+                        extra_readonly=[str(self.toolbox.path("wp_cli").parent)])
         return judge(ws, runtime, result)
 
     @staticmethod
@@ -1060,6 +1138,8 @@ class AgentEngine:
                           and bool(mission["local_run_request"]),
                           "workspace_sha256": mission["local_run_request"], "commands": check_commands(profile),
                           "approved_sha256": mission["local_run_sha"], "approved_by": mission["local_run_by"]},
+            # Stopped only until the sandbox/tools the owner approved are ready: continues by itself.
+            "waiting_env": mission["state"] == MissionState.BLOCKED.value and bool(mission["waiting_env"]),
             "plan_sha256": mission["plan_sha256"], "plan": plan, "budget_usd": mission["budget_usd"],
             "approved_by": mission["approved_by"], "repairs": mission["repairs"],
             "provider_mode": mission["provider_mode"], "verdict": mission["verdict"], "error": mission["error"],

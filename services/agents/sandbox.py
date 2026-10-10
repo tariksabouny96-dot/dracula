@@ -29,7 +29,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from packages.security import confine_path, PathConfinementError, StopLatch
 from .contracts import ROLE_WRITE_ROOTS, AgentRole, CheckResult, FileWrite, MAX_FILE_BYTES
@@ -68,9 +68,30 @@ def _limits():  # runs in the child before exec (POSIX only)
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
+# On Windows, HOOD's own Linux sandbox (services/toolbox/wsl.py), attached at start-up.
+_WINDOWS_SANDBOX: Any = None
+
+
+def set_windows_sandbox(sandbox: Any) -> None:
+    global _WINDOWS_SANDBOX
+    _WINDOWS_SANDBOX = sandbox
+
+
+def _on_windows() -> bool:
+    return os.name != "posix"
+
+
+def windows_sandbox_ready() -> bool:
+    return _on_windows() and _WINDOWS_SANDBOX is not None and _WINDOWS_SANDBOX.ready()
+
+
 def sandbox_problem(require_network_isolation: bool = True) -> Optional[str]:
     """Why sandboxed execution is impossible on this host, or None when it is available."""
-    if os.name != "posix":
+    if _on_windows():
+        if windows_sandbox_ready():
+            return None
+        if _WINDOWS_SANDBOX is not None:
+            return _WINDOWS_SANDBOX.problem()
         return "Windows has no agent sandbox (it needs Linux or WSL2)"
     if require_network_isolation and not network_isolation_available():
         return "Linux network isolation (unshare -rn) is not available on this host"
@@ -88,6 +109,7 @@ class Workspace:
         self._procs: Dict[int, subprocess.Popen] = {}
         self._lock = threading.Lock()
         self._netns = network_isolation_available()
+        self._wsl_runs = 0
 
     # ------------------------------------------------------------- files
     def check_write(self, role: AgentRole, rel_path: str) -> Path:
@@ -165,13 +187,16 @@ class Workspace:
                         "USERPROFILE": str(self.root), "PYTHONIOENCODING": "utf-8"})
         return env
 
-    def run(self, name: str, argv: List[str], timeout: int = 120, *, unisolated: bool = False) -> CheckResult:
+    def run(self, name: str, argv: List[str], timeout: int = 120, *, unisolated: bool = False,
+            extra_writable: Sequence[str] = (), extra_readonly: Sequence[str] = ()) -> CheckResult:
         """Run an engine-built command; the agent never supplies argv.
 
         ``unisolated`` runs it directly on this computer (owner-approved "Run on my PC"):
         scrubbed environment and time limit, but no network or filesystem isolation.
         """
         self.stop_latch.check()
+        if not unisolated and windows_sandbox_ready():
+            return self._run_in_wsl(name, argv, timeout, extra_writable, extra_readonly)
         if unisolated:
             cmd = list(argv)
             env = self._env_unisolated()
@@ -207,6 +232,28 @@ class Workspace:
         return CheckResult(name=name, command=argv, exit_code=code, passed=code == 0,
                            output_tail=text[-4000:], duration_ms=int((time.monotonic() - started) * 1000))
 
+    def _run_in_wsl(self, name: str, argv: List[str], timeout: int, extra_writable: Sequence[str],
+                    extra_readonly: Sequence[str]) -> CheckResult:
+        """Windows: run inside HOOD's own Linux sandbox. Only the mission folder (and any extra folders
+        the engine names) are visible; Windows drives are hidden; no network; resource limits."""
+        inner = list(argv)
+        if inner and os.path.normcase(os.path.abspath(inner[0])) == os.path.normcase(os.path.abspath(sys.executable)):
+            inner[0] = "/usr/bin/python3"           # the sandbox's own Python
+        launcher = str(Path(__file__).with_name("netns_launcher.py"))
+        started = time.monotonic()
+        with self._lock:
+            self._wsl_runs += 1
+        try:
+            code, out = _WINDOWS_SANDBOX.run_isolated(
+                inner, str(self.root), [str(self.root), *extra_writable],
+                [str(Path(launcher).parent), *extra_readonly], launcher, timeout)
+        finally:
+            with self._lock:
+                self._wsl_runs -= 1
+        text = out[-OUTPUT_LIMIT:].decode("utf-8", errors="replace")
+        return CheckResult(name=name, command=argv, exit_code=code, passed=code == 0,
+                           output_tail=text[-4000:], duration_ms=int((time.monotonic() - started) * 1000))
+
     @staticmethod
     def _kill(proc: subprocess.Popen) -> None:
         if os.name != "posix":
@@ -228,13 +275,16 @@ class Workspace:
         """Kill every running child process group (cancel / emergency stop)."""
         with self._lock:
             procs = list(self._procs.values())
+            wsl_runs = self._wsl_runs
+        if wsl_runs and _WINDOWS_SANDBOX is not None:
+            _WINDOWS_SANDBOX.terminate()             # stops everything inside HOOD's Linux sandbox
         for proc in procs:
             self._kill(proc)
         return len(procs)
 
     @property
     def network_isolated(self) -> bool:
-        return self._netns
+        return self._netns or windows_sandbox_ready()
 
 
 def python_cmd(*args: str) -> List[str]:

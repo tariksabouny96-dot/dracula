@@ -208,6 +208,29 @@ def test_python_mission_without_sandbox_waits_for_owner_then_runs_on_this_pc(tmp
     assert engine.verify_receipts(OWNER, mid)["valid"]
 
 
+def test_python_mission_waiting_for_the_sandbox_continues_by_itself_when_it_is_ready(tmp_path, monkeypatch):
+    """Windows: the owner approves HOOD's Linux sandbox once; the mission doesn't need another click."""
+    problem = {"now": "HOOD is setting up its Linux sandbox right now."}
+    monkeypatch.setattr(engine_mod, "sandbox_problem", lambda *a: problem["now"])
+    engine = _engine(tmp_path, ScriptedModel())
+    objective = ("Build a small responsive notes web app: create, read, update, delete and list notes "
+                 "through a JSON HTTP API, with input validation and a mobile-friendly index page.")
+    mid = _approved(engine, objective, "python_app")["mission_id"]
+    waiting = engine.run(OWNER, mid)
+    assert waiting["state"] == "BLOCKED" and "continues by itself" in waiting["error"]
+    assert engine.resume_waiting() == []                          # sandbox not ready: nothing runs
+    problem["now"] = None                                         # HOOD finished setting it up
+    engine.continue_runner = lambda owner, mission_id: None
+    assert engine.resume_waiting() == [(OWNER, mid)]
+    final = engine.run(OWNER, mid)
+    assert final["state"] == "COMPLETED", final["error"]
+    assert final["last_verification"]["execution"] == "sandbox"
+    with sqlite3.connect(engine.db_path) as db:
+        kinds = [k for (k,) in db.execute("SELECT kind FROM receipts WHERE mission_id=?", (mid,))]
+    assert "ENVIRONMENT_READY" in kinds and "LOCAL_RUN_APPROVAL" not in kinds
+    assert engine.verify_receipts(OWNER, mid)["valid"]
+
+
 def test_local_run_settings_are_off_by_default_and_persist(tmp_path):
     engine = _engine(tmp_path, ScriptedModel())
     assert engine.local_run_settings()["allow_local_run"] is False

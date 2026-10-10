@@ -19,4 +19,4 @@ def test_recent_mission_details_reach_chat(tmp_path, monkeypatch):
                        "updated) VALUES (?,?,?,?,?,?,?,?,?)", ("agm_1", f"t{i}", i, role, role, "x", "[]", state, now))
     facts = "\n".join(rt._chat_status_facts())
     assert 'Recent mission "Coffee shop website with QR ordering": UNVERIFIED; 3/3 agent tasks finished' in facts
-    assert "the agents wrote the code, but it could not be tested here" in facts
+    assert "the agents wrote the code, but it could not be tested yet" in facts

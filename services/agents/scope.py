@@ -14,9 +14,10 @@ AGENT_CAN_BUILD = ("Agents build three kinds of work: websites made of HTML, CSS
                    "reading the files; works anywhere), WordPress sites (a real WordPress theme plus pages, run "
                    "and checked in the sandbox; needs PHP, WordPress, its SQLite plugin and WP-CLI, which HOOD "
                    "installs inside WSL2 after the owner allows each tool once), and Python programs using the "
-                   "standard library (tests run in the sandbox, WSL2 or with the owner's \"Run on my PC\" "
-                   "approval). When something is missing HOOD never just says no: it names exactly what it would "
-                   "install (Settings > Tools) and asks the owner. Not available yet: frameworks/npm in missions, "
+                   "standard library (tests run in HOOD's sandbox; on Windows HOOD sets up its own Linux sandbox "
+                   "after one owner approval, or the owner approves \"Run on my PC\" per mission). When something "
+                   "is missing HOOD never just says no: it names exactly what it would install or set up and asks "
+                   "the owner once; after the OK HOOD does every step itself. Not available yet: frameworks/npm in missions, "
                    "WooCommerce, accounts on hosted platforms (Shopify, Wix), real payments, publishing online, "
                    "native phone apps.")
 
@@ -72,12 +73,21 @@ def _wordpress_note(profile: str, tools: Optional[dict]) -> Optional[str]:
     if tools.get("ready"):
         return None
     names = ", ".join(tools["names"][t] for t in tools.get("missing", []))
+    sandbox = tools.get("sandbox") or {}
+    if sandbox and not sandbox.get("ready"):
+        if not sandbox.get("approved") and tools.get("unapproved"):
+            return (f"Needs your OK once: HOOD sets up its own Linux sandbox on this PC and installs {names} inside "
+                    "it (official sources, checked). Press \"Allow & set up\"; HOOD does everything else. The first "
+                    "time, Windows may show its administrator prompt and ask for a restart.")
+        if sandbox.get("approved"):
+            return (f"HOOD is setting up its Linux sandbox, then installs {names} (you allowed it). Missions "
+                    "continue by themselves when it's ready.")
     if tools.get("problem"):
         return f"Needs {names} installed first. {tools['problem']}"
     if tools.get("unapproved"):
         return (f"Needs your OK to install {names} inside WSL2 (once per tool, from official sources). "
                 "Press \"Allow & install\"; after that HOOD reuses and updates them without asking.")
-    return f"Installing {names} (you allowed them earlier)."
+    return f"Installing {names} (you allowed them); missions continue by themselves when they're ready."
 
 
 def scope_notes(objective: str, profile: str = "static_web", tools: Optional[dict] = None) -> List[str]:

@@ -404,16 +404,89 @@
     if (voice.autoSpeak) voice.speak(String(r.data.text).replace(/[*`#_]/g, ''), r.data.speaker_id);
   }
   // "Allow & install": HOOD asks instead of saying no (owner's rule: once per tool, inside WSL2).
+  // HOOD's own Linux sandbox on Windows: the owner approves once; HOOD does every step (and says
+  // up front what only Windows can ask of them: its administrator prompt and, maybe, a restart).
+  const SANDBOX_PHASE = {
+    not_set_up: 'Not set up', setting_up: 'Setting up…', installing_wsl: 'Installing WSL (Windows asks for administrator permission)',
+    restart_needed: 'Windows needs a restart', downloading: 'Downloading Ubuntu’s official image', importing: 'Creating HOOD’s Linux system',
+    configuring: 'Locking it down', packages: 'Installing Python and pytest', ready: 'Ready', failed: 'Stopped',
+  };
+  function sandboxPanel(onReady, opts) {
+    const o = opts || {};
+    const box = h('div', { class: 'callout warn sandbox-panel' });
+    let timer = null;
+    const actions = (sb) => {
+      const row = h('div', { class: 'form-actions' });
+      if (session.role !== 'ROOT_OWNER') return h('p', { class: 'small-note' }, 'Only the Root Owner can approve this.');
+      if (!sb.approved_by || sb.phase === 'failed') {
+        row.append(h('button', { class: 'btn small primary', type: 'button', onclick: () => confirmDialog(o.title || 'Set up HOOD’s sandbox',
+          sb.approval_text.concat(o.extra || []), o.button || 'Allow & set up', async () => {
+            const r = o.approve ? await o.approve() : await api.post('/api/sandbox/setup', { confirm: true });
+            if (r.ok) setTimeout(load, 500);
+            return r;
+          }) }, sb.phase === 'failed' ? 'Try again' : (o.button || 'Allow & set up')));
+      }
+      if (sb.phase === 'restart_needed') {
+        row.append(h('button', { class: 'btn small primary', type: 'button', onclick: () => confirmDialog('Restart Windows now?',
+          ['Windows restarts in 60 seconds: save your work first.', 'When Windows is back, start HOOD again: it finishes the setup by itself and continues waiting missions.'],
+          'Restart in 60 s', async () => { const r = await api.post('/api/sandbox/restart', { confirm: true }); if (r.ok) toast(r.data.message); return r; }) }, 'Restart now'));
+      }
+      return row;
+    };
+    const load = () => api.get('/api/sandbox').then((r) => {
+      clearTimeout(timer);
+      if (!box.isConnected && box.dataset.started) return;
+      box.dataset.started = '1';
+      clear(box);
+      if (!r.ok) { box.append(h('p', {}, r.error)); return; }
+      const sb = r.data;
+      if (!sb.managed) { box.className = 'callout ' + (sb.ready ? 'good' : 'warn') + ' sandbox-panel';
+        box.append(h('b', {}, sb.ready ? 'Sandbox ready' : 'No sandbox here'), h('p', {}, sb.problem || 'Agent code runs isolated: no internet, only the mission folder, limited CPU and memory.')); return; }
+      if (sb.ready) {
+        box.className = 'callout good sandbox-panel';
+        box.append(h('b', {}, 'HOOD’s Linux sandbox is ready'), h('p', {}, 'Agent code runs there: no internet, no access to your Windows files, limited CPU and memory.'));
+        if (onReady) { const f = onReady; onReady = null; f(); }
+        return;
+      }
+      box.className = 'callout warn sandbox-panel';
+      const running = sb.job && sb.job.state === 'running';
+      box.append(...[h('b', {}, o.heading || 'HOOD’s Linux sandbox (WSL2)'),
+        h('p', {}, sb.approved_by ? (SANDBOX_PHASE[sb.phase] || sb.phase) + (sb.phase === 'restart_needed'
+          ? ': HOOD continues by itself after the restart (start HOOD again when Windows is back).' : '')
+          : (o.intro || 'Approve once: HOOD sets up its own Linux system on this PC and runs agent code there. You don’t type anything.')),
+        !sb.approved_by ? h('ul', {}, sb.approval_text.map((t) => h('li', {}, t))) : null,
+        sb.phase === 'failed' && sb.last_error ? reasonBlock(sb.last_error) : null,
+        sb.job && sb.job.log.length ? h('details', { open: running ? '' : null }, h('summary', {}, 'What HOOD is doing'),
+          h('pre', { class: 'file-view wrap' }, sb.job.log.join('\n'))) : null,
+        running ? null : actions(sb)].filter(Boolean));   // DOM append() would print "null"
+      if (running || sb.phase === 'restart_needed') timer = setTimeout(load, running ? 2000 : 15000);
+    });
+    load();
+    return box;
+  }
   function toolsPanel(need, onReady) {
     const box = h('div', { class: 'callout warn tools-panel' });
     const render = (n) => {
       clear(box);
       if (!n || n.ready) { box.className = 'callout good tools-panel'; box.append(h('b', {}, 'Tools ready'), h('p', {}, 'Everything this needs is installed.')); return; }
       const names = n.missing.map((t) => n.names[t] || t);
+      const sb = n.sandbox;                     // Windows: the tools go into HOOD's Linux sandbox
       box.append(h('b', {}, 'Needs: ' + names.join(', ')));
-      if (n.problem) { box.append(h('p', {}, n.problem)); return; }
       if (n.running) { box.append(h('p', {}, 'Installing…')); follow(n.running); return; }
-      if (!n.unapproved.length) { box.append(h('p', {}, 'You allowed these before; HOOD reinstalls them when the mission needs them.')); return; }
+      if (sb && !sb.ready && (!sb.approved || sb.phase === 'failed') && n.unapproved.length) {
+        box.append(h('p', {}, 'One approval covers everything: HOOD sets up its own Linux sandbox on this PC, then installs these inside it from their official sources (checked before use). You don’t do anything else.'));
+        box.append(sandboxPanel(null, { heading: 'What HOOD will do', button: 'Allow & set up', title: 'Allow & set up',
+          extra: ['Then installs: ' + names.join(', ') + '. You allow each tool once; later updates and reuse don’t ask again.'],
+          approve: async () => {
+            const r = await api.post('/api/tools/install', { tools: n.missing, confirm: true, with_sandbox: true });
+            if (r.ok) follow(r.data.id);
+            return r;
+          } }));
+        return;
+      }
+      if (sb && !sb.ready && sb.approved) box.append(sandboxPanel(null));
+      else if (n.problem) { box.append(h('p', {}, n.problem)); return; }
+      if (!n.unapproved.length) { box.append(h('p', {}, 'You allowed these; HOOD installs them by itself' + (sb && !sb.ready ? ' as soon as its sandbox is ready.' : ' when the mission needs them.'))); return; }
       box.append(h('p', {}, 'HOOD can install these inside WSL2 from their official sources (checked before use). You allow each tool once; after that HOOD reuses and updates it without asking.'));
       if (session.role !== 'ROOT_OWNER') { box.append(h('p', { class: 'small-note' }, 'Only the Root Owner can allow installs.')); return; }
       box.append(h('div', { class: 'form-actions' }, h('button', { class: 'btn small primary', type: 'button', onclick: () => confirmDialog('Allow & install',
@@ -427,17 +500,23 @@
     };
     const follow = async (jobId) => {
       const log = h('pre', { class: 'file-view wrap' }, 'Starting…');
-      clear(box).append(h('b', {}, 'Installing…'), log);
+      const sandboxBox = h('div', {});
+      clear(box).append(h('b', {}, 'Installing…'), sandboxBox, log);
+      let sandboxShown = false;
       for (;;) {
         const j = await api.get('/api/tools/jobs/' + jobId);
         if (!j.ok) { log.textContent = j.error; return; }
         log.textContent = j.data.log.join('\n') || '…';
+        if (!sandboxShown && /sandbox/i.test(log.textContent)) { sandboxShown = true; sandboxBox.append(sandboxPanel(null)); }
         if (j.data.state !== 'running') {
           if (j.data.state === 'done') {
             render({ ready: true });
             box.append(h('details', {}, h('summary', {}, 'What was installed'), h('pre', { class: 'file-view wrap' }, j.data.log.join('\n'))));
             toast('Tools installed.');
             if (onReady) onReady();
+          } else if (j.data.state === 'waiting') {
+            box.firstChild.textContent = 'Waiting for HOOD’s sandbox';
+            box.append(h('p', {}, 'HOOD installs these by itself as soon as its sandbox is ready, and waiting missions continue on their own.'));
           } else box.append(h('p', {}, 'Install stopped: ' + (j.data.error || 'unknown error')));
           return;
         }
@@ -728,8 +807,9 @@
     const t = String(raw || '');
     let m;
     if (/only implemented for POSIX hosts|Windows has no agent sandbox/.test(t)) {
-      return 'This computer has no sandbox to run the tests (Windows). Website missions don’t need one; for a Python mission use WSL2 or turn on “Run on my PC” in Settings › Agents.';
+      return 'This computer had no sandbox to run the tests. Approve HOOD’s Linux sandbox once (Settings › Agents): HOOD sets it up itself. Or turn on “Run on my PC”.';
     }
+    if ((m = t.match(/^(The checks need a sandbox[^\[]*|Waiting for HOOD's Linux sandbox[^\[]*)/))) return m[1].trim();
     if (/unshare -rn|Network namespace isolation/.test(t)) return 'Linux network isolation isn’t available here, so the tests could not run in the sandbox.';
     if ((m = t.match(/AgentOutputRejected: (\w+) output rejected: (.*?)(?: \[\d+ chars|$)/s))) {
       return 'The ' + (ROLE_LABEL[m[1]] || m[1]) + ' agent’s answer was rejected: ' + clip(m[2], 300);
@@ -896,7 +976,7 @@
       case 'TASK_BLOCKED': return 'Task ' + d.task_id + ' is blocked';
       case 'TASK_RETRY': return 'Output for ' + d.task_id + ' was rejected; retrying (' + clip(d.error, 160) + ')';
       case 'VERIFIED': return 'Independent check: ' + d.verdict + (d.reason ? ' — ' + clip(d.reason, 220) : '');
-      case 'LOCAL_RUN_REQUESTED': return 'Waiting for your approval to run the checks on this PC';
+      case 'LOCAL_RUN_REQUESTED': return 'Waiting for the sandbox (or your OK to run the checks on this PC)';
       case 'PROCESSES_KILLED': return 'Stopped ' + d.count + ' running process(es)';
       case 'TASK_REQUEUED': return 'Task ' + d.task_id + ' re-queued after a restart';
       default: return e.kind.replace(/_/g, ' ').toLowerCase() + ' ' + summarizeDetail(e.detail);
@@ -915,17 +995,25 @@
 
   function localRunPanel(m, reload) {
     const lr = m.local_run;
+    const wrap = h('div', {});
+    api.get('/api/sandbox').then((r) => {
+      if (!r.ok || !r.data.managed) return;
+      // Windows: the recommended way is HOOD's own sandbox; the mission continues by itself once it's ready.
+      wrap.prepend(h('div', {}, h('h4', {}, 'Recommended: HOOD’s Linux sandbox'),
+        sandboxPanel(() => setTimeout(reload, 3000), { intro: 'Approve once: HOOD sets up its own Linux system on this PC, runs these checks there (isolated), and this mission continues by itself. You don’t do anything else.' }),
+        h('h4', {}, 'Or: run the checks directly on this PC')));
+    });
     const actions = h('div', { class: 'form-actions' });
     const box = h('div', { class: 'callout warn' },
       h('b', {}, 'Run the checks on this PC?'),
-      h('p', {}, 'This computer has no sandbox, so HOOD stopped before running anything. To verify this Python program it would run these fixed commands in the mission folder:'),
+      h('p', {}, 'The sandbox isn’t ready, so HOOD stopped before running anything. To verify this program it would run these fixed commands in the mission folder:'),
       h('ul', {}, lr.commands.map((c) => h('li', { class: 'mono' }, c))),
       h('p', {}, 'They execute the code the agents wrote directly on this PC, with no network block and no file isolation. API keys are removed from their environment and each step has a time limit. Look at the files below first.'),
       h('p', { class: 'small-note mono' }, 'Files fingerprint ' + String(lr.workspace_sha256).slice(0, 16) + '… (the approval covers these exact files)'), actions);
-    if (session.role !== 'ROOT_OWNER') { actions.append(h('p', { class: 'small-note' }, 'Only the Root Owner can approve this.')); return box; }
+    if (session.role !== 'ROOT_OWNER') { actions.append(h('p', { class: 'small-note' }, 'Only the Root Owner can approve this.')); wrap.append(box); return wrap; }
     api.get('/api/settings/agents').then((st) => {
       if (st.ok && !st.data.allow_local_run) {
-        actions.append(h('p', { class: 'small-note' }, '"Run on my PC" is turned off. Turn it on in Settings › Agents, or run HOOD in WSL2 (docs/WSL2.md).'),
+        actions.append(h('p', { class: 'small-note' }, '"Run on my PC" is turned off (Settings › Agents).'),
           h('button', { class: 'btn small', type: 'button', onclick: () => app.render('Settings') }, 'Open Settings'));
         return;
       }
@@ -940,7 +1028,8 @@
           return run;
         }) }, 'Approve and run on this PC'));
     });
-    return box;
+    wrap.append(box);
+    return wrap;
   }
 
   function missionDetail(m, reload) {
@@ -949,10 +1038,12 @@
         if (!r.ok) toast(r.error); else toast(label + ': done'); reload(); } }, label);
     const actions = [];
     const toolsMissing = m.needs_tools && !m.needs_tools.ready;
+    // Tools the owner already allowed install while the agents work; only unapproved ones hold the plan.
+    const toolsUnapproved = toolsMissing && m.needs_tools.unapproved.length > 0;
     if (m.state === 'AWAITING_PLAN_APPROVAL') {
       // One approval starts the work: approve this exact plan and budget, then the agents run.
-      actions.push(h('button', { class: 'btn small primary', type: 'button', disabled: toolsMissing || null,
-        title: toolsMissing ? 'Install the tools above first' : null, onclick: async (e) => {
+      actions.push(h('button', { class: 'btn small primary', type: 'button', disabled: toolsUnapproved || null,
+        title: toolsUnapproved ? 'Allow the tools above first' : null, onclick: async (e) => {
         e.target.disabled = true;
         const a = await api.post(missionUrl(m.mission_id, '/approve'), { confirm: true, plan_sha256: m.plan_sha256 });
         if (!a.ok) { e.target.disabled = false; toast(a.error); return; }
@@ -962,7 +1053,7 @@
       } }, 'Approve plan & start agents'));
     }
     if (['QUEUED', 'RUNNING', 'VERIFYING'].includes(m.state) && !m.background_run_active) actions.push(act('Run agents', '/run', { confirm: true }, true));
-    if (m.state === 'BLOCKED' && m.approved_by && !(m.local_run && m.local_run.awaiting_approval)) actions.push(act('Retry blocked work', '/retry', { confirm: true }));
+    if (m.state === 'BLOCKED' && m.approved_by && !m.waiting_env && !(m.local_run && m.local_run.awaiting_approval)) actions.push(act('Retry blocked work', '/retry', { confirm: true }));
     if (!['COMPLETED', 'FAILED', 'UNVERIFIED', 'CANCELLED'].includes(m.state)) actions.push(act('Cancel', '/cancel', {}));
     if (['FAILED', 'UNVERIFIED', 'CANCELLED'].includes(m.state)) {
       // e.g. a website request from before website missions existed: plan it again as the right kind.
@@ -979,7 +1070,8 @@
       : running ? (ROLE_LABEL[running.role] || running.role) + ' is working on “' + running.title + '”.'
         : m.state === 'VERIFYING' ? 'The independent check is running.'
           : m.state === 'AWAITING_PLAN_APPROVAL' ? 'Waiting for you: read the plan below, then approve it to start the agents.'
-            : m.local_run && m.local_run.awaiting_approval ? 'Waiting for your decision to run the checks on this PC.'
+            : m.waiting_env && /Waiting for HOOD|Installing/.test(m.error || '') ? 'Waiting for the sandbox/tools you approved: the mission continues by itself when they’re ready.'
+              : m.local_run && m.local_run.awaiting_approval ? 'Waiting for your decision: approve HOOD’s sandbox (recommended) or running the checks on this PC.'
               : m.state === 'QUEUED' || (m.state === 'RUNNING' && !m.background_run_active) ? 'Ready: press “Run agents”.' : null;
     return h('div', {},
       now ? h('div', { class: 'now-line' }, m.background_run_active || m.state === 'PLANNING' ? h('span', { class: 'pulse', 'aria-hidden': 'true' }) : null, now) : null,
@@ -1046,7 +1138,7 @@
     gemini: ['Settings', 'Set the Gemini key and prices in Settings › Model provider, then press Test connection.'],
     conversation: ['Settings', 'Chat needs a working AI model: Settings › Model provider.'],
     voice: ['Settings', 'Pick a voice in Settings › Voice (this computer’s voice works offline).'],
-    orchestrator: ['Settings', 'Website missions work here. For Python missions, run HOOD in WSL2 or turn on “Run on my PC” in Settings › Agents.'],
+    orchestrator: ['Settings', 'Website missions work here. For Python and WordPress missions, approve HOOD’s Linux sandbox once in Settings › Agents: HOOD sets it up itself.'],
   };
   const graphView = {
     zoom: 1, pan: { x: 0, y: 0 }, path: ['root'],
@@ -1674,21 +1766,21 @@
         'When a Python mission is ready to be checked and this computer has no sandbox, HOOD will ask you, mission by mission, to run its fixed check commands directly on this PC.',
         'Those commands execute code the agents wrote, without network or file isolation. API keys are removed from their environment and each step has a time limit.',
         'Nothing runs until you approve the exact files of that mission. Website missions never need this: they are checked without running anything.']
-        : ['Python missions on this computer will wait (or you can run HOOD in WSL2) instead of asking to run here.'],
+        : ['Python missions will wait for HOOD’s sandbox instead of asking to run directly on this PC.'],
       on ? 'Turn on' : 'Turn off', async () => { const x = await api.post('/api/settings/agents', { allow_local_run: on, confirm: true }); if (x.ok) load(); return x; });
       return h('div', {},
         h('dl', { class: 'kv' },
-          h('dt', {}, 'Sandbox on this computer'), h('dd', {}, a.sandbox_available ? badge('available', 'available (Linux namespaces)') : badge('unavailable', 'not available'),
+          h('dt', {}, 'Sandbox on this computer'), h('dd', {}, a.sandbox_available ? badge('available', 'available') : badge('unavailable', 'not ready'),
             a.sandbox_problem ? h('div', { class: 'small-note' }, a.sandbox_problem) : null),
           h('dt', {}, 'Website missions'), h('dd', {}, badge('available', 'work here'), h('div', { class: 'small-note' }, 'Checked by reading the files; nothing is run.')),
           h('dt', {}, 'Python missions'), h('dd', {}, a.sandbox_available ? 'Tests run in the sandbox.'
-            : a.allow_local_run ? 'Each mission asks you before running its checks on this PC.' : 'Wait for you: turn on "Run on my PC" or use WSL2.'),
+            : a.allow_local_run ? 'Wait for the sandbox, or ask you before running their checks on this PC.' : 'Wait for the sandbox (approve it below).'),
           h('dt', {}, '"Run on my PC"'), h('dd', {}, a.allow_local_run ? badge('active', 'on') : badge('muted', 'off (default)'),
             a.changed_by ? h('div', { class: 'small-note' }, 'Changed by ' + a.changed_by + ' · ' + fmtTime(a.changed_at)) : null)),
         h('div', { class: 'form-actions' },
           h('button', { class: 'btn small' + (a.allow_local_run ? '' : ' primary'), type: 'button', onclick: () => toggle(!a.allow_local_run) },
             a.allow_local_run ? 'Turn off "Run on my PC"' : 'Turn on "Run on my PC"')),
-        !a.sandbox_available ? h('p', { class: 'small-note' }, 'Safer option: run HOOD inside WSL2 (Linux on Windows), where Python missions get a real sandbox. Guide: docs/WSL2.md; script: scripts\\windows\\hood-wsl.ps1.') : null);
+        sandboxPanel(null));
     });
     load();
     return card('Agents', box);
