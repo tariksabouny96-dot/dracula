@@ -727,6 +727,10 @@ def main():
             port=args.port,
             auth_service=auth_svc
         )
+        voicecall = getattr(runtime, "voicecall", None)
+        if voicecall is not None and voicecall.cfg.enabled:
+            from services.voicecall.wiring import attach_sentinel
+            attach_sentinel(voicecall, getattr(server, "sentinel_service", None))   # the Sentinel is created by the server
         print("HOOD Interface running. Press Ctrl+C to halt.")
         try:
             server.httpd.serve_forever()

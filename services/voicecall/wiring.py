@@ -105,9 +105,7 @@ def attach_event_sources(runtime: Any, svc: VoiceCallService) -> None:
     approvals = getattr(runtime, "approval_service", None)
     if approvals is not None and hasattr(approvals, "listeners"):
         approvals.listeners.append(lambda req: _safe(svc, on_approval_created, req))
-    sentinel = getattr(runtime, "sentinel_service", None)
-    if sentinel is not None and hasattr(sentinel, "listeners"):
-        sentinel.listeners.append(lambda finding: _safe(svc, on_finding, finding))
+    attach_sentinel(svc, getattr(runtime, "sentinel_service", None))
     engine = getattr(runtime, "agent_engine", None)
     if engine is not None:
         prior = engine.on_outcome
@@ -117,6 +115,25 @@ def attach_event_sources(runtime: Any, svc: VoiceCallService) -> None:
                 prior(owner, mission_id, objective, result, detail)
             _safe(svc, on_mission_outcome, owner, mission_id, objective, result, detail)
         engine.on_outcome = outcome
+        if hasattr(engine, "on_attention"):
+            prior_attention = engine.on_attention
+
+            def attention(owner, mission_id, objective, kind, detail):
+                if prior_attention:
+                    prior_attention(owner, mission_id, objective, kind, detail)
+                _safe(svc, on_mission_attention, owner, mission_id, objective, kind, detail)
+            engine.on_attention = attention
+
+
+def attach_sentinel(svc: VoiceCallService, sentinel: Any) -> bool:
+    """Route the Security Sentinel's HIGH/CRITICAL findings to the call dispatcher. The Sentinel is created by Hood's
+    UI server, not by the runtime, so ``hood_cli ui`` calls this once the server exists. Safe to call twice."""
+    if sentinel is None or not hasattr(sentinel, "listeners"):
+        return False
+    if not getattr(sentinel, "_voicecall_attached", False):
+        sentinel.listeners.append(lambda finding: _safe(svc, on_finding, finding))
+        sentinel._voicecall_attached = True
+    return True
 
 
 def _safe(svc: VoiceCallService, fn, *args) -> None:
@@ -144,6 +161,16 @@ def on_finding(svc: VoiceCallService, finding: Any) -> None:
                              severity=EventSeverity.CRITICAL if sev_name == "CRITICAL" else EventSeverity.MEDIUM,
                              subject=f"finding:{finding.finding_id}", summary=f"Security finding: {str(title)[:120]}",
                              detail=str(getattr(finding, "description", ""))[:600], source="sentinel"))
+
+
+def on_mission_attention(svc: VoiceCallService, owner: str, mission_id: str, objective: str, kind: str, detail: str) -> None:
+    """A mission needs the owner: a plan to approve, or a local run to approve. Rings only if the owner's call rules allow
+    (event type 'approval_required'); the decision itself is made with Face ID or in the console, never by voice."""
+    obj = (objective or "")[:90]
+    what = "plan" if kind == "plan_ready" else "local run"
+    svc.emit_event(HoodEvent(type="approval_required", severity=EventSeverity.HIGH, subject=f"mission-{kind}:{mission_id}",
+                             summary=f"A mission {what} is waiting for your approval: {obj}", detail=(detail or "")[:400],
+                             source="missions", data={"mission_id": mission_id}), owner_id=owner)
 
 
 def on_mission_outcome(svc: VoiceCallService, owner: str, mission_id: str, objective: str, result: str, detail: str) -> None:

@@ -123,6 +123,9 @@ class AgentEngine:
         # terminal state, as (owner, mission_id, objective, outcome, detail).
         # Best-effort — it can never affect or break a mission.
         self.on_outcome = on_outcome
+        # Optional hook: called when a mission needs the owner (a plan to approve, a local run to approve), as
+        # (owner, mission_id, objective, kind, detail) with kind "plan_ready" | "local_run_request". Best-effort.
+        self.on_attention: Optional[Callable[[str, str, str, str, str], None]] = None
         # Installs what a mission kind needs (WordPress: PHP, WordPress, SQLite plugin, WP-CLI),
         # only with the owner's permission (once per tool) and only inside WSL2/Linux.
         self.toolbox = toolbox
@@ -133,6 +136,15 @@ class AgentEngine:
         self._ws_lock = threading.Lock()
         self._receipt_key = self._load_receipt_key()
         self._init_db()
+
+    def _emit_attention(self, owner: str, mission_id: str, objective: str, kind: str, detail: str = "") -> None:
+        """Tell the optional hook that the owner is needed. Never raises into the engine."""
+        if self.on_attention is None:
+            return
+        try:
+            self.on_attention(owner, mission_id, objective, kind, detail)
+        except Exception:
+            pass
 
     def _emit_outcome(self, owner: str, mission_id: str, objective: str, outcome: str, detail: str) -> None:
         """Fire the self-learning hook, if any. Never raises into the engine."""
@@ -397,6 +409,7 @@ class AgentEngine:
             self._set_state(db, mission_id, MissionState.AWAITING_PLAN_APPROVAL, "planner",
                             plan=json.dumps(plan_json), plan_sha256=plan_sha)
             db.execute("COMMIT")
+        self._emit_attention(owner, mission_id, mission["objective"], "plan_ready", plan.summary)
         return self.status(owner, mission_id)
 
     def approve_plan(self, owner: str, mission_id: str, plan_sha256: str, approver: str) -> Dict[str, Any]:
@@ -842,6 +855,7 @@ class AgentEngine:
                         {"workspace_sha256": digest, "commands": check_commands(self._profile(mission_id)),
                          "reason": problem})
             db.execute("COMMIT")
+        self._emit_attention(owner, mission_id, mission["objective"], "local_run_request", problem)
         return self.status(owner, mission_id)
 
     def approve_local_run(self, owner: str, mission_id: str, workspace_sha256: str, approver: str) -> Dict[str, Any]:
