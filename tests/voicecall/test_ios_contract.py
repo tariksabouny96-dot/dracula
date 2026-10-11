@@ -44,6 +44,8 @@ def check(name, payload):
     path = RES / f"{name}.json"
     if UPDATE:
         RES.mkdir(parents=True, exist_ok=True)
+        if name == "pair_result":                       # never commit a generated credential, even a throwaway one
+            payload = {**payload, "device_secret": "A" * 43}
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
         return
     committed = json.loads(path.read_text())

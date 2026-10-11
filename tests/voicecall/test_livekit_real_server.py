@@ -29,7 +29,7 @@ from services.voicecall.contracts import CallState                        # noqa
 from services.voicecall.livekit import LiveKitTransport, TransportError   # noqa: E402
 from tests.voicecall.conftest import OWNER                                # noqa: E402
 
-KEY, SECRET = "testkey", "testsecret-0123456789-0123456789-0123456789"
+KEY, SECRET = "testkey", "testsecret-0123456789-0123456789-0123456789"   # gitleaks:allow (throwaway local test server)
 
 
 def _free_port():

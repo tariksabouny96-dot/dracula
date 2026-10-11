@@ -51,8 +51,8 @@ extension Challenge {
 
 /// Software P-256 signer: tests, simulators and the (optional) fallback for devices without a Secure Enclave.
 public struct SoftwareP256Signer: ChallengeSigner {
-    public let privateKey: P256.Signing.PrivateKey
-    public init(privateKey: P256.Signing.PrivateKey = P256.Signing.PrivateKey()) { self.privateKey = privateKey }
+    public let privateKey: P256.Signing.PrivateKey      // gitleaks:allow (a type name, not a secret)
+    public init(privateKey: P256.Signing.PrivateKey = P256.Signing.PrivateKey()) { self.privateKey = privateKey }   // gitleaks:allow
     public func publicKeySPKI() throws -> Data { privateKey.publicKey.derRepresentation }
     public func sign(_ message: Data) throws -> Data { try privateKey.signature(for: message).derRepresentation }
 }

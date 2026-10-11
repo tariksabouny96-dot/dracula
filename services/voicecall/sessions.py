@@ -21,7 +21,7 @@ from .events import VoiceEventDispatcher
 from .policy import CallPermissionManager, effective_settings
 from .profiles import ProviderProfile, get_profile
 from .store import VoiceStore
-from .tokens import jwt_hs256, verify_hs256
+from .tokens import jwt_hs256, verify_hs256  # gitleaks:allow (function names)
 
 CONNECT_TIMEOUT_SECONDS = 90
 MAX_UNBRIDGED_TURNS = 3
