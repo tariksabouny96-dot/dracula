@@ -226,3 +226,28 @@ def test_ring_push_carries_only_what_is_needed(kit):
     sent = kit.push.voip[0]
     assert set(sent["join"]) == {"url", "token", "room", "identity", "expires_at"}
     assert len(sent["reason"]) <= 140
+
+
+def test_owner_joining_from_the_ring_token_counts_as_answering_even_without_api_access(kit):
+    """The phone could not reach Hood's private API when the owner tapped Accept, so it joined with the token
+    from the VoIP push. The worker's first heartbeat must activate the call instead of letting the ring time out."""
+    cid = kit.dispatcher.submit(OWNER, ev())["call_id"]
+    call = kit.store.get_call(cid)
+    kit.sessions.agent_heartbeat(call, None)                       # worker is up but nobody has joined: still ringing
+    assert kit.store.get_call(cid).state == CallState.RINGING
+    kit.transport.join(cid, kit.device_id)                          # the device joined with the push token
+    kit.sessions.agent_heartbeat(kit.store.get_call(cid), None)
+    c = kit.store.get_call(cid)
+    assert c.state == CallState.ACTIVE and c.answered_at
+    for _ in range(3):                                              # the ring window passes while the call is live
+        kit.clock.advance(kit.cfg.ring_timeout_seconds // 2 + 5)
+        kit.sessions.agent_heartbeat(kit.store.get_call(cid), None)
+        assert not any(d.startswith("missed") for d in kit.sessions.sweep())
+    assert kit.store.get_call(cid).state == CallState.ACTIVE        # not marked missed behind the owner's back
+
+
+def test_a_stranger_in_the_room_does_not_answer_the_call(kit):
+    cid = kit.dispatcher.submit(OWNER, ev())["call_id"]
+    kit.transport.join(cid, "someone-else")
+    kit.sessions.agent_heartbeat(kit.store.get_call(cid), None)
+    assert kit.store.get_call(cid).state == CallState.RINGING

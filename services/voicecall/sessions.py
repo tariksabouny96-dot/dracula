@@ -247,6 +247,16 @@ class VoiceSessionManager:
                                        text_out_tokens=int(usage.get("text_out_tokens", 0) or 0))
             now = self.clock()
             fields: Dict[str, Any] = {"last_heartbeat": now}
+            if call.state == CallState.RINGING and call.device_id:
+                # The owner's device joined the room using the join token from the ring (it could not reach Hood's
+                # API to call answer()): being in the room IS answering. Only the registered device holds that token.
+                try:
+                    present = {p.get("identity") for p in self.transport.list_participants(call.room)}
+                except Exception:
+                    present = set()
+                if call.device_id in present:
+                    call = self._transition(call, CallState.CONNECTING, answered_at=now)
+                    self.events.emit(call.call_id, "answered", {"via": "room_join"})
             if call.state == CallState.CONNECTING:
                 call = self._transition(call, CallState.ACTIVE, **fields)
                 self.events.emit(call.call_id, "connected", {"via": "agent"})
