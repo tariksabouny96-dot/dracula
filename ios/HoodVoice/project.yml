@@ -1,0 +1,72 @@
+# XcodeGen project definition. Generate the Xcode project with:   xcodegen generate
+# (brew install xcodegen). The .xcodeproj is generated, not committed.
+name: HoodVoice
+options:
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: false
+configFiles:
+  Debug: Config/Shared.xcconfig
+  Release: Config/Shared.xcconfig
+settings:
+  base:
+    SWIFT_VERSION: "5.0"               # Swift 5 language mode; the toolchain itself must be Swift 6.1+ for LiveKit
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1"        # iPhone
+packages:
+  HoodVoiceCore:
+    path: ../HoodVoiceCore
+  LiveKit:
+    url: https://github.com/livekit/client-sdk-swift
+    from: 2.17.0
+targets:
+  HoodVoice:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: Resources
+    dependencies:
+      - package: HoodVoiceCore
+      - package: LiveKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(HOOD_BUNDLE_ID)
+        PRODUCT_NAME: HoodVoice
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CODE_SIGN_ENTITLEMENTS: Config/HoodVoice.entitlements
+        GENERATE_INFOPLIST_FILE: NO
+        ENABLE_USER_SCRIPT_SANDBOXING: YES
+    info:
+      path: Config/Info.plist
+      properties:
+        CFBundleDisplayName: Hood
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIBackgroundModes: [voip, audio, remote-notification]
+        NSMicrophoneUsageDescription: Hood needs the microphone so you can talk to it during a call.
+        NSFaceIDUsageDescription: Face ID confirms decisions you approve or reject on this phone.
+        NSLocalNetworkUsageDescription: Hood may run on your local network or VPN.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true   # plain http/ws only for private LAN addresses; everything else must be TLS
+        ITSAppUsesNonExemptEncryption: false
+    entitlements:
+      path: Config/HoodVoice.entitlements
+      properties:
+        aps-environment: development      # Xcode switches this to production for archives/TestFlight
+        com.apple.developer.usernotifications.time-sensitive: true
+    scheme:
+      testTargets: [HoodVoiceTests]
+  HoodVoiceTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests/HoodVoiceTests]
+    dependencies:
+      - target: HoodVoice
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(HOOD_BUNDLE_ID).tests
+        GENERATE_INFOPLIST_FILE: YES

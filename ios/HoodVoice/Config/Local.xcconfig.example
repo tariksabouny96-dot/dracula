@@ -1,0 +1,5 @@
+// Copy to Local.xcconfig (not committed). The bundle id must match HOOD_VOICECALL_APNS_BUNDLE_ID on the Hood
+// server; VoIP pushes use the topic "<bundle id>.voip".
+HOOD_BUNDLE_ID = com.yourname.hoodvoice
+DEVELOPMENT_TEAM = ABCDE12345
+CODE_SIGN_STYLE = Automatic

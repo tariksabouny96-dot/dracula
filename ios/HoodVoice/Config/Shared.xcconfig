@@ -1,0 +1,5 @@
+// Defaults that build anywhere (CI, simulators). To run on your own iPhone, copy Local.xcconfig.example to
+// Local.xcconfig (git-ignored) and set your own team and bundle id.
+HOOD_BUNDLE_ID = com.example.hoodvoice
+DEVELOPMENT_TEAM =
+#include? "Local.xcconfig"

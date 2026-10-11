@@ -62,3 +62,7 @@ ios/**/.swiftpm/
 ios/**/DerivedData/
 ios/**/xcuserdata/
 *.xcuserstate
+ios/**/*.xcodeproj/
+ios/HoodVoice/Config/Local.xcconfig
+ios/HoodVoice/Config/Info.plist
+ios/HoodVoice/Config/HoodVoice.entitlements

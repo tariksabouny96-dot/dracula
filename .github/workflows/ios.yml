@@ -1,0 +1,71 @@
+name: ios
+
+on:
+  push:
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios.yml"
+  pull_request:
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Platform-independent core (API client, call state machine, push parsing, challenge signing): runs on Linux.
+  core-linux:
+    runs-on: ubuntu-24.04
+    container: swift:6.0
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: swift test (HoodVoiceCore)
+        run: swift test --package-path ios/HoodVoiceCore
+
+  # The Apple-only app target (SwiftUI, CallKit, PushKit, Keychain, Secure Enclave, LiveKit). This job proves that
+  # it COMPILES and that its unit tests pass on an iOS simulator. It cannot prove CallKit/PushKit/APNs/Face ID/audio
+  # behaviour: those need a physical iPhone (see docs/VOICE_TEST_REPORT.md).
+  app-macos:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select the newest stable Xcode (LiveKit Swift SDK needs Swift tools 6.1+, i.e. Xcode 16.3+)
+        run: |
+          ls -d /Applications/Xcode_*.app || true
+          NEWEST=$(ls -d /Applications/Xcode_*.app | grep -vi -E "beta|Release_Candidate" | sort -V | tail -1)
+          echo "Using $NEWEST"
+          sudo xcode-select -s "$NEWEST/Contents/Developer"
+          xcodebuild -version
+          swift --version
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate the Xcode project
+        working-directory: ios/HoodVoice
+        run: xcodegen generate
+      - name: Resolve packages
+        working-directory: ios/HoodVoice
+        run: xcodebuild -resolvePackageDependencies -project HoodVoice.xcodeproj -scheme HoodVoice
+      - name: Build and test on an iPhone simulator (no code signing)
+        working-directory: ios/HoodVoice
+        run: |
+          set -o pipefail
+          UDID=$(xcrun simctl list devices available -j | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)['devices']
+          rows=[(k,x) for k,v in d.items() if 'iOS' in k for x in v if 'iPhone' in x['name'] and x['isAvailable']]
+          rows.sort(key=lambda r:(r[0],r[1]['name']))
+          print(rows[-1][1]['udid'])")
+          echo "Simulator: $UDID"
+          xcodebuild test -project HoodVoice.xcodeproj -scheme HoodVoice \
+            -destination "platform=iOS Simulator,id=$UDID" \
+            -resultBundlePath "$RUNNER_TEMP/HoodVoice.xcresult" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" 2>&1 | tee "$RUNNER_TEMP/build.log" | tail -n 400 || {
+              echo "=== errors ==="; grep -n -E "error:|\*\* (BUILD|TEST) FAILED" "$RUNNER_TEMP/build.log" | head -150; exit 1; }
+      - name: Test summary
+        if: always()
+        run: |
+          grep -E "Test Suite|Executed [0-9]+ test|\*\* TEST" "$RUNNER_TEMP/build.log" | tail -20 || true
