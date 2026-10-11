@@ -19,6 +19,8 @@ class ApprovalService:
         self._requests: Dict[str, ApprovalRequest] = {}
         self._lock = threading.Lock()
         self.default_ttl_seconds = default_ttl_seconds
+        # Observers told when a new request is created (e.g. voice calling). Failures never affect approvals.
+        self.listeners: list = []
 
     def _expire(self, req: ApprovalRequest) -> ApprovalRequest:
         """Lazily move stale PENDING/APPROVED requests to EXPIRED (silence != approval)."""
@@ -59,6 +61,11 @@ class ApprovalService:
         )
         with self._lock:
             self._requests[req.approval_id] = req
+        for listener in list(self.listeners):
+            try:
+                listener(req)
+            except Exception:
+                pass
         return req
 
     def get_request(self, approval_id: str) -> Optional[ApprovalRequest]:

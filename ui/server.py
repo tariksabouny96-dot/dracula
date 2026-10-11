@@ -297,6 +297,10 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             self._send_json({"error": "Owner setup required"}, status=503)
             return
 
+        # Device/agent-credentialed feature routes (voice calling): their own credential, never a session.
+        if self._dispatch_credentialed_route("POST", payload):
+            return
+
         # 2. Protected Operational Endpoints
         if self.auth_service and self.auth_service.is_initialized():
             curr_session = self._get_authenticated_session()
@@ -691,6 +695,8 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             if not self.auth_service or not self.auth_service.is_initialized():
                 self._send_json({"error": "Owner setup required"}, status=503)
                 return
+            if self._dispatch_credentialed_route("GET", {}):
+                return
             curr_session = self._get_authenticated_session()
             if not curr_session:
                 self._send_json({"error": "Authentication required"}, status=401)
@@ -993,7 +999,7 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
         from urllib.parse import parse_qs
         parts = urlsplit(self.path)
         route_def, match = feature_routes.find(method, parts.path)
-        if route_def is None:
+        if route_def is None or route_def.auth != "session":
             return False
         try:
             permission = UserPermission(route_def.permission)
@@ -1004,6 +1010,39 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             return True
         ctx = feature_routes.RequestContext(session=session, payload=payload, match=match,
                                             query=parse_qs(parts.query), services=feature_routes.SERVICES)
+        return self._run_feature_handler(route_def, ctx, session)
+
+    def _dispatch_credentialed_route(self, method, payload) -> bool:
+        """Feature routes that use a device or agent credential (voice calling).
+
+        The credential is checked by the owning service; a Hood session cookie/bearer is NOT accepted here
+        and these credentials are accepted nowhere else.
+        """
+        from urllib.parse import parse_qs
+        parts = urlsplit(self.path)
+        route_def, match = feature_routes.find(method, parts.path)
+        if route_def is None or route_def.auth == "session":
+            return False
+        svc = feature_routes.SERVICES.get("voicecall")
+        if svc is None:
+            self._send_json({"error": "Voice calling is not configured on this server"}, status=503)
+            return True
+        header = self.headers.get("Authorization", "")
+        ip = self.client_address[0] if hasattr(self, "client_address") else ""
+        try:
+            principal = (svc.authenticate_device(header, ip) if route_def.auth == "device"
+                         else svc.authenticate_agent(header, ip))
+        except Exception as exc:
+            status = getattr(exc, "status", 401)
+            self._send_json({"error": "Authentication required" if status in (401, 403) else str(exc)},
+                            status=401 if status in (401, 403) else status)
+            return True
+        ctx = feature_routes.RequestContext(session=None, payload=payload, match=match,
+                                            query=parse_qs(parts.query), services=feature_routes.SERVICES,
+                                            principal=principal)
+        return self._run_feature_handler(route_def, ctx, None)
+
+    def _run_feature_handler(self, route_def, ctx, session) -> bool:
         try:
             result = route_def.handler(ctx)
         except KeyError:
@@ -1022,8 +1061,14 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
             self._send_json({"error": str(exc)}, status=503)
             return True
         except (ValueError, TypeError) as exc:
-            self._send_json({"error": str(exc)[:500]}, status=400)
+            self._send_json({"error": str(exc)[:500]}, status=getattr(exc, "status", 400))
             return True
+        except Exception as exc:
+            status = getattr(exc, "status", None)      # VoiceError and friends carry their HTTP status
+            if isinstance(status, int) and 400 <= status < 600:
+                self._send_json({"error": str(exc)[:500]}, status=status)
+                return True
+            raise
         if isinstance(result, feature_routes.Stream):
             self._send_event_stream(session, result)
             return True
@@ -1452,6 +1497,7 @@ class JarvisServer:
                             ("selfdev", getattr(runtime, "self_dev", None)),
                             ("memory", getattr(runtime, "memory_service", None)),
                             ("learning", getattr(runtime, "learning", None)),
+                            ("voicecall", getattr(runtime, "voicecall", None)),
                             ("toolbox", getattr(runtime, "toolbox", None) or getattr(engine, "toolbox", None)),
                             ("wsl_sandbox", getattr(runtime, "wsl_sandbox", None))):
             if value is not None:

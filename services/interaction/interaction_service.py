@@ -85,6 +85,9 @@ class InteractionSession(BaseModel):
     # Decided before the model call so the reply can say truthfully what the UI shows.
     offer: Optional[str] = None
     plan_now: bool = False
+    # "text" (console chat) or "voice" (a live call). Voice can never approve, reject or activate X:
+    # spoken or injected words are not an authorisation (see handle_text_input).
+    channel: str = "text"
 
 
 class InteractionService:
@@ -168,17 +171,36 @@ class InteractionService:
     # MULTI-MODAL CONVERSATION & BARGE-IN INTERRUPTIONS
     # =========================================================================
 
-    def handle_text_input(self, text: str, session_id: Optional[str] = None) -> ConversationMessage:
-        """Processes incoming text from Zak; routes through Hood Core."""
+    def handle_text_input(self, text: str, session_id: Optional[str] = None,
+                          channel: str = "text") -> ConversationMessage:
+        """Processes incoming text from Zak; routes through Hood Core.
+
+        ``channel="voice"`` marks a live call: the reply is written for speech, and the commands that
+        grant authority (typed "approve <id>", X activation requests) are disabled, because transcribed
+        or injected speech is not an authorisation. Those need the confirmation flow on the owner's device.
+        """
         sid = session_id or self.active_session_id
         session = self._get_or_create_session(sid)
         session.last_activity = time.time()
+        session.channel = "voice" if channel == "voice" else "text"
+        try:
+            return self._handle_text_locked_channel(text, sid, session)
+        finally:
+            session.channel = "text"
+
+    def note_outbound_context(self, session_id: str, text: str, modality: str = "voice") -> None:
+        """Record something HOOD itself said or is about to say (e.g. a call briefing) so the
+        conversation, text and voice, continues from it."""
+        session = self._get_or_create_session(session_id)
+        self._append(session, ConversationMessage(sender="Hood", modality=modality, text=text, speaker_id="hood"))
+
+    def _handle_text_locked_channel(self, text: str, sid: str, session: InteractionSession) -> ConversationMessage:
 
         # Check if Hood/X was currently speaking: triggers interruption
         if session.ui_state == UIState.SPEAKING:
             self.trigger_barge_in_interruption(sid)
 
-        user_msg = ConversationMessage(sender="Zak", modality="text", text=text, speaker_id="zak")
+        user_msg = ConversationMessage(sender="Zak", modality=session.channel, text=text, speaker_id="zak")
         self._append(session, user_msg)
 
         # Transition to Thinking / Executing
@@ -190,7 +212,7 @@ class InteractionService:
         sender_label = "X" if speaker_id == "x" else ("System" if speaker_id == "system" else "Hood")
         reply_msg = ConversationMessage(
             sender=sender_label,
-            modality="text",
+            modality=session.channel,
             text=response_text,
             speaker_id=speaker_id,
             approval_ref=approval_ref
@@ -285,6 +307,20 @@ class InteractionService:
         session.ui_state = UIState.LISTENING
         session.current_speaking_message_id = None
 
+    _VOICE_X_PATTERNS = (r"\b(?:request|initiate|start|authorize|enable)\s+(?:activation\s+of\s+)?x\b",
+                         r"\bactivate\s+x\b", r"\bwake\s+x\b", r"\bauthorize\s+x\b")
+    _VOICE_APPROVE_RE = re.compile(r"^\s*(approve|authorize|confirm|reject|deny)\s+[a-zA-Z0-9_\-]+\s*$")
+
+    def _voice_authority_refusal(self, prompt_lower: str) -> Optional[str]:
+        """Reply (or None) when a spoken utterance tries to grant authority."""
+        if any(re.search(p, prompt_lower) for p in self._VOICE_X_PATTERNS):
+            return ("I can't start X from a phone call. X is activated only by you in the console, "
+                    "with its own approval. Anything else I can do by voice?")
+        if self._VOICE_APPROVE_RE.match(prompt_lower):
+            return ("I can't approve or reject things by voice. Open Hood on your phone and confirm it "
+                    "there with Face ID. I'll wait.")
+        return None
+
     def _synthesize_response(self, prompt: str, session: InteractionSession) -> str:
         """Interacts with HoodCommander model router / task planner."""
         prompt_lower = prompt.lower()
@@ -316,6 +352,12 @@ class InteractionService:
 
             # Route to X persona
             return self._handle_x_active_conversation(prompt, session, x_status)
+
+        # Voice cannot start X or grant approvals: refuse before any authority-granting branch runs.
+        if session.channel == "voice":
+            refusal = self._voice_authority_refusal(prompt_lower)
+            if refusal:
+                return refusal
 
         # 3. Governed X Activation Directives (e.g. "request activation of x in read-only diagnostic mode...")
         x_act_patterns = [
@@ -566,6 +608,8 @@ class InteractionService:
         if any(re.search(pat, prompt_lower) for pat in x_act_patterns):
             text = self._synthesize_response(prompt, session)
             appr_id = None
+            if session.channel == "voice":
+                return (text, "hood", None)
             if self.x_session_manager and self.x_session_manager.pending_approval_id:
                 appr_id = self.x_session_manager.pending_approval_id
             return (text, "hood", appr_id)
@@ -577,6 +621,7 @@ class InteractionService:
     HISTORY_TURNS = 12          # recent messages sent to the model with each request
     HISTORY_CHARS = 1500        # per message
     CHAT_MAX_TOKENS = 8192
+    VOICE_MAX_TOKENS = 600      # spoken replies are short; this also bounds cost per turn
     # Chat must answer in seconds: the fast tier replies in ~1s, the standard tier took ~2 minutes
     # per reply on the owner's free key (measured). Missions keep the standard tier for planning.
     CHAT_CLASS = ModelClass.FAST
@@ -818,7 +863,12 @@ class InteractionService:
             "using only the measured run times in LIVE STATUS; if there are none, say so.\n"
             f"4. Personal facts about {owner} or other people come only from MEMORY; otherwise say you don't "
             "know yet.\n"
-            "5. Never create or offer accounts, passwords or roles in chat: the owner does that in Settings.\n\n"
+            "5. Never create or offer accounts, passwords or roles in chat: the owner does that in Settings.\n"
+            + ("6. This is a LIVE PHONE CALL: your words are spoken aloud. Answer in one to three short, natural "
+               "sentences. No markdown, lists, URLs, code or emoji. Say numbers and ids the way a person would. "
+               "You cannot approve, reject or confirm anything by voice: sensitive decisions are confirmed by "
+               f"{owner} on their phone with Face ID; say so when it comes up.\n" if session.channel == "voice" else "")
+            + "\n"
             f"LIVE STATUS (observed now):\n{facts}\n\n"
             f"UI: {ui_line}\n{limits}\n"
             f"MEMORY (declared by the owner):\n{memory_block}\n"
@@ -828,7 +878,8 @@ class InteractionService:
 
         try:
             req = ModelRequest(prompt=full_prompt, model_class=self.CHAT_CLASS,
-                               max_tokens=self.CHAT_MAX_TOKENS, allow_partial=True,
+                               max_tokens=(self.VOICE_MAX_TOKENS if session.channel == "voice"
+                                           else self.CHAT_MAX_TOKENS), allow_partial=True,
                                task_id=f"conv_{uuid.uuid4().hex[:8]}")
             resp = self.commander.model_router.invoke(req)
         except Exception as exc:

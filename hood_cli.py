@@ -671,6 +671,14 @@ def main():
         auth_db = legacy_auth if legacy_auth.exists() and not (runtime.data_dir / "auth.db").exists() \
             else runtime.data_dir / "auth.db"
         auth_svc = getattr(runtime, "auth_service", None) or AuthenticationService(db_path=auth_db)
+        runtime.auth_service = auth_svc
+        # Voice calling (inert unless HOOD_VOICECALL_ENABLED=1; see docs/VOICE_CALLING_ARCHITECTURE.md).
+        try:
+            from services.voicecall.wiring import build_voicecall
+            runtime.voicecall = build_voicecall(runtime)
+        except Exception as exc:     # never let an optional feature stop Hood from starting
+            runtime.voicecall = None
+            print(f"Voice calling unavailable: {type(exc).__name__}: {str(exc)[:160]}")
         server = JarvisServer(
             interaction_service=runtime.interaction_service,
             emergency_stop=runtime.emergency_stop,
@@ -683,6 +691,8 @@ def main():
             server.httpd.serve_forever()
         except KeyboardInterrupt:
             print("\nShutting down HOOD UI server.")
+            if getattr(runtime, "voicecall", None) is not None:
+                runtime.voicecall.shutdown()
             server.stop()
 
     elif args.command == "voice":

@@ -39,6 +39,7 @@ class SecuritySentinelService:
         x_red_team: Optional[XRedTeamFramework] = None,
         patch_engine: Optional[PatchEngine] = None
     ):
+        self.listeners: list = []   # observers of newly registered findings (best effort)
         self.registry_path = registry_path or Path("artifacts/sentinel_vulnerabilities.json")
         self.firewall_manager = firewall_manager or FirewallManager(read_only=True)
         self.integrity_monitor = integrity_monitor or IntegrityMonitor()
@@ -69,6 +70,11 @@ class SecuritySentinelService:
         """Registers a discovered vulnerability or anomaly."""
         self.findings[finding.finding_id] = finding
         self._persist_registry()
+        for listener in list(getattr(self, "listeners", [])):
+            try:
+                listener(finding)
+            except Exception:
+                pass
         return finding
 
     def run_defensive_assessment(self) -> Dict[str, Any]:

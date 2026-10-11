@@ -56,6 +56,9 @@ class Route:
     pattern: re.Pattern
     permission: str
     handler: Callable[["RequestContext"], Any]
+    # "session": cookie/bearer Hood session + permission (default). "device" / "agent": non-session
+    # credentials checked by SERVICES["voicecall"]; those routes never accept a Hood session.
+    auth: str = "session"
 
 
 @dataclass
@@ -65,6 +68,7 @@ class RequestContext:
     match: Dict[str, str]
     query: Dict[str, List[str]]
     services: Dict[str, Any]
+    principal: Any = None            # device row / call record for auth="device" / "agent" routes
 
     @property
     def user_id(self) -> str:
@@ -90,12 +94,14 @@ ROUTES: List[Route] = []
 SERVICES: Dict[str, Any] = {}
 
 
-def route(method: str, pattern: str, permission: str):
+def route(method: str, pattern: str, permission: str, auth: str = "session"):
     if method not in ("GET", "POST"):
         raise ValueError("Only GET and POST are routed")
+    if auth not in ("session", "device", "agent"):
+        raise ValueError("auth must be session, device or agent")
 
     def deco(fn):
-        ROUTES.append(Route(method, re.compile(pattern), permission, fn))
+        ROUTES.append(Route(method, re.compile(pattern), permission, fn, auth))
         return fn
     return deco
 
@@ -134,4 +140,5 @@ API_MODULES: List[str] = [
     "services.voice.api",
     "services.agents.api",
     "services.toolbox.api",
+    "services.voicecall.api",
 ]
