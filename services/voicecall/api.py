@@ -14,7 +14,7 @@ from typing import Any, Dict
 
 from ui.routes import SERVICES, ServiceUnavailable, route
 
-from .contracts import EndReason, EventSeverity, HoodEvent, NotFound, VoiceError
+from .contracts import EndReason, EventSeverity, Forbidden, HoodEvent, NotFound, VoiceError
 
 CALL = r"/api/voicecall/calls/(?P<call_id>call_[0-9a-f]{20})"
 OWNER = "X_ACTIVATION"           # same owner-only permission the console chat uses
@@ -262,11 +262,20 @@ def _call(ctx):
     return ctx.principal
 
 
+def _live_call(ctx):
+    """The call the worker's token names, refused once that call is over. A token that leaked (it travels inside
+    the phone's join token) is therefore worthless the moment the call ends: no briefing, no paid speech."""
+    call = _svc().store.get_call(_call(ctx).call_id)
+    if call is None or call.state.terminal:
+        raise Forbidden("This call is over")
+    return call
+
+
 @route("GET", r"/api/voicecall/agent/session", permission=OWNER, auth="agent")
 def agent_session(ctx):
-    s, c = _svc(), _call(ctx)
+    s, st = _svc(), _live_call(ctx)
+    c = st
     prof = s.sessions.profile()
-    st = s.store.get_call(c.call_id)
     return {"call_id": c.call_id, "state": st.state.value, "direction": st.direction.value, "language": st.language,
             "mode": prof.mode, "model": prof.model, "voice": prof.voice, "briefing": st.briefing,
             "limits": s.cost.limits_for(st.owner_id), "max_utterance_chars": 1000}
@@ -278,7 +287,7 @@ def agent_turn(ctx):
     text = ctx.payload.get("text")
     if not isinstance(text, str):
         raise ValueError("text is required")
-    call = s.store.get_call(_call(ctx).call_id)
+    call = _live_call(ctx)
     r = s.bridge.handle_turn(call, text)
     return {"speech": r.speech, "end_call": r.end_call, "needs_confirmation": r.needs_confirmation,
             "mission_id": r.mission_id, "reason": r.reason}
@@ -303,15 +312,14 @@ def agent_end(ctx):
 
 @route("POST", r"/api/voicecall/agent/stt", permission=OWNER, auth="agent")
 def agent_stt(ctx):
-    s, c = _svc(), _call(ctx)
-    return {"transcript": _speech(s).transcribe(s.store.get_call(c.call_id).owner_id, ctx.payload.get("audio_b64"),
-                                                ctx.payload.get("mime_type"))}
+    s, c = _svc(), _live_call(ctx)
+    return {"transcript": _speech(s).transcribe(c.owner_id, ctx.payload.get("audio_b64"), ctx.payload.get("mime_type"))}
 
 
 @route("POST", r"/api/voicecall/agent/tts", permission=OWNER, auth="agent")
 def agent_tts(ctx):
     import base64
-    s = _svc()
+    s, _ = _svc(), _live_call(ctx)
     text = ctx.payload.get("text")
     if not isinstance(text, str) or not text.strip():
         raise ValueError("text is required")

@@ -74,7 +74,7 @@ def test_server_json_matches_the_swift_fixtures(web):
     feature_routes.SERVICES["agents"] = kit.engine
     kit.engine.add("agm_" + "a" * 32, OWNER, state="RUNNING", objective="Coffee shop website")
     kit.engine.add("agm_" + "b" * 32, OWNER, objective="Landing page for the bakery")
-    req = kit.approvals.create_request(task_id="t", action_type="DELETE_BACKUP", target="backup-2026", reason="Disk is full",
+    req = kit.approvals.create_request(task_id="t", action_type="task_execution", target="backup-2026", reason="Disk is full",
                                        risk_level=RiskLevel.L3, recommended_option="approve")
     from services.voicecall.contracts import EventSeverity, HoodEvent
     kit.dispatcher.submit(OWNER, HoodEvent(type="info", severity=EventSeverity.INFO, subject="m:1", summary="Mission finished: demo", source="t"))

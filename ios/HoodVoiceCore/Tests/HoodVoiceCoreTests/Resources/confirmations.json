@@ -1,15 +1,15 @@
 {
   "items": [
     {
-      "detail": "backup-2026: Disk is full",
+      "detail": "Target: backup-2026\nReason: Disk is full",
       "kind": "approval",
       "phone_confirmable": true,
       "risk": "L3",
-      "subject": "f61137bc-9b2d-4f7f-ba0a-0bba48c8780e",
-      "title": "DELETE_BACKUP"
+      "subject": "e9238839-b48e-454f-99a8-7b8959ab4c8c",
+      "title": "task_execution"
     },
     {
-      "detail": "Landing page for the bakery",
+      "detail": "Objective: Landing page for the bakery\nBudget: $1.00",
       "kind": "mission_plan",
       "phone_confirmable": true,
       "risk": "mission",

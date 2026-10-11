@@ -38,7 +38,7 @@ def test_client_talks_to_the_real_agent_api(web):
     assert kit.store.get_call(cid).state.terminal
     with pytest.raises(HoodError) as e:
         c.turn("hello?")
-    assert e.value.status == 409
+    assert e.value.status == 403          # the call is over: the credential is dead
 
 
 def test_client_with_a_wrong_credential_or_unreachable_hood_raises_clean_errors(web):

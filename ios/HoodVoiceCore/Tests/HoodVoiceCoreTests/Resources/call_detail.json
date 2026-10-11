@@ -4,11 +4,11 @@
     "audio_in_s": 0.0,
     "audio_out_s": 0.0,
     "briefing": "",
-    "call_id": "call_e6ca18eebc1d44211efc",
+    "call_id": "call_25e364baa50a7bade9a6",
     "cost_measured": false,
     "cost_usd": 0.0,
     "created": 1790000000.0,
-    "device_id": "dev_d8c41ee2ed8974960b3074ee",
+    "device_id": "dev_a6b61bba751d54176ec0e492",
     "direction": "owner_to_hood",
     "duration_s": 0.0,
     "end_reason": "",
@@ -24,7 +24,7 @@
     "provider": "gemini-live",
     "reserved_usd": 0.3525,
     "ringing_at": null,
-    "room": "call_e6ca18eebc1d44211efc",
+    "room": "call_25e364baa50a7bade9a6",
     "state": "ACTIVE",
     "turns": 1
   },
@@ -36,7 +36,7 @@
       },
       "id": 1,
       "kind": "created",
-      "ts": 1791727594.7817981
+      "ts": 1791728576.0240326
     },
     {
       "detail": {
@@ -45,7 +45,7 @@
       },
       "id": 2,
       "kind": "state",
-      "ts": 1791727594.7848563
+      "ts": 1791728576.0285337
     },
     {
       "detail": {
@@ -53,7 +53,7 @@
       },
       "id": 3,
       "kind": "call_started",
-      "ts": 1791727594.7872722
+      "ts": 1791728576.0315228
     },
     {
       "detail": {
@@ -62,7 +62,7 @@
       },
       "id": 4,
       "kind": "state",
-      "ts": 1791727594.7938838
+      "ts": 1791728576.039783
     },
     {
       "detail": {
@@ -70,7 +70,7 @@
       },
       "id": 5,
       "kind": "connected",
-      "ts": 1791727594.7962422
+      "ts": 1791728576.042493
     },
     {
       "detail": {
@@ -79,7 +79,7 @@
       },
       "id": 6,
       "kind": "turn",
-      "ts": 1791727594.8067863
+      "ts": 1791728576.0551665
     }
   ]
 }

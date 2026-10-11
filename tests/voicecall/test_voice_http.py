@@ -122,12 +122,17 @@ def test_full_owner_call_over_http(web):
     st, ended = call(base, "POST", f"/api/voicecall/calls/{cid}/end", dev_auth(kit))
     assert ended["call"]["state"] == "ENDED" and cid not in kit.transport.rooms
     # after the call ends the worker's credential is useless
-    assert call(base, "POST", "/api/voicecall/agent/turn", ag, {"text": "hello?"})[0] == 409
+    assert call(base, "POST", "/api/voicecall/agent/turn", ag, {"text": "hello?"})[0] == 403
+    # ... for every route that reads the briefing or spends on speech, not just turns (a leaked token is worthless)
+    for method, path, body in (("GET", "/api/voicecall/agent/session", None),
+                               ("POST", "/api/voicecall/agent/stt", {"audio_b64": "AAAA", "mime_type": "audio/wav"}),
+                               ("POST", "/api/voicecall/agent/tts", {"text": "hello"})):
+        assert call(base, method, path, ag, body)[0] == 403, path
 
 
 def test_spoken_approval_over_http_changes_nothing_and_signed_confirmation_does(web):
     base, cookies, kit, svc = web
-    req = kit.approvals.create_request(task_id="t", action_type="DELETE_BACKUP", target="backup-1", reason="space",
+    req = kit.approvals.create_request(task_id="t", action_type="task_execution", target="backup-1", reason="space",
                                        risk_level=RiskLevel.L3, recommended_option="approve")
     cid = call(base, "POST", "/api/voicecall/calls/start", dev_auth(kit), {})[1]["call"]["call_id"]
     kit.transport.join(cid, kit.device_id)

@@ -1,14 +1,14 @@
 {
   "algorithm": "ECDSA-P256-SHA256",
-  "challenge_id": "chl_69ee38be1d64ac9698a90bf5",
+  "challenge_id": "chl_ab96624122c4dac6c4952adb",
   "decision": "approve",
-  "detail": "backup-2026: Disk is full",
-  "device_id": "dev_d8c41ee2ed8974960b3074ee",
+  "detail": "Target: backup-2026\nReason: Disk is full",
+  "device_id": "dev_a6b61bba751d54176ec0e492",
   "expires": 1790000060.0,
   "kind": "approval",
-  "nonce": "aa77df792c31fafc27440592250ef79a",
-  "signing_string": "hood-confirm-v1\nchl_69ee38be1d64ac9698a90bf5\ndev_d8c41ee2ed8974960b3074ee\napproval\nf61137bc-9b2d-4f7f-ba0a-0bba48c8780e\napprove\nc724184821a80b23041fbb2947d6f6fda423a9e96708a787654c5ae1d7cbd68e\naa77df792c31fafc27440592250ef79a\n1790000060",
-  "subject": "f61137bc-9b2d-4f7f-ba0a-0bba48c8780e",
-  "subject_hash": "c724184821a80b23041fbb2947d6f6fda423a9e96708a787654c5ae1d7cbd68e",
-  "title": "DELETE_BACKUP"
+  "nonce": "99a6dcab52ba4b32e1e4291fac0bdb02",
+  "signing_string": "hood-confirm-v1\nchl_ab96624122c4dac6c4952adb\ndev_a6b61bba751d54176ec0e492\napproval\ne9238839-b48e-454f-99a8-7b8959ab4c8c\napprove\n69f100070ec17759532b26b5f1548b100873f228893916bc5a8f66bd43ffc253\n99a6dcab52ba4b32e1e4291fac0bdb02\n1790000060",
+  "subject": "e9238839-b48e-454f-99a8-7b8959ab4c8c",
+  "subject_hash": "69f100070ec17759532b26b5f1548b100873f228893916bc5a8f66bd43ffc253",
+  "title": "task_execution"
 }

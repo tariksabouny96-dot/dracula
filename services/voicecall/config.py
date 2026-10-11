@@ -166,7 +166,10 @@ class VoiceCallConfig:
             apns_bundle_id=_env("APNS_BUNDLE_ID"),
             apns_sandbox=_flag("APNS_SANDBOX", True),
         )
-        cfg.agent_secret = Secret(_env("HOOD_VOICECALL_AGENT_SECRET") or _persisted_secret(data_dir))
+        configured = _env("HOOD_VOICECALL_AGENT_SECRET")
+        if configured and len(configured) < 32:
+            raise ValueError("HOOD_VOICECALL_AGENT_SECRET must be at least 32 characters (use a long random value)")
+        cfg.agent_secret = Secret(configured or _persisted_secret(data_dir))
         return cfg
 
 

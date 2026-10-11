@@ -48,6 +48,13 @@ PROTECTED_PREFIXES = (
     "audit/",
     ".github/",
     "services/x_control/",
+    # The phone's decision verifier, the voice-authority guard and the credentialed-route dispatcher decide who may
+    # approve what; Hood may not propose edits to them.
+    "services/voicecall/",
+    "services/interaction/",
+    "voice_agent/",
+    "ui/server.py",
+    "ui/routes.py",
 )
 # Roots HOOD may propose changes within (a protected prefix still wins).
 MODIFIABLE_ROOTS = ("services/", "packages/", "ui/", "scripts/", "tests/", "docs/")

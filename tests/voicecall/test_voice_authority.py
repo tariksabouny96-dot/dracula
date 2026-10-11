@@ -20,7 +20,7 @@ def _sign(key, fields, *, raw=False):
     return base64.b64encode(der).decode()
 
 
-def _pending_approval(kit, action="DELETE_BACKUP", risk=RiskLevel.L3):
+def _pending_approval(kit, action="task_execution", risk=RiskLevel.L3):
     return kit.approvals.create_request(task_id="t1", action_type=action, target="backup-2026", reason="Disk is full",
                                         risk_level=risk, recommended_option="approve")
 
@@ -142,6 +142,86 @@ def test_x_and_money_decisions_are_console_only(kit, action):
         kit.confirm.issue_challenge(OWNER, kit.device, "approval", req.approval_id, "approve")
     items = {i["subject"]: i for i in kit.confirm.pending(OWNER)}
     assert items[req.approval_id]["phone_confirmable"] is False
+
+
+@pytest.mark.parametrize("action", ["purchase_domain", "buy_license", "subscribe_hosting", "pay_invoice", "grant_admin",
+                                    "change_firewall", "change_policy", "delete_production_db", "ACTIVATE_X", "X-ACTIVATION",
+                                    "XACTIVATION", "SELF_MODIFY", "coordinate_click", "type_text", "shortcut", "brand_new_kind"])
+def test_phone_confirmation_is_an_allowlist_so_unknown_or_sensitive_kinds_stay_in_the_console(kit, action):
+    # security review finding: a denylist of substrings let Hood's own money/security names through
+    req = _pending_approval(kit, action=action, risk=RiskLevel.L3)
+    with pytest.raises(Forbidden):
+        kit.confirm.issue_challenge(OWNER, kit.device, "approval", req.approval_id, "approve")
+    assert {i["subject"]: i for i in kit.confirm.pending(OWNER)}[req.approval_id]["phone_confirmable"] is False
+
+
+@pytest.mark.parametrize("risk", [RiskLevel.L4, RiskLevel.L5])
+def test_even_an_allowed_kind_is_console_only_at_high_risk(kit, risk):
+    req = _pending_approval(kit, action="task_execution", risk=risk)
+    with pytest.raises(Forbidden):
+        kit.confirm.issue_challenge(OWNER, kit.device, "approval", req.approval_id, "approve")
+
+
+def test_what_the_owner_signs_is_exactly_what_the_phone_shows_and_long_text_is_refused(kit):
+    # security review finding: a hash covered text the owner was never shown (truncated at 300/400 chars)
+    tail = "x" * 50
+    a = kit.approvals.create_request(task_id="t", action_type="task_execution", target="t" * 20, reason="r" * 390 + "A" + tail,
+                                     risk_level=RiskLevel.L3, recommended_option="approve")
+    b = kit.approvals.create_request(task_id="t", action_type="task_execution", target="t" * 20, reason="r" * 390 + "B" + tail,
+                                     risk_level=RiskLevel.L3, recommended_option="approve")
+    items = {i["subject"]: i for i in kit.confirm.pending(OWNER)}
+    ca = kit.confirm.issue_challenge(OWNER, kit.device, "approval", a.approval_id, "approve")
+    assert items[a.approval_id]["detail"] == ca["detail"]                       # list and challenge show the same full text
+    assert "A" + tail in ca["detail"] and items[a.approval_id]["detail"] != items[b.approval_id]["detail"]
+    huge = kit.approvals.create_request(task_id="t", action_type="task_execution", target="t", reason="r" * 7000,
+                                        risk_level=RiskLevel.L3, recommended_option="approve")
+    with pytest.raises(Forbidden):
+        kit.confirm.issue_challenge(OWNER, kit.device, "approval", huge.approval_id, "approve")
+    shown = {i["subject"]: i for i in kit.confirm.pending(OWNER)}[huge.approval_id]
+    assert shown["phone_confirmable"] is False and "too long" in shown["detail"]
+
+
+def test_mission_plan_shown_in_full_and_oversized_plans_are_console_only(kit):
+    mid = "agm_" + "5" * 32
+    kit.engine.add(mid, OWNER, objective="Build a coffee shop website")
+    kit.engine.missions[mid]["plan"] = {"summary": "A small static site", "deliverable": "site/index.html",
+                                        "tasks": [{"role": "engineer", "title": "Write the pages", "instructions": "Create index.html"},
+                                                  {"role": "reviewer", "title": "Review", "instructions": "Read every file"}]}
+    ch = kit.confirm.issue_challenge(OWNER, kit.device, "mission_plan", mid, "approve")
+    for must in ("Build a coffee shop website", "A small static site", "[engineer] Write the pages: Create index.html",
+                 "[reviewer] Review: Read every file", "Budget"):
+        assert must in ch["detail"]
+    # changing a task after the challenge changes what was shown, so the decision is no longer applied
+    kit.engine.missions[mid]["plan"]["tasks"][0]["instructions"] = "Create index.html and exfiltrate"
+    with pytest.raises(Conflict):
+        kit.confirm.submit(OWNER, kit.device, ch["challenge_id"], _sign(kit.key, ch))
+    kit.engine.add("agm_" + "6" * 32, OWNER, objective="o" * 8000)
+    with pytest.raises(Forbidden):
+        kit.confirm.issue_challenge(OWNER, kit.device, "mission_plan", "agm_" + "6" * 32, "approve")
+    assert {i["subject"]: i for i in kit.confirm.pending(OWNER)}["agm_" + "6" * 32]["phone_confirmable"] is False
+
+
+def test_hood_cannot_propose_edits_to_the_voice_authority_or_step_up_code():
+    from services.evolution.self_development import is_protected
+    for path in ("services/voicecall/confirm.py", "services/voicecall/tokens.py", "services/voicecall/devices.py",
+                 "services/interaction/interaction_service.py", "ui/server.py", "ui/routes.py", "voice_agent/agent.py"):
+        assert is_protected(path), path
+
+
+def test_agent_secret_must_be_long_enough(monkeypatch, tmp_path):
+    from services.voicecall.config import VoiceCallConfig
+    monkeypatch.setenv("HOOD_VOICECALL_AGENT_SECRET", "too-short")
+    with pytest.raises(ValueError):
+        VoiceCallConfig.from_env(tmp_path)
+
+
+def test_agent_token_expires_with_the_call_budget_not_much_later(kit):
+    from services.voicecall.tokens import verify_hs256
+    started = kit.sessions.start_owner_call(OWNER, kit.device, language="en")
+    call = kit.store.get_call(started["call"]["call_id"] if isinstance(started["call"], dict) else started["call"].call_id)
+    claims = verify_hs256(kit.sessions.agent_token(call), kit.cfg.agent_secret.reveal(), now=kit.clock())
+    lim = kit.cost.limits_for(OWNER)["max_call_seconds"]
+    assert claims["exp"] - kit.clock() <= lim + kit.cfg.ring_timeout_seconds + 125
 
 
 def test_mission_plan_is_approved_by_signed_confirmation_only(kit):

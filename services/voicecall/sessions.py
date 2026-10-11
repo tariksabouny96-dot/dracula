@@ -61,7 +61,7 @@ class VoiceSessionManager:
         return self.store.get_call(call.call_id)
 
     def agent_token(self, call: CallRecord) -> str:
-        ttl = self.cost.limits_for(call.owner_id)["max_call_seconds"] + 600
+        ttl = self.cost.limits_for(call.owner_id)["max_call_seconds"] + self.cfg.ring_timeout_seconds + 120
         now = int(self.clock())
         return jwt_hs256({"iss": "hood", "sub": call.call_id, "scope": "agent", "nbf": now - 5, "exp": now + int(ttl)},
                          self.cfg.agent_secret.reveal())
