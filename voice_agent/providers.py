@@ -8,7 +8,8 @@ import wave
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-# Languages Hood has validated for spoken use; others are passed through but reported as untested.
+# English and French are enabled by default; Arabic and Darija are passed through but reported as untested.
+# NOTE: no language has yet been validated with a real voice model (docs/VOICE_LANGUAGES.md has the protocol).
 LANGUAGE_CODES = {"en": "en-US", "fr": "fr-FR", "ar": "ar-XA", "ar-MA": "ar-XA"}
 UNTESTED = {"ar", "ar-MA"}
 

@@ -27,7 +27,7 @@ class ProviderProfile:
     audio_out_usd_per_m: float
     text_in_usd_per_m: float = 0.0
     text_out_usd_per_m: float = 0.0
-    languages: tuple = ("en", "fr")            # languages validated for use; others are "untested"
+    languages: tuple = ("en", "fr")            # enabled by default; real-voice validation pending (docs/VOICE_LANGUAGES.md)
     enabled_by_default: bool = True
     source: str = ""
     as_of: str = ""

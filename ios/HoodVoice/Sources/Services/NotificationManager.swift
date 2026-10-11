@@ -16,7 +16,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         let callBack = UNNotificationAction(identifier: Self.callbackAction, title: "Call Hood back", options: [.foreground])
         center.setNotificationCategories([UNNotificationCategory(identifier: Self.callbackCategory, actions: [callBack],
                                                                  intentIdentifiers: [], options: [])])
-        center.requestAuthorization(options: [.alert, .sound, .badge, .timeSensitive]) { granted, _ in
+        // time-sensitive delivery comes from the entitlement, not from an authorization option
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
             if granted { DispatchQueue.main.async { UIApplication.shared.registerForRemoteNotifications() } }
         }
     }

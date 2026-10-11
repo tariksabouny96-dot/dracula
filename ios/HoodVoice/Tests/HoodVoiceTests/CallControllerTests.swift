@@ -57,9 +57,14 @@ final class FakeTransport: HTTPTransport, @unchecked Sendable {
     private var seen: [String] = []
     func on(_ key: String, status: Int = 200, json: String) { lock.lock(); routes[key] = (status, json); lock.unlock() }
     func count(_ key: String) -> Int { lock.lock(); defer { lock.unlock() }; return seen.filter { $0 == key }.count }
+    private func record(_ key: String) -> (Int, String) {
+        lock.lock(); defer { lock.unlock() }
+        seen.append(key)
+        return routes[key] ?? (404, #"{"error":"no route"}"#)
+    }
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let key = "\(request.httpMethod ?? "GET") \(request.url!.path)"
-        lock.lock(); seen.append(key); let route = routes[key] ?? (404, #"{"error":"no route"}"#); lock.unlock()
+        let route = record(key)
         return (Data(route.1.utf8), HTTPURLResponse(url: request.url!, statusCode: route.0, httpVersion: nil, headerFields: nil)!)
     }
 }

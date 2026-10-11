@@ -111,3 +111,33 @@ def test_hood_cli_wires_the_commands_without_starting_the_runtime(tmp_path):
     assert "No paired phones." in run("devices").stdout
     assert run("doctor").returncode == 1                                  # nothing configured: FAIL lines => non-zero
     assert run("revoke", "dev_" + "0" * 24).returncode == 1
+
+
+def test_env_example_is_a_valid_safe_starting_point(tmp_path, monkeypatch):
+    """The documented template loads, keeps voice OFF, contains no secrets, and every key it names is one the code reads."""
+    import importlib.util
+    import re
+    spec = importlib.util.spec_from_file_location("hood_cli_for_test", ROOT / "hood_cli.py")
+    scratch_env = {k: v for k, v in os.environ.items()
+                   if not k.startswith(("HOOD_VOICECALL", "LIVEKIT", "APNS", "GOOGLE_API", "GEMINI_API"))}
+    monkeypatch.setattr(os, "environ", scratch_env)          # _load_dotenv writes into the environment: keep it contained
+    sys_argv = sys.argv
+    sys.argv = ["x"]
+    try:
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    finally:
+        sys.argv = sys_argv
+    assert module._load_dotenv(ROOT / "env.example") > 5
+    cfg = VoiceCallConfig.from_env(tmp_path)
+    assert cfg.enabled is False and cfg.apns_sandbox is True and cfg.provider == "gemini-live" and cfg.timezone == "Europe/Paris"
+    text = (ROOT / "env.example").read_text()
+    for line in text.splitlines():
+        m = re.match(r"^(LIVEKIT_API_KEY|LIVEKIT_API_SECRET|APNS_KEY_PATH|GOOGLE_API_KEY|HOOD_VOICECALL_AGENT_SECRET)=(\S*)", line)
+        if m:
+            assert m.group(2) == "", f"{m.group(1)} must ship empty"
+    code = (ROOT / "services" / "voicecall" / "config.py").read_text() + (ROOT / "voice_agent" / "worker.py").read_text() + \
+        (ROOT / "voice_agent" / "providers.py").read_text()
+    documented = set(re.findall(r"^((?:HOOD_VOICECALL|LIVEKIT|APNS)_[A-Z_]+|HOOD_API_URL|GOOGLE_API_KEY)=", text, re.M))
+    unknown = sorted(n for n in documented if n not in code)
+    assert not unknown, f"env.example documents variables nothing reads: {unknown}"

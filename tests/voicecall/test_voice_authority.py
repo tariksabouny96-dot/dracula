@@ -325,6 +325,48 @@ def test_reasoning_cost_is_attributed_to_the_call(kit):
     assert ended.cost_usd >= 0.002
 
 
+@pytest.mark.parametrize("level,provider,model,cost", [
+    ("level1-external", "GEMINI", "gemini-3.8-flash", 0.002),
+    ("level2-self-hosted", "LOCAL", "llama-3.1-8b-instruct", 0.0),
+    ("level3-own-model", "LOCAL", "hood-ft-experimental", 0.0),
+])
+def test_voice_is_independent_of_which_reasoning_level_answers(kit, level, provider, model, cost):
+    """Spec §8: speech transport must work with Level 1 (external), 2 (self-hosted) and 3 (own model) reasoning. The voice layer
+    never names a model: Hood's router picks it, the bridge only speaks the reply and attributes whatever it cost."""
+    from packages.contracts import ModelResponse, ModelUsage, ProviderName
+    from tests.voicecall.conftest import ScriptedRouter
+
+    class LevelRouter(ScriptedRouter):
+        def invoke(self, req):
+            self.requests.append(req)
+            if self.cc is not None:
+                rid = self.cc.reserve(req.task_id, max(self.cost, 0.0001))
+                self.cc.settle(rid, ModelUsage(estimated_cost_usd=self.cost), cost_measured=True, provider=provider.lower(), model=model)
+            return ModelResponse(text=f"Answered by {level}.", provider=ProviderName[provider], model_name=model,
+                                 usage=ModelUsage(), latency_ms=1, is_mock=False)
+
+    router = LevelRouter(kit.cost.cc, cost=cost)
+    kit.interaction.commander.model_router = router
+    call = _active_call(kit)
+    result = kit.bridge.handle_turn(call, "give me a status update")
+    assert result.speech == f"Answered by {level}."
+    assert router.requests and router.requests[-1].max_tokens == kit.interaction.VOICE_MAX_TOKENS
+    assert kit.store.usage_sum(call.call_id).get("reasoning_usd_usd", 0.0) == pytest.approx(cost)
+    assert kit.store.get_call(call.call_id).state == CallState.ACTIVE
+
+
+def test_a_reasoning_backend_that_is_down_does_not_crash_or_end_the_call(kit):
+    class DownRouter:
+        requests = []
+        def invoke(self, req):
+            raise RuntimeError("self-hosted model is offline")
+    kit.interaction.commander.model_router = DownRouter()
+    call = _active_call(kit)
+    result = kit.bridge.handle_turn(call, "are you there?")
+    assert isinstance(result.speech, str) and result.speech and not result.end_call
+    assert kit.store.get_call(call.call_id).state == CallState.ACTIVE
+
+
 def test_speech_output_is_clean(kit):
     from services.voicecall.bridge import MAX_SPEECH_CHARS, sanitize_utterance, speakable
     s = speakable("**Done.** See https://example.com/a?b=1\n- one\n- two\n```py\nprint(1)\n```\nOK 😀")

@@ -1,0 +1,44 @@
+name: voice
+
+# Real-LiveKit and end-to-end voice-worker tests on a clean machine. The `ci` workflow skips these (they need the
+# LiveKit SDKs, the livekit-server binary and espeak-ng). SIMULATED parts stay simulated: speech models and the model
+# provider are fakes, so this proves plumbing and Hood-in-the-loop behaviour, not recognition accuracy or voice quality.
+
+on:
+  push:
+    paths:
+      - "services/voicecall/**"
+      - "voice_agent/**"
+      - "tests/voicecall/**"
+      - "requirements-voice.txt"
+      - ".github/workflows/voice.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  voice-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install Hood and voice-worker dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-voice.txt
+          sudo apt-get update && sudo apt-get install -y espeak-ng
+      - name: Install livekit-server (pinned, used only by the tests)
+        run: |
+          curl -fsSL -o lk.tgz https://github.com/livekit/livekit/releases/download/v1.12.0/livekit_1.12.0_linux_amd64.tar.gz
+          mkdir -p "$RUNNER_TEMP/lk" && tar -xzf lk.tgz -C "$RUNNER_TEMP/lk" livekit-server
+          "$RUNNER_TEMP/lk/livekit-server" --version
+          echo "HOOD_TEST_LIVEKIT_BIN=$RUNNER_TEMP/lk/livekit-server" >> "$GITHUB_ENV"
+      - name: Voice tests (none may be skipped)
+        run: |
+          set -o pipefail
+          python -m pytest tests/voicecall -q -rs -p no:cacheprovider | tee voice.log
+          if grep -q -i "skipped" voice.log; then echo "a voice test was skipped: its prerequisites are missing"; exit 1; fi
