@@ -75,10 +75,11 @@ class FakeEngine:
                               "plan_sha256": "ab" * 32, "budget_usd": budget}
 
     def create_mission(self, owner, objective, budget_usd=1.0, profile="python_app"):
+        """Mirrors the real AgentEngine: returns the mission's status() (key ``mission_id``, not ``id``)."""
         mid = "agm_" + "%032x" % (len(self.created) + 1)
         self.created.append((owner, objective, budget_usd, profile))
         self.add(mid, owner, objective=objective, budget=budget_usd)
-        return {"id": mid, "state": "AWAITING_PLAN_APPROVAL"}
+        return {**self.status(owner, mid), "mission_id": mid}
 
     def list(self, owner):
         return [dict(m) for m in self.missions.values() if m["owner"] == owner]
@@ -87,7 +88,7 @@ class FakeEngine:
         m = self.missions.get(mid)
         if not m or m["owner"] != owner:
             raise KeyError(mid)
-        return dict(m)
+        return {**m, "mission_id": mid}
 
     def approve_plan(self, owner, mid, plan_sha256, approver):
         assert plan_sha256 == self.missions[mid]["plan_sha256"]

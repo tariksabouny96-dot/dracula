@@ -145,7 +145,15 @@ class HoodVoiceBridge:
             result.speech = f"I couldn't draft that plan: {str(exc)[:160]}"
             result.reason = "mission_draft_failed"
             return
-        result.mission_id = mission["id"]
+        # The engine reports a mission as its status(): {"mission_id": ..., "state": ...}. A plan that could not be
+        # drafted (no model, tools missing, stop latch) comes back BLOCKED rather than raising.
+        mission_id = mission.get("mission_id") or mission.get("id")
+        if not mission_id or mission.get("state") != "AWAITING_PLAN_APPROVAL":
+            why = str(mission.get("error") or "the plan could not be prepared")[:160]
+            result.speech = f"I couldn't draft that plan: {why}"
+            result.reason = "mission_draft_failed"
+            return
+        result.mission_id = mission_id
         result.speech = (f"I've drafted a plan with a spending limit of {budget:.2f} dollars. Nothing will run until "
                          "you confirm it on your phone with Face ID.")
-        self._request_confirmation(call, result, "mission_plan", mission["id"])
+        self._request_confirmation(call, result, "mission_plan", mission_id)
