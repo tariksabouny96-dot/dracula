@@ -306,6 +306,8 @@ class VoiceSessionManager:
         elif call.state == CallState.CONNECTING and now - (call.answered_at or call.created) > CONNECT_TIMEOUT_SECONDS:
             self.end_call(call.call_id, EndReason.NETWORK, actor="watchdog")
             out.append(f"connect-timeout:{call.call_id}")
+        elif call.state in (CallState.RINGING, CallState.CONNECTING):
+            self._remove_strangers(call)              # nobody but the device and the worker, even before the call is live
         elif call.state == CallState.ACTIVE:
             verdict = self._limits_verdict(call)
             if not verdict["continue"]:
@@ -318,17 +320,38 @@ class VoiceSessionManager:
                 out.extend(self._enforce_participants(call, now))
         return out
 
-    def _enforce_participants(self, call: CallRecord, now: float) -> List[str]:
-        out: List[str] = []
+    @staticmethod
+    def _is_agent(identity: Any, kind: Any) -> bool:
+        """The dispatched worker. LiveKit labels it kind AGENT and names it ``agent-<job>``; when the transport reports
+        a kind it must say AGENT (an identity that merely looks like one is not enough), otherwise the name decides."""
+        if kind is not None:
+            return str(kind).upper() in ("AGENT", "4")
+        return str(identity).startswith("agent-")
+
+    def _remove_strangers(self, call: CallRecord) -> Optional[tuple]:
+        """Remove anyone in the room who is neither the registered device nor the dispatched worker. Returns
+        (identities present, identities removed), or None when the transport could not be asked."""
         try:
-            people = [p.get("identity") for p in self.transport.list_participants(call.room)]
+            infos = list(self.transport.list_participants(call.room))
         except Exception:
-            return out
+            return None
+        people = [p.get("identity") for p in infos]
+        kinds = {p.get("identity"): p.get("kind") for p in infos}
+        removed = []
         for ident in people:
-            if ident != call.device_id and not str(ident).startswith("agent"):
+            if ident != call.device_id and not self._is_agent(ident, kinds.get(ident)):
                 self.transport.remove_participant(call.room, ident)
                 self.store.add_event(call.call_id, "unexpected_participant_removed", {"identity": str(ident)[:40]})
-                out.append(f"removed:{ident}")
+                removed.append(ident)
+        return people, removed
+
+    def _enforce_participants(self, call: CallRecord, now: float) -> List[str]:
+        out: List[str] = []
+        result = self._remove_strangers(call)
+        if result is None:
+            return out
+        people, removed = result
+        out.extend(f"removed:{i}" for i in removed)
         if call.device_id not in people:
             gone = self._absent_since.setdefault(call.call_id, now)
             if now - gone > OWNER_ABSENT_GRACE_SECONDS:

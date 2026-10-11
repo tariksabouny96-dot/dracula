@@ -3,9 +3,26 @@ import CallKit
 import Foundation
 import LiveKit
 
+/// What the call controller needs from the system call UI (a seam so the controller is unit-testable without iOS).
+protocol CallKitControlling: AnyObject {
+    var onAnswer: ((UUID) -> Void)? { get set }
+    var onEnd: ((UUID) -> Void)? { get set }
+    var onMute: ((UUID, Bool) -> Void)? { get set }
+    var onReset: (() -> Void)? { get set }
+    func reportIncoming(uuid: UUID, caller: String, completion: @escaping (Error?) -> Void)
+    func startOutgoing(uuid: UUID, name: String) async -> Bool
+    func reportConnecting(uuid: UUID)
+    func reportConnected(uuid: UUID)
+    func reportEnded(uuid: UUID, reason: CXCallEndedReason)
+    func requestEnd(uuid: UUID, fallback: @escaping () -> Void)
+    func requestMute(uuid: UUID, muted: Bool, fallback: @escaping () -> Void)
+    func requestAnswer(uuid: UUID, fallback: @escaping () -> Void)
+    func waitForAudio(timeout: TimeInterval) async
+}
+
 /// The system call UI. Incoming Hood calls show the native incoming-call screen; outgoing calls appear as a normal
 /// call (lock screen, Recents). The LiveKit audio engine is only allowed to run inside CallKit's activation window.
-final class CallKitManager: NSObject, CXProviderDelegate {
+final class CallKitManager: NSObject, CXProviderDelegate, CallKitControlling {
     var onAnswer: ((UUID) -> Void)?
     var onEnd: ((UUID) -> Void)?
     var onMute: ((UUID, Bool) -> Void)?

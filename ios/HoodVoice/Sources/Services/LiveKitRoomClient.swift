@@ -2,9 +2,20 @@ import Foundation
 import LiveKit
 import HoodVoiceCore
 
+/// What the call controller needs from the media layer (a seam: the vendor can change, and tests use a fake).
+protocol RoomControlling: AnyObject {
+    var onConnected: (() -> Void)? { get set }
+    var onUnexpectedDisconnect: (() -> Void)? { get set }
+    var onHoodEvent: (([String: Any]) -> Void)? { get set }
+    var onTranscript: ((String, TranscriptLine.Speaker, String, Bool) -> Void)? { get set }
+    func connect(_ grant: JoinGrant) async throws
+    func disconnect() async
+    func setMuted(_ muted: Bool) async
+}
+
 /// The only file that talks to LiveKit's Room. The rest of the app sees plain callbacks, so the media vendor can
 /// be swapped without touching call logic.
-final class LiveKitRoomClient: NSObject, RoomDelegate, @unchecked Sendable {
+final class LiveKitRoomClient: NSObject, RoomDelegate, RoomControlling, @unchecked Sendable {
     var onConnected: (() -> Void)?
     var onUnexpectedDisconnect: (() -> Void)?
     var onHoodEvent: (([String: Any]) -> Void)?

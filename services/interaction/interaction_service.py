@@ -6,6 +6,7 @@ and handles live interruption/barge-in.
 Governed by Master System Specification Sections 2, 3, 4, 10 & V0.4 Interaction Service Spec.
 """
 
+import contextvars
 import re
 import time
 import uuid
@@ -29,6 +30,8 @@ from services.memory.service import MemoryService
 from services.voice.voice_router import VoiceRouter
 from services.voice.contracts import MicrophonePrivacyState, AudioOutputEvent
 
+
+_TURN_CHANNEL: contextvars.ContextVar[str] = contextvars.ContextVar("hood_turn_channel", default="text")
 
 class UIState(str, Enum):
     IDLE = "IDLE"
@@ -85,9 +88,6 @@ class InteractionSession(BaseModel):
     # Decided before the model call so the reply can say truthfully what the UI shows.
     offer: Optional[str] = None
     plan_now: bool = False
-    # "text" (console chat) or "voice" (a live call). Voice can never approve, reject or activate X:
-    # spoken or injected words are not an authorisation (see handle_text_input).
-    channel: str = "text"
 
 
 class InteractionService:
@@ -182,11 +182,14 @@ class InteractionService:
         sid = session_id or self.active_session_id
         session = self._get_or_create_session(sid)
         session.last_activity = time.time()
-        session.channel = "voice" if channel == "voice" else "text"
+        # The channel belongs to THIS turn (this thread), not to the shared session: a console text turn that finishes
+        # while a voice turn is mid-flight must not turn the voice turn into a text turn (that would let a spoken
+        # "approve <id>" through).
+        token = _TURN_CHANNEL.set("voice" if channel == "voice" else "text")
         try:
             return self._handle_text_locked_channel(text, sid, session)
         finally:
-            session.channel = "text"
+            _TURN_CHANNEL.reset(token)
 
     def note_outbound_context(self, session_id: str, text: str, modality: str = "voice") -> None:
         """Record something HOOD itself said or is about to say (e.g. a call briefing) so the
@@ -200,7 +203,7 @@ class InteractionService:
         if session.ui_state == UIState.SPEAKING:
             self.trigger_barge_in_interruption(sid)
 
-        user_msg = ConversationMessage(sender="Zak", modality=session.channel, text=text, speaker_id="zak")
+        user_msg = ConversationMessage(sender="Zak", modality=_TURN_CHANNEL.get(), text=text, speaker_id="zak")
         self._append(session, user_msg)
 
         # Transition to Thinking / Executing
@@ -212,7 +215,7 @@ class InteractionService:
         sender_label = "X" if speaker_id == "x" else ("System" if speaker_id == "system" else "Hood")
         reply_msg = ConversationMessage(
             sender=sender_label,
-            modality=session.channel,
+            modality=_TURN_CHANNEL.get(),
             text=response_text,
             speaker_id=speaker_id,
             approval_ref=approval_ref
@@ -354,7 +357,7 @@ class InteractionService:
             return self._handle_x_active_conversation(prompt, session, x_status)
 
         # Voice cannot start X or grant approvals: refuse before any authority-granting branch runs.
-        if session.channel == "voice":
+        if _TURN_CHANNEL.get() == "voice":
             refusal = self._voice_authority_refusal(prompt_lower)
             if refusal:
                 return refusal
@@ -608,7 +611,7 @@ class InteractionService:
         if any(re.search(pat, prompt_lower) for pat in x_act_patterns):
             text = self._synthesize_response(prompt, session)
             appr_id = None
-            if session.channel == "voice":
+            if _TURN_CHANNEL.get() == "voice":
                 return (text, "hood", None)
             if self.x_session_manager and self.x_session_manager.pending_approval_id:
                 appr_id = self.x_session_manager.pending_approval_id
@@ -867,7 +870,7 @@ class InteractionService:
             + ("6. This is a LIVE PHONE CALL: your words are spoken aloud. Answer in one to three short, natural "
                "sentences. No markdown, lists, URLs, code or emoji. Say numbers and ids the way a person would. "
                "You cannot approve, reject or confirm anything by voice: sensitive decisions are confirmed by "
-               f"{owner} on their phone with Face ID; say so when it comes up.\n" if session.channel == "voice" else "")
+               f"{owner} on their phone with Face ID; say so when it comes up.\n" if _TURN_CHANNEL.get() == "voice" else "")
             + "\n"
             f"LIVE STATUS (observed now):\n{facts}\n\n"
             f"UI: {ui_line}\n{limits}\n"
@@ -878,7 +881,7 @@ class InteractionService:
 
         try:
             req = ModelRequest(prompt=full_prompt, model_class=self.CHAT_CLASS,
-                               max_tokens=(self.VOICE_MAX_TOKENS if session.channel == "voice"
+                               max_tokens=(self.VOICE_MAX_TOKENS if _TURN_CHANNEL.get() == "voice"
                                            else self.CHAT_MAX_TOKENS), allow_partial=True,
                                task_id=f"conv_{uuid.uuid4().hex[:8]}")
             resp = self.commander.model_router.invoke(req)

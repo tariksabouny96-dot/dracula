@@ -263,3 +263,25 @@ def test_every_state_change_is_in_the_audit_trail(kit):
     kit.sessions.end_call(cid)
     kinds = [e["kind"] for e in kit.store.events_after(cid)]
     assert kinds[0] == "created" and "state" in kinds and kinds[-1] == "ended"
+
+
+def test_only_the_dispatched_worker_may_share_the_room_with_the_owner(kit):
+    # review finding: an identity that merely starts with "agent" used to be tolerated, and strangers were only
+    # looked for once the call was ACTIVE
+    call = kit.store.get_call(kit.sessions.start_owner_call(OWNER, kit.device, language="en")["call"]["call_id"])
+    assert call.state == CallState.CONNECTING
+    kit.transport.join(call.room, kit.device_id)
+    kit.transport.join(call.room, "agent-AJ_x1")           # the real worker: allowed
+    kit.transport.join(call.room, "agentsmith")            # looks similar: removed
+    kit.transport.join(call.room, "someone-else")          # stranger: removed, even before the call is live
+    kit.sessions.sweep()
+    assert set(kit.transport.participants[call.room]) == {kit.device_id, "agent-AJ_x1"}
+    removed = [e for e in kit.store.events_after(call.call_id) if e["kind"] == "unexpected_participant_removed"]
+    assert len(removed) == 2
+
+
+def test_a_reported_participant_kind_beats_a_lookalike_identity():
+    from services.voicecall.sessions import VoiceSessionManager as V
+    assert V._is_agent("agent-1", "AGENT") and V._is_agent("anything", "AGENT") and V._is_agent("x", 4)
+    assert not V._is_agent("agent-1", "STANDARD")           # a standard participant named like the worker
+    assert V._is_agent("agent-1", None) and not V._is_agent("agent", None) and not V._is_agent("agentsmith", None)

@@ -41,8 +41,8 @@ final class CallController: ObservableObject {
     private var machine = CallStateMachine()
     private var feed = CallEventFeed()
     private var transcriptBuffer = TranscriptBuffer()
-    private let callKit: CallKitManager
-    private let room = LiveKitRoomClient()
+    private let callKit: CallKitControlling
+    private let room: RoomControlling
     private var uuid: UUID?
     private var startGate: Task<Bool, Never>?
     private var pushedJoin: JoinGrant?
@@ -51,8 +51,9 @@ final class CallController: ObservableObject {
     private var tickTask: Task<Void, Never>?
     private var ringTask: Task<Void, Never>?
 
-    init(callKit: CallKitManager) {
+    init(callKit: CallKitControlling, room: RoomControlling = LiveKitRoomClient()) {
         self.callKit = callKit
+        self.room = room
         wireCallKit()
         wireRoom()
     }
@@ -235,7 +236,7 @@ final class CallController: ObservableObject {
         case .connectRoom(let grant):
             if let id = uuid, !directionIsIncoming { callKit.reportConnecting(uuid: id) }
             Task {
-                await callKit.waitForAudio()
+                await callKit.waitForAudio(timeout: 6)
                 do { try await room.connect(grant) }
                 catch { run(.roomDisconnected) }
             }

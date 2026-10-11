@@ -66,6 +66,32 @@ def test_voice_reply_is_written_for_speech_and_channel_resets(kit):
     assert [m.modality for m in msgs[:2]] == ["voice", "voice"] and msgs[2].modality == "text"
 
 
+def test_a_text_turn_finishing_mid_voice_turn_cannot_turn_it_into_a_text_turn(kit):
+    """Security review (inline): the channel used to live on the shared session, so a console text turn that finished
+    while a voice turn was in flight reset it to "text" and the spoken "approve <id>" was then accepted."""
+    import threading
+    req = _pending_approval(kit)
+    inside_voice_turn, text_turn_done = threading.Event(), threading.Event()
+    real = kit.interaction._mission_suggestion
+
+    def gate(text, session):                      # runs inside the voice turn, before the authority guard
+        if text.startswith("approve "):
+            inside_voice_turn.set()
+            assert text_turn_done.wait(10)
+        return real(text, session)
+    kit.interaction._mission_suggestion = gate
+    result = {}
+    voice = threading.Thread(target=lambda: result.update(reply=kit.interaction.handle_text_input(
+        f"approve {req.approval_id}", session_id="user:" + OWNER, channel="voice")))
+    voice.start()
+    assert inside_voice_turn.wait(10)
+    kit.interaction.handle_text_input("how are you", session_id="user:" + OWNER)        # console text turn, same session
+    text_turn_done.set()
+    voice.join(10)
+    assert "can't approve" in result["reply"].text.lower()
+    assert kit.approvals.get_request(req.approval_id).status.value == "PENDING"
+
+
 def test_emergency_stop_can_still_be_spoken_it_only_halts(kit):
     reply = kit.interaction.handle_text_input("stop everything", session_id="user:" + OWNER, channel="voice")
     assert "emergency stop" in reply.text.lower()

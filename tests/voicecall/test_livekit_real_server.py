@@ -187,3 +187,23 @@ def test_session_manager_on_a_real_room(lk, kit):
     run(scenario())
     c = kit.store.get_call(cid)
     assert c.state == CallState.ENDED and t.list_participants(cid) == []
+
+
+def test_real_server_reports_participant_kind_so_a_lookalike_named_agent_is_not_trusted(lk):
+    from services.voicecall.sessions import VoiceSessionManager
+    t, _ = _transport(lk)
+    room = "room_kind_1"
+    t.create_room(room)
+    g = t.mint_join_token(room=room, identity="agent-looks-legit", display_name="x", ttl_seconds=60)
+
+    async def scenario():
+        r = rtc.Room()
+        await r.connect(g.url, g.token)
+        info = t.list_participants(room)
+        await r.disconnect()
+        return info
+    info = run(scenario())
+    assert [p["identity"] for p in info] == ["agent-looks-legit"]
+    assert "kind" in info[0]                                   # the server states what the participant is ...
+    assert str(info[0]["kind"]).upper() in ("STANDARD", "0")   # ... an ordinary client, whatever its name says
+    assert VoiceSessionManager._is_agent("agent-looks-legit", info[0]["kind"]) is False

@@ -68,4 +68,7 @@ jobs:
       - name: Test summary
         if: always()
         run: |
+          xcodebuild -version | head -2
+          echo "Swift warnings in app sources: $(grep -c -E 'ios/HoodVoice/(Sources|Tests).*warning:' "$RUNNER_TEMP/build.log" || true)"
+          grep -E 'ios/HoodVoice/(Sources|Tests).*warning:' "$RUNNER_TEMP/build.log" | sort -u | head -40 || true
           grep -E "Test Suite|Executed [0-9]+ test|\*\* TEST" "$RUNNER_TEMP/build.log" | tail -20 || true
