@@ -503,6 +503,37 @@ def _agent_command(runtime, args):
     print(_json.dumps(result, indent=2, default=str))
 
 
+def _voicecall_command(args) -> int:
+    from services.voicecall import cli as vc
+    from services.voicecall.config import VoiceCallConfig
+    data_dir = Path(os.environ.get("HOOD_DATA_DIR") or (Path.home() / ".hood")).expanduser()
+    cmd = getattr(args, "voicecall_command", None)
+    if cmd == "doctor":
+        checks = vc.doctor(VoiceCallConfig.from_env(data_dir))
+        print(vc.format_checks(checks))
+        return vc.exit_code(checks)
+    if cmd == "pair":
+        res = vc.create_pairing_code(data_dir)
+        print(f"Pairing code:  {res['code']}   (valid {int(res['expires_in']) // 60} minutes, works once)")
+        print("In the Hood iPhone app: enter Hood's address and this code. A newer code cancels this one.")
+        return 0
+    if cmd == "devices":
+        rows = vc.list_devices(data_dir)
+        if not rows:
+            print("No paired phones.")
+        for d in rows:
+            state = "REVOKED" if d["revoked"] else "active"
+            print(f"{d['device_id']}  {d['name']!r:<22} {state:<8} voip-token={'yes' if d['has_voip_token'] else 'no'} "
+                  f"alert-token={'yes' if d['has_alert_token'] else 'no'} push-env={d['apns_env']}")
+        return 0
+    if cmd == "revoke":
+        ok = vc.revoke_device(data_dir, args.device_id)
+        print("Revoked. The running server refuses this phone from now on." if ok else "No active device with that id.")
+        return 0 if ok else 1
+    print("usage: hood_cli.py voicecall doctor|pair|devices|revoke")
+    return 2
+
+
 def main():
     parser = argparse.ArgumentParser(description="HOOD Personal AI Operating System")
     subparsers = parser.add_subparsers(dest="command")
@@ -588,6 +619,14 @@ def main():
     subparsers.add_parser("finance-pending", help="List pending financial expenditure recommendations")
     subparsers.add_parser("finance-history", help="Audit history of financial decisions")
 
+    vc_parser = subparsers.add_parser("voicecall", help="Voice calling (offline, no spend): doctor | pair | devices | revoke")
+    vc_sub = vc_parser.add_subparsers(dest="voicecall_command")
+    vc_sub.add_parser("doctor", help="Check voice-calling configuration (LiveKit, Apple push, keys, limits)")
+    vc_sub.add_parser("pair", help="Print a one-time pairing code to type into the Hood iPhone app")
+    vc_sub.add_parser("devices", help="List paired phones")
+    vc_rev = vc_sub.add_parser("revoke", help="Revoke a paired phone")
+    vc_rev.add_argument("device_id")
+
     args = parser.parse_args()
     env_file = Path(os.environ.get("HOOD_ENV_FILE") or Path(__file__).resolve().parent / ".env")
     notepad_copy = env_file.with_name(env_file.name + ".txt")
@@ -601,6 +640,8 @@ def main():
     else:
         sys.stderr.write(f"No settings loaded from {env_file} (missing or no values set); "
                          "using environment variables only.\n")
+    if args.command == "voicecall":      # operator commands: local, offline, no runtime needed
+        sys.exit(_voicecall_command(args))
     runtime = HoodSystemRuntime()
 
     if args.command == "status" or not args.command:
