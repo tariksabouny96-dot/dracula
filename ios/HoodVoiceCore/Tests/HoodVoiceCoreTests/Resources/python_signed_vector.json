@@ -1,0 +1,15 @@
+{
+  "fields": {
+    "challenge_id": "chl_00112233445566778899aabb",
+    "decision": "approve",
+    "device_id": "dev_0123456789abcdef01234567",
+    "expires": 1790000060.75,
+    "kind": "approval",
+    "nonce": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "subject": "5f1c1a0e-1111-2222-3333-444455556666",
+    "subject_hash": "abababababababababababababababababababababababababababababababab"
+  },
+  "public_key_spki_b64": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEydtP5wLT5R/f9rwGxSo0S26rz2iawTUXXO2KL0CqWo6rOCWFRIKM6okjT0ziLX3FpHwA7X2JA2Pf1xmc1iIsog==",
+  "signature_der_b64": "MEQCIDVv9jFuiBbHvgHeqvB+XOhCuUEWsM8nnthda+w86fi0AiAxCC4vPgd+IFoFvkwz8q2YU8xdTXpGNxQlm1+NpLrdow==",
+  "signing_string": "hood-confirm-v1\nchl_00112233445566778899aabb\ndev_0123456789abcdef01234567\napproval\n5f1c1a0e-1111-2222-3333-444455556666\napprove\nabababababababababababababababababababababababababababababababab\ncdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\n1790000060"
+}

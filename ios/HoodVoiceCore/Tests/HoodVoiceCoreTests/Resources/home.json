@@ -1,0 +1,75 @@
+{
+  "active_call": {
+    "answered_at": 1790000000.0,
+    "audio_in_s": 0.0,
+    "audio_out_s": 0.0,
+    "briefing": "",
+    "call_id": "call_e6ca18eebc1d44211efc",
+    "cost_measured": false,
+    "cost_usd": 0.0,
+    "created": 1790000000.0,
+    "device_id": "dev_d8c41ee2ed8974960b3074ee",
+    "direction": "owner_to_hood",
+    "duration_s": 0.0,
+    "end_reason": "",
+    "ended_at": null,
+    "event_id": "",
+    "event_type": "",
+    "fallback_sent": false,
+    "language": "fr",
+    "last_heartbeat": 1790000000.0,
+    "mode": "realtime",
+    "notification_status": "",
+    "owner_id": "user_root_owner_01",
+    "provider": "gemini-live",
+    "reserved_usd": 0.3525,
+    "ringing_at": null,
+    "room": "call_e6ca18eebc1d44211efc",
+    "state": "ACTIVE",
+    "turns": 1
+  },
+  "active_missions": [
+    {
+      "id": "agm_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "objective": "Coffee shop website",
+      "state": "RUNNING"
+    },
+    {
+      "id": "agm_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "objective": "Landing page for the bakery",
+      "state": "AWAITING_PLAN_APPROVAL"
+    }
+  ],
+  "hood": {
+    "transport_ready": true,
+    "voice_enabled": true
+  },
+  "notifications": [
+    {
+      "call_id": "",
+      "created": 1791727594.7679887,
+      "decision": "notify",
+      "event_id": "evt_609b857b37947a6d",
+      "notification_status": "sent:1,failed:0",
+      "severity": "info",
+      "source": "t",
+      "subject": "m:1",
+      "summary": "Mission finished: demo",
+      "type": "info"
+    }
+  ],
+  "pending_confirmations": 2,
+  "spend": {
+    "limits": {
+      "daily_minutes": 60.0,
+      "daily_usd": 3.0,
+      "max_call_seconds": 900.0,
+      "monthly_minutes": 300.0,
+      "monthly_usd": 15.0,
+      "per_call_usd": 1.0
+    },
+    "month_calls": 0,
+    "month_minutes": 0.0,
+    "month_usd": 0.0
+  }
+}

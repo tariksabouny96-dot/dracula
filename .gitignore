@@ -55,3 +55,10 @@ artifacts/browser_downloads/
 artifacts/nodes/
 .hood-live/
 .claude/worktrees/
+
+# Swift / Xcode
+ios/**/.build/
+ios/**/.swiftpm/
+ios/**/DerivedData/
+ios/**/xcuserdata/
+*.xcuserstate

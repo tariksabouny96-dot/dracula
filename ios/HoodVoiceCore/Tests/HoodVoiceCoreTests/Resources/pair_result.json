@@ -1,0 +1,6 @@
+{
+  "device_id": "dev_49b2f0c8f8284e241710c3ef",
+  "device_secret": "i0O_XAmReYc09SC8ANm8rfnpsMb8FWAbeRdaQrPMwoA",
+  "name": "Owner iPhone",
+  "note": "Store device_secret in the iOS Keychain; Hood keeps only its digest."
+}

@@ -60,6 +60,14 @@ class VoiceCallService:
             raise Forbidden("Invalid device credential")
         return dev
 
+    def authenticate_pairing(self, header: str, client_ip: str = "") -> Dict[str, Any]:
+        """Pairing is the one route with no credential: the one-time code in the body is the proof. Every attempt
+        counts against a per-IP throttle (on top of the code check's own global failure limit)."""
+        key = f"pair:{client_ip}"
+        self._throttle(key)
+        self._fail(key)
+        return {"ip": client_ip}
+
     def authenticate_agent(self, header: str, client_ip: str = ""):
         scheme, _, token = (header or "").partition(" ")
         key = f"agent:{client_ip}"

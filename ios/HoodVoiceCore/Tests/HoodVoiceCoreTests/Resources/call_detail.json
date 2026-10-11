@@ -1,0 +1,85 @@
+{
+  "call": {
+    "answered_at": 1790000000.0,
+    "audio_in_s": 0.0,
+    "audio_out_s": 0.0,
+    "briefing": "",
+    "call_id": "call_e6ca18eebc1d44211efc",
+    "cost_measured": false,
+    "cost_usd": 0.0,
+    "created": 1790000000.0,
+    "device_id": "dev_d8c41ee2ed8974960b3074ee",
+    "direction": "owner_to_hood",
+    "duration_s": 0.0,
+    "end_reason": "",
+    "ended_at": null,
+    "event_id": "",
+    "event_type": "",
+    "fallback_sent": false,
+    "language": "fr",
+    "last_heartbeat": 1790000000.0,
+    "mode": "realtime",
+    "notification_status": "",
+    "owner_id": "user_root_owner_01",
+    "provider": "gemini-live",
+    "reserved_usd": 0.3525,
+    "ringing_at": null,
+    "room": "call_e6ca18eebc1d44211efc",
+    "state": "ACTIVE",
+    "turns": 1
+  },
+  "events": [
+    {
+      "detail": {
+        "direction": "owner_to_hood",
+        "provider": "gemini-live"
+      },
+      "id": 1,
+      "kind": "created",
+      "ts": 1791727594.7817981
+    },
+    {
+      "detail": {
+        "from": "CREATED",
+        "to": "CONNECTING"
+      },
+      "id": 2,
+      "kind": "state",
+      "ts": 1791727594.7848563
+    },
+    {
+      "detail": {
+        "language": "fr"
+      },
+      "id": 3,
+      "kind": "call_started",
+      "ts": 1791727594.7872722
+    },
+    {
+      "detail": {
+        "from": "CONNECTING",
+        "to": "ACTIVE"
+      },
+      "id": 4,
+      "kind": "state",
+      "ts": 1791727594.7938838
+    },
+    {
+      "detail": {
+        "via": "agent"
+      },
+      "id": 5,
+      "kind": "connected",
+      "ts": 1791727594.7962422
+    },
+    {
+      "detail": {
+        "latency_ms": 0,
+        "reasoning_usd": 0.002
+      },
+      "id": 6,
+      "kind": "turn",
+      "ts": 1791727594.8067863
+    }
+  ]
+}

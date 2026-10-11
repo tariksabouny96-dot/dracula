@@ -1,0 +1,46 @@
+{
+  "call": {
+    "answered_at": 1790000000.0,
+    "audio_in_s": 0.0,
+    "audio_out_s": 0.0,
+    "briefing": "",
+    "call_id": "call_e6ca18eebc1d44211efc",
+    "cost_measured": false,
+    "cost_usd": 0.0,
+    "created": 1790000000.0,
+    "device_id": "dev_d8c41ee2ed8974960b3074ee",
+    "direction": "owner_to_hood",
+    "duration_s": 0.0,
+    "end_reason": "",
+    "ended_at": null,
+    "event_id": "",
+    "event_type": "",
+    "fallback_sent": false,
+    "language": "fr",
+    "last_heartbeat": null,
+    "mode": "realtime",
+    "notification_status": "",
+    "owner_id": "user_root_owner_01",
+    "provider": "gemini-live",
+    "reserved_usd": 0.3525,
+    "ringing_at": null,
+    "room": "call_e6ca18eebc1d44211efc",
+    "state": "CONNECTING",
+    "turns": 0
+  },
+  "join": {
+    "expires_at": 1791728194.7870066,
+    "identity": "dev_d8c41ee2ed8974960b3074ee",
+    "room": "call_e6ca18eebc1d44211efc",
+    "token": "fake.call_e6ca18eebc1d44211efc.dev_d8c41ee2ed8974960b3074ee.1",
+    "url": "wss://fake.livekit.test"
+  },
+  "limits": {
+    "daily_minutes": 60.0,
+    "daily_usd": 3.0,
+    "max_call_seconds": 900.0,
+    "monthly_minutes": 300.0,
+    "monthly_usd": 15.0,
+    "per_call_usd": 1.0
+  }
+}

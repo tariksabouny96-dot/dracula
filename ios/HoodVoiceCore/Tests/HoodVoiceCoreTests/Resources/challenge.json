@@ -1,0 +1,14 @@
+{
+  "algorithm": "ECDSA-P256-SHA256",
+  "challenge_id": "chl_69ee38be1d64ac9698a90bf5",
+  "decision": "approve",
+  "detail": "backup-2026: Disk is full",
+  "device_id": "dev_d8c41ee2ed8974960b3074ee",
+  "expires": 1790000060.0,
+  "kind": "approval",
+  "nonce": "aa77df792c31fafc27440592250ef79a",
+  "signing_string": "hood-confirm-v1\nchl_69ee38be1d64ac9698a90bf5\ndev_d8c41ee2ed8974960b3074ee\napproval\nf61137bc-9b2d-4f7f-ba0a-0bba48c8780e\napprove\nc724184821a80b23041fbb2947d6f6fda423a9e96708a787654c5ae1d7cbd68e\naa77df792c31fafc27440592250ef79a\n1790000060",
+  "subject": "f61137bc-9b2d-4f7f-ba0a-0bba48c8780e",
+  "subject_hash": "c724184821a80b23041fbb2947d6f6fda423a9e96708a787654c5ae1d7cbd68e",
+  "title": "DELETE_BACKUP"
+}

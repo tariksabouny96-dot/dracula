@@ -92,6 +92,16 @@ def register_device(ctx):
     return res
 
 
+@route("POST", r"/api/voicecall/devices/pairing-code", permission=OWNER)
+def pairing_code(ctx):
+    _need_confirm(ctx, "show a one-time code to pair a phone with Hood")
+    s = _svc()
+    s.perms.require_owner(ctx.user_id)
+    out = s.devices.create_pairing_code(ctx.user_id)
+    out["note"] = "Enter this code in the Hood app within 5 minutes. It works once."
+    return out
+
+
 @route("POST", r"/api/voicecall/devices/revoke", permission=OWNER)
 def revoke_device(ctx):
     _need_confirm(ctx, "revoke this device")
@@ -129,6 +139,15 @@ def end_active(ctx):
 # =========================================================================== the owner's phone
 def _dev(ctx) -> Dict[str, Any]:
     return ctx.principal
+
+
+@route("POST", r"/api/voicecall/pair", permission=OWNER, auth="pairing")
+def pair(ctx):
+    """Phone -> Hood: redeem the one-time code and register this phone's biometric-protected public key."""
+    p = ctx.payload
+    reg = _svc().devices.pair(str(p.get("code", "")), str(p.get("name", "")), str(p.get("public_key", "")),
+                              platform=str(p.get("platform", "ios")), app_version=str(p.get("app_version", "")))
+    return {**reg, "note": "Store device_secret in the iOS Keychain; Hood keeps only its digest."}
 
 
 @route("GET", r"/api/voicecall/device/home", permission=OWNER, auth="device")

@@ -1,0 +1,31 @@
+{
+  "call": {
+    "answered_at": 1790000000.0,
+    "audio_in_s": 3.0,
+    "audio_out_s": 0.0,
+    "briefing": "",
+    "call_id": "call_e6ca18eebc1d44211efc",
+    "cost_measured": true,
+    "cost_usd": 0.002225,
+    "created": 1790000000.0,
+    "device_id": "dev_d8c41ee2ed8974960b3074ee",
+    "direction": "owner_to_hood",
+    "duration_s": 0.0,
+    "end_reason": "owner_hangup",
+    "ended_at": 1790000000.0,
+    "event_id": "",
+    "event_type": "",
+    "fallback_sent": false,
+    "language": "fr",
+    "last_heartbeat": 1790000000.0,
+    "mode": "realtime",
+    "notification_status": "",
+    "owner_id": "user_root_owner_01",
+    "provider": "gemini-live",
+    "reserved_usd": 0.3525,
+    "ringing_at": null,
+    "room": "call_e6ca18eebc1d44211efc",
+    "state": "ENDED",
+    "turns": 1
+  }
+}

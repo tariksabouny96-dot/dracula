@@ -56,7 +56,7 @@ class Route:
     pattern: re.Pattern
     permission: str
     handler: Callable[["RequestContext"], Any]
-    # "session": cookie/bearer Hood session + permission (default). "device" / "agent": non-session
+    # "session": cookie/bearer Hood session + permission (default). "device" / "agent" / "pairing": non-session
     # credentials checked by SERVICES["voicecall"]; those routes never accept a Hood session.
     auth: str = "session"
 
@@ -97,8 +97,8 @@ SERVICES: Dict[str, Any] = {}
 def route(method: str, pattern: str, permission: str, auth: str = "session"):
     if method not in ("GET", "POST"):
         raise ValueError("Only GET and POST are routed")
-    if auth not in ("session", "device", "agent"):
-        raise ValueError("auth must be session, device or agent")
+    if auth not in ("session", "device", "agent", "pairing"):
+        raise ValueError("auth must be session, device, agent or pairing")
 
     def deco(fn):
         ROUTES.append(Route(method, re.compile(pattern), permission, fn, auth))

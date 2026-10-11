@@ -1,0 +1,15 @@
+{
+  "fields" : {
+    "challenge_id" : "chl_ffeeddccbbaa99887766aa55",
+    "decision" : "approve",
+    "device_id" : "dev_aabbccddeeff001122334455",
+    "expires" : 1790000090.5,
+    "kind" : "mission_plan",
+    "nonce" : "12121212121212121212121212121212",
+    "subject" : "agm_77777777777777777777777777777777",
+    "subject_hash" : "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef"
+  },
+  "public_key_spki_b64" : "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEBCJmwGjeRkevGCIXjbK2ZKyyIE\/PWZJcbDfudvsy\/5N54oPwHSVOx5Rrf1xFk6JiDK8963Db1gYpDa9qBgnZvg==",
+  "signature_der_b64" : "MEQCICKKMco15hLNBKWGTUgGur34xPgR2jNluzU2LL6BDPHgAiAvEgQWdzEmyx6WpHpIBA1VcCdqFUGyqUyZ7ZZJhWYeHg==",
+  "signing_string" : "hood-confirm-v1\nchl_ffeeddccbbaa99887766aa55\ndev_aabbccddeeff001122334455\nmission_plan\nagm_77777777777777777777777777777777\napprove\nefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef\n12121212121212121212121212121212\n1790000090"
+}

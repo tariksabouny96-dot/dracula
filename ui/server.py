@@ -1031,6 +1031,7 @@ class JarvisUIHandler(SimpleHTTPRequestHandler):
         ip = self.client_address[0] if hasattr(self, "client_address") else ""
         try:
             principal = (svc.authenticate_device(header, ip) if route_def.auth == "device"
+                         else svc.authenticate_pairing(header, ip) if route_def.auth == "pairing"
                          else svc.authenticate_agent(header, ip))
         except Exception as exc:
             status = getattr(exc, "status", 401)

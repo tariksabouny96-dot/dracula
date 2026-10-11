@@ -1,0 +1,21 @@
+{
+  "calls_enabled": true,
+  "daily_minutes": 60,
+  "daily_usd": 3.0,
+  "event_toggles": {
+    "approval_required": true,
+    "decision_blocking": true,
+    "operational_failure": true,
+    "security_critical": true
+  },
+  "language": "en",
+  "max_call_seconds": 900,
+  "monthly_minutes": 300,
+  "monthly_usd": 15.0,
+  "notify_on_info": true,
+  "per_call_usd": 1.0,
+  "quiet_end": "07:00",
+  "quiet_start": "22:00",
+  "timezone": "UTC",
+  "urgent_override": true
+}

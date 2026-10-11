@@ -13,11 +13,15 @@ import secrets
 import time
 from typing import Any, Dict, List, Optional
 
-from .contracts import Conflict, Forbidden, NotFound, VoiceError
+from .contracts import Conflict, Forbidden, NotFound, RateLimited, VoiceError
 from .store import VoiceStore
 from .tokens import digest_secret, load_p256_public_key, b64u_decode
 
 MAX_DEVICES = 5
+PAIRING_TTL_SECONDS = 300
+PAIRING_FAILURE_LIMIT = 10          # wrong codes in the window before every open code is burned
+PAIRING_FAILURE_WINDOW = 900
+_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"   # no 0/O/1/I: easy to read off a screen
 _TOKEN_RE = re.compile(r"^[0-9a-fA-F]{16,512}$")      # APNs device tokens are hex
 
 
@@ -54,6 +58,36 @@ class DeviceRegistry:
                        (device_id, owner_id, name, digest_secret(secret), _norm_b64(public_key_b64), platform[:20],
                         app_version[:20], time.time()))
         return {"device_id": device_id, "device_secret": secret, "name": name}
+
+    # ------------------------------------------------------------------ pairing (phone has no owner session)
+    def create_pairing_code(self, owner_id: str, *, ttl: int = PAIRING_TTL_SECONDS, now: Optional[float] = None) -> Dict[str, Any]:
+        """One-time code the owner reads from the console and types into the phone. Single use, 5 minutes,
+        only the digest is stored, and a new code retires any earlier unused one."""
+        now = time.time() if now is None else now
+        code = "".join(secrets.choice(_CODE_ALPHABET) for _ in range(10))
+        with self.store._db() as db:
+            db.execute("UPDATE pairing_codes SET used=1 WHERE owner_id=? AND used=0", (owner_id,))
+            db.execute("INSERT INTO pairing_codes (code_digest, owner_id, created, expires) VALUES (?,?,?,?)",
+                       (digest_secret(code), owner_id, now, now + ttl))
+        return {"code": code, "expires_in": ttl}
+
+    def pair(self, code: str, name: str, public_key_b64: str, *, platform: str = "ios", app_version: str = "",
+             now: Optional[float] = None) -> Dict[str, Any]:
+        now = time.time() if now is None else now
+        code = (code or "").strip().upper().replace("-", "").replace(" ", "")
+        with self.store._db() as db:
+            recent = db.execute("SELECT COUNT(*) n FROM pairing_failures WHERE ts>?", (now - PAIRING_FAILURE_WINDOW,)).fetchone()["n"]
+            if recent >= PAIRING_FAILURE_LIMIT:
+                db.execute("UPDATE pairing_codes SET used=1 WHERE used=0")          # too many guesses: burn every open code
+                raise RateLimited("Too many wrong pairing codes; ask for a new code in the console")
+            row = db.execute("SELECT * FROM pairing_codes WHERE code_digest=?", (digest_secret(code),)).fetchone() if len(code) == 10 else None
+            if row is None or row["used"] or now > row["expires"]:
+                db.execute("INSERT INTO pairing_failures (ts) VALUES (?)", (now,))
+                raise Forbidden("Invalid or expired pairing code")
+            cur = db.execute("UPDATE pairing_codes SET used=1 WHERE code_digest=? AND used=0", (row["code_digest"],))
+            if cur.rowcount != 1:
+                raise Forbidden("Invalid or expired pairing code")
+        return self.register(row["owner_id"], name, public_key_b64, platform=platform, app_version=app_version)
 
     def authenticate(self, device_id: str, secret: str) -> Optional[Dict[str, Any]]:
         """Return the device row (as dict) or None. Constant-time on the secret digest."""

@@ -1,0 +1,46 @@
+{
+  "call": {
+    "answered_at": 1790000605.0,
+    "audio_in_s": 0.0,
+    "audio_out_s": 0.0,
+    "briefing": "This is Hood. A decision is blocking a mission. Shall I go through it with you?",
+    "call_id": "call_e789b13d8d7af1da66b3",
+    "cost_measured": false,
+    "cost_usd": 0.0,
+    "created": 1790000605.0,
+    "device_id": "dev_d8c41ee2ed8974960b3074ee",
+    "direction": "hood_to_owner",
+    "duration_s": 0.0,
+    "end_reason": "",
+    "ended_at": null,
+    "event_id": "evt_3451c45de5d52b94",
+    "event_type": "decision_blocking",
+    "fallback_sent": false,
+    "language": "en",
+    "last_heartbeat": null,
+    "mode": "realtime",
+    "notification_status": "voip_sent:apns-id-1",
+    "owner_id": "user_root_owner_01",
+    "provider": "gemini-live",
+    "reserved_usd": 0.3525,
+    "ringing_at": 1790000605.0,
+    "room": "call_e789b13d8d7af1da66b3",
+    "state": "CONNECTING",
+    "turns": 0
+  },
+  "join": {
+    "expires_at": 1791728194.8917944,
+    "identity": "dev_d8c41ee2ed8974960b3074ee",
+    "room": "call_e789b13d8d7af1da66b3",
+    "token": "fake.call_e789b13d8d7af1da66b3.dev_d8c41ee2ed8974960b3074ee.3",
+    "url": "wss://fake.livekit.test"
+  },
+  "limits": {
+    "daily_minutes": 60.0,
+    "daily_usd": 3.0,
+    "max_call_seconds": 900.0,
+    "monthly_minutes": 300.0,
+    "monthly_usd": 15.0,
+    "per_call_usd": 1.0
+  }
+}

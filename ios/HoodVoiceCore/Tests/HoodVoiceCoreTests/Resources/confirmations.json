@@ -1,0 +1,20 @@
+{
+  "items": [
+    {
+      "detail": "backup-2026: Disk is full",
+      "kind": "approval",
+      "phone_confirmable": true,
+      "risk": "L3",
+      "subject": "f61137bc-9b2d-4f7f-ba0a-0bba48c8780e",
+      "title": "DELETE_BACKUP"
+    },
+    {
+      "detail": "Landing page for the bakery",
+      "kind": "mission_plan",
+      "phone_confirmable": true,
+      "risk": "mission",
+      "subject": "agm_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "title": "Mission plan"
+    }
+  ]
+}
