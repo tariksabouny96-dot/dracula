@@ -1,0 +1,13 @@
+# Voice worker only (voice_agent/): the process that gives Hood ears and a mouth during a call.
+# Install on the machine that runs the worker, NOT necessarily on the Hood host:
+#   python -m pip install -r requirements.txt -r requirements-voice.txt
+# Versions are the ones the end-to-end tests were run with (2026-10-11).
+livekit==1.1.20
+livekit-api==1.2.1
+livekit-agents==1.8.6
+livekit-plugins-google==1.8.6
+livekit-plugins-silero==1.8.6
+google-genai==2.29.0
+numpy==2.5.3
+onnxruntime==1.31.0
+aiohttp==3.14.4
